@@ -25,6 +25,25 @@ val BorderColor    = Color(0xFFE5E7EB)
 val IconColor      = Color(0xFF9CA3AF)
 val DotInactive    = Color(0xFFD1D5DB)
 
-// ─── Semantic ──────────────────────────────────────────────────────────────
-val ErrorRed       = Color(0xFFEF4444)
+
+
 val SuccessGreen   = Color(0xFF10B981)
+
+val MediumGreen      = Color(0xFF1A5C40)
+val LightGreen       = Color(0xFF4CAF50)
+
+
+val BackgroundWhite  = Color(0xFFF9FAF9)
+val SurfaceWhite     = Color(0xFFFFFFFF)
+val DividerGray      = Color(0xFFE0E0E0)
+val TextPrimary      = Color(0xFF1C1C1E)
+val TextSecondary    = Color(0xFF6B6B6B)
+
+// Utility
+val ErrorRed         = Color(0xFFD32F2F)
+val WarningAmber     = Color(0xFFFFA726)
+val InfoBlue         = Color(0xFF1565C0)
+
+// FAB / Camera Button
+val CameraFABColor   = Color(0xFF0B3D2E)
+val CameraFABRipple  = Color(0xFF4CAF50)

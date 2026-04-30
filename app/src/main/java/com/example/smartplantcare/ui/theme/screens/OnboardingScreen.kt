@@ -1,4 +1,4 @@
-package com.example.smartplantcare.ui.screens
+package com.example.smartplantcare.ui.theme.screens
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
@@ -63,7 +63,6 @@ private fun FeatureChip(label: String, accentColor: Color) {
     }
 }
 
-// ─── Main screen ───────────────────────────────────────────────────────────────
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable

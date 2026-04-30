@@ -5,13 +5,18 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.example.smartplantcare.ui.screens.LoginScreen
-import com.example.smartplantcare.ui.screens.OnboardingScreen
+import com.example.smartplantcare.ui.theme.screens.OnboardingScreen
+
 import com.example.smartplantcare.ui.screens.SignUpScreen
+
+import com.example.smartplantcare.ui.theme.screens.homescreen.MainScreen
+
 
 sealed class Screen(val route: String) {
     object Onboarding : Screen("onboarding")
     object Login      : Screen("login")
     object SignUp     : Screen("signup")
+    object Main       : Screen("main")
 }
 
 @Composable
@@ -34,18 +39,30 @@ fun AppNavigation() {
 
         composable(Screen.Login.route) {
             LoginScreen(
-                onSignIn         = { /* TODO: navigate to Home */ },
+                onSignIn = {
+                    navController.navigate(Screen.Main.route) {
+                        popUpTo(Screen.Login.route) { inclusive = true }
+                    }
+                },
                 onSignUp         = { navController.navigate(Screen.SignUp.route) },
-                onForgotPassword = { /* TODO: handle forgot password */ }
+                onForgotPassword = { /* TODO */ }
             )
         }
 
         composable(Screen.SignUp.route) {
             SignUpScreen(
                 onBack   = { navController.popBackStack() },
-                onSignUp = { /* TODO: navigate to Home */ },
+                onSignUp = {
+                    navController.navigate(Screen.Main.route) {
+                        popUpTo(Screen.Onboarding.route) { inclusive = true }
+                    }
+                },
                 onLogin  = { navController.popBackStack() }
             )
+        }
+
+        composable(Screen.Main.route) {
+            MainScreen()
         }
     }
 }
