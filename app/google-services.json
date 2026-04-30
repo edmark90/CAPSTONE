@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "209604742842",
+    "project_id": "smartplantcare-7c3e5",
+    "storage_bucket": "smartplantcare-7c3e5.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:209604742842:android:9e1d5acfd93c79bbd3bc83",
+        "android_client_info": {
+          "package_name": "com.example.smartplantcare"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "209604742842-v385hrmkdkitm1iueohsjism99ilttci.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.smartplantcare",
+            "certificate_hash": "514d1ae8d0ceba3e05a5d769bc6f95b7cb7f0049"
+          }
+        },
+        {
+          "client_id": "209604742842-6bdc4dvqu8m7f25kkp9r1dthp8f1oqbv.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA-IatQdL6hnxcVYH94Ksx0DaF--a5Y2wQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "209604742842-6bdc4dvqu8m7f25kkp9r1dthp8f1oqbv.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

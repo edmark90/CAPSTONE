@@ -42,9 +42,13 @@ import com.example.smartplantcare.ui.theme.*
 
 @Composable
 fun SignUpScreen(
+    isLoading: Boolean,
+    errorMessage: String?,
     onBack:   () -> Unit,
-    onSignUp: () -> Unit,
-    onLogin:  () -> Unit
+    onSignUp: (String, String, String) -> Unit,
+    onGoogleSignIn: () -> Unit,
+    onLogin:  () -> Unit,
+    onDismissError: () -> Unit
 ) {
     var fullName        by remember { mutableStateOf("") }
     var email           by remember { mutableStateOf("") }
@@ -226,7 +230,8 @@ fun SignUpScreen(
 
 
                     Button(
-                        onClick = onSignUp,
+                        onClick = { onSignUp(fullName, email, password) },
+                        enabled = !isLoading,
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(56.dp)
@@ -235,13 +240,21 @@ fun SignUpScreen(
                         colors = ButtonDefaults.buttonColors(containerColor = DarkGreen),
                         elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp)
                     ) {
-                        Text(
-                            text = "SIGN UP",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White,
-                            letterSpacing = 1.sp
-                        )
+                        if (isLoading) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                                color = Color.White
+                            )
+                        } else {
+                            Text(
+                                text = "SIGN UP",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                                letterSpacing = 1.sp
+                            )
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(28.dp))
@@ -266,7 +279,8 @@ fun SignUpScreen(
 
 
                     OutlinedButton(
-                        onClick = { /* Google Sign Up */ },
+                        onClick = onGoogleSignIn,
+                        enabled = !isLoading,
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(54.dp),
@@ -309,6 +323,37 @@ fun SignUpScreen(
                         color = TextMedium,
                         modifier = Modifier.clickable { onLogin() }
                     )
+
+                    if (!errorMessage.isNullOrBlank()) {
+                        Spacer(modifier = Modifier.height(18.dp))
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = Color(0xFFFFEBEE)
+                            ),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = errorMessage,
+                                    color = Color(0xFFC62828),
+                                    fontSize = 13.sp,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Text(
+                                    text = "Dismiss",
+                                    color = DarkGreen,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp,
+                                    modifier = Modifier.clickable { onDismissError() }
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
