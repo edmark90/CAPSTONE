@@ -7,6 +7,7 @@ import android.app.Activity
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
@@ -25,6 +26,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -42,10 +44,10 @@ import androidx.navigation.compose.rememberNavController
 import com.example.smartplantcare.auth.AuthViewModel
 import com.example.smartplantcare.ui.theme.screens.SystemUiController
 
-// ─── Light Theme Design Tokens ────────────────────────────────────────────────
 private val ColorBg        = Color(0xFFF5F7F6)
 private val ColorSurface   = Color(0xFFFFFFFF)
-private val ColorPrimary   = Color(0xFF1D4B34)
+private val ColorPrimary   = Color(0xFF1D4B34) // Dark Green
+private val ColorPrimaryLight = Color(0xFF2A6D4C) // Lighter Green for gradient
 private val ColorInactive  = Color(0xFFAAB8AF)
 private val ColorShadow    = Color(0x14000000)
 
@@ -59,6 +61,7 @@ sealed class BottomTab(
 ) {
     object Home : BottomTab("tab_home", "Home", Icons.Filled.Home, Icons.Outlined.Home)
     object MyPlants : BottomTab("tab_plants", "Plants", Icons.Filled.Yard, Icons.Outlined.Yard)
+    // IBINALIK SA CameraAlt
     object Camera : BottomTab("tab_camera", "Scan", Icons.Filled.CameraAlt, Icons.Outlined.CameraAlt, true)
     object AIDoctor : BottomTab("tab_doctor", "Doctor", Icons.Filled.MedicalServices, Icons.Outlined.MedicalServices)
     object Settings : BottomTab("tab_settings", "Settings", Icons.Filled.Settings, Icons.Outlined.Settings)
@@ -88,34 +91,47 @@ fun MainScreen(authViewModel: AuthViewModel) {
 
     Scaffold(
         modifier       = Modifier.fillMaxSize(),
-        bottomBar      = { FloatingBottomBar(navController = tabNavController) },
         containerColor = ColorBg
     ) { innerPadding ->
-        NavHost(
-            navController    = tabNavController,
-            startDestination = BottomTab.Home.route,
-            modifier         = Modifier
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
                 .padding(innerPadding)
-                .background(ColorBg)
         ) {
-            composable(BottomTab.Home.route) {
-                HomeScreen(userName = userProfile.name, userEmail = userProfile.email)
+
+            // LAYER 1: The Screens
+            NavHost(
+                navController    = tabNavController,
+                startDestination = BottomTab.Home.route,
+                modifier         = Modifier
+                    .fillMaxSize()
+                    .background(ColorBg)
+            ) {
+                composable(BottomTab.Home.route) {
+                    HomeScreen(userName = userProfile.name, userEmail = userProfile.email)
+                }
+                composable(BottomTab.MyPlants.route) { MyPlantsScreen() }
+                composable(BottomTab.Camera.route)   { CameraScreen() }
+                composable(BottomTab.AIDoctor.route) { AIDoctorScreen() }
+                composable(BottomTab.Settings.route) {
+                    SettingsScreen(
+                        userName  = userProfile.name,
+                        userEmail = userProfile.email,
+                        onSignOut = authViewModel::signOut
+                    )
+                }
             }
-            composable(BottomTab.MyPlants.route) { MyPlantsScreen() }
-            composable(BottomTab.Camera.route)   { CameraScreen() }
-            composable(BottomTab.AIDoctor.route) { AIDoctorScreen() }
-            composable(BottomTab.Settings.route) {
-                SettingsScreen(
-                    userName  = userProfile.name,
-                    userEmail = userProfile.email,
-                    onSignOut = authViewModel::signOut
-                )
+
+            // LAYER 2: Floating Nav Bar
+            Box(
+                modifier = Modifier.align(Alignment.BottomCenter)
+            ) {
+                FloatingBottomBar(navController = tabNavController)
             }
         }
     }
 }
-
-// ─── Responsive Clean Header ──────────────────────────────────────────────────
 
 // ─── Responsive Floating Bottom Bar with Elevated Camera ──────────────────────
 @Composable
@@ -129,95 +145,83 @@ private fun FloatingBottomBar(navController: NavController) {
         modifier = Modifier
             .fillMaxWidth()
             .navigationBarsPadding()
-            .padding(bottom = 18.dp),
+            .padding(horizontal = 16.dp)
+            .padding(bottom = 24.dp),
         contentAlignment = Alignment.BottomCenter
     ) {
 
-        Box(
-            modifier = Modifier.widthIn(max = 520.dp),
-            contentAlignment = Alignment.TopCenter
+        // ─── MAIN NAV BAR (The White Pill) ─────────────────────────────
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(76.dp)
+                .shadow(
+                    elevation = 28.dp, // High elevation for better float effect
+                    shape = RoundedCornerShape(40.dp),
+                    spotColor = Color.Black.copy(alpha = 0.35f),
+                    ambientColor = Color.Black.copy(alpha = 0.1f)
+                )
+                .background(Color.White, RoundedCornerShape(40.dp)),
+            verticalAlignment = Alignment.CenterVertically
         ) {
 
-            // ─── MAIN NAV BAR ─────────────────────────────
-            Row(
-                modifier = Modifier
-                    .padding(horizontal = 18.dp, vertical = 10.dp)
-                    .height(74.dp)
-                    .fillMaxWidth()
-                    .shadow(
-                        elevation = 22.dp,
-                        shape = RoundedCornerShape(40.dp),
-                        spotColor = Color.Black.copy(0.12f),
-                        ambientColor = Color.Black.copy(0.08f)
+            allTabs.forEach { tab ->
+                if (tab.isCamera) {
+                    Spacer(modifier = Modifier.weight(1.3f))
+                } else {
+                    val isSelected =
+                        currentDestination?.hierarchy?.any { it.route == tab.route } == true
+
+                    ModernNavItem(
+                        tab = tab,
+                        isSelected = isSelected,
+                        onClick = { goToTab(navController, tab.route) },
+                        modifier = Modifier.weight(1f)
                     )
-                    .clip(RoundedCornerShape(40.dp))
-                    .background(Color.White.copy(alpha = 0.92f))
-                    .padding(horizontal = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-
-                allTabs.forEach { tab ->
-
-                    if (tab.isCamera) {
-                        Spacer(modifier = Modifier.weight(1f))
-                    } else {
-
-                        val isSelected =
-                            currentDestination?.hierarchy?.any { it.route == tab.route } == true
-
-                        ModernNavItem(
-                            tab = tab,
-                            isSelected = isSelected,
-                            onClick = { goToTab(navController, tab.route) },
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
                 }
             }
+        }
 
-            // ─── FLOATING CAMERA BUTTON (more premium) ───
+
+        Box(
+            modifier = Modifier
+                .size(96.dp)
+                .offset(y = (-32).dp)
+                .shadow(
+                    elevation = 16.dp,
+                    shape = CircleShape,
+                    spotColor = Color.Black.copy(alpha = 0.25f)
+                )
+                .background(Color.White, CircleShape)
+                .padding(8.dp),
+            contentAlignment = Alignment.Center
+        ) {
+
+
             Box(
                 modifier = Modifier
-                    .size(82.dp)
-                    .offset(y = (-18).dp)
-                    .shadow(
-                        elevation = 26.dp,
-                        shape = CircleShape,
-                        spotColor = ColorPrimary.copy(0.35f)
+                    .fillMaxSize()
+                    .clip(CircleShape)
+                    .background(
+                        brush = Brush.verticalGradient(
+                            colors = listOf(ColorPrimaryLight, ColorPrimary)
+                        )
                     )
-                    .background(Color.White, CircleShape)
-                    .padding(6.dp),
+                    .border(2.dp, Color(0xFFE0E0E0), CircleShape) // Subtle silver inner ring
+                    .clickable { goToTab(navController, cameraTab.route) },
                 contentAlignment = Alignment.Center
             ) {
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .clip(CircleShape)
-                        .background(
-                            brush = androidx.compose.ui.graphics.Brush.radialGradient(
-                                colors = listOf(
-                                    ColorPrimary,
-                                    Color(0xFF143827)
-                                )
-                            )
-                        )
-                        .clickable { goToTab(navController, cameraTab.route) },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.CameraAlt,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(30.dp)
-                    )
-                }
+                Icon(
+                    imageVector = Icons.Filled.CameraAlt,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(36.dp) // Mas pinalaki nang onti para fit sa circle
+                )
             }
         }
     }
 }
 
-// ─── Streamlined Nav Item ────────────────────────────────────────────────────
 @Composable
 private fun ModernNavItem(
     tab: BottomTab,
@@ -272,7 +276,6 @@ private fun ModernNavItem(
             color = tint
         )
 
-        // ACTIVE INDICATOR DOT (new)
         Box(
             modifier = Modifier
                 .padding(top = 4.dp)
@@ -282,7 +285,6 @@ private fun ModernNavItem(
         )
     }
 }
-
 
 private fun goToTab(navController: NavController, route: String) {
     navController.navigate(route) {

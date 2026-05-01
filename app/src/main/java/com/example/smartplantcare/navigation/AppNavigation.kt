@@ -18,9 +18,8 @@ import com.example.smartplantcare.R
 import com.example.smartplantcare.auth.AuthViewModel
 import com.example.smartplantcare.ui.screens.LoginScreen
 import com.example.smartplantcare.ui.theme.screens.OnboardingScreen
-
 import com.example.smartplantcare.ui.screens.SignUpScreen
-
+import com.example.smartplantcare.ui.screens.SmartPlantCareSplashScreen
 import com.example.smartplantcare.ui.theme.screens.homescreen.MainScreen
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
@@ -28,8 +27,8 @@ import com.google.android.gms.auth.api.signin.GoogleSignInStatusCodes
 import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.common.api.CommonStatusCodes
 
-
 sealed class Screen(val route: String) {
+    object Splash     : Screen("splash")
     object Onboarding : Screen("onboarding")
     object Login      : Screen("login")
     object SignUp     : Screen("signup")
@@ -68,13 +67,15 @@ fun AppNavigation() {
             }
     }
 
+    // ─── FIXED LAUNCHED EFFECT ─────────────────────────────────────────────
     LaunchedEffect(uiState.isAuthenticated, currentRoute) {
         if (uiState.isAuthenticated) {
-            val isOnMain = navBackStackEntry
-                ?.destination
-                ?.hierarchy
-                ?.any { it.route == Screen.Main.route } == true
-            if (!isOnMain) {
+            // Mag-a-auto navigate lang sa Main kung ang user ay nasa
+            // Onboarding, Login, o SignUp nang mag-login sila.
+            // Safe na ang Splash screen dito at hindi na i-i-skip.
+            val authRoutes = listOf(Screen.Onboarding.route, Screen.Login.route, Screen.SignUp.route)
+
+            if (currentRoute in authRoutes) {
                 navController.navigate(Screen.Main.route) {
                     popUpTo(navController.graph.id) { inclusive = true }
                     launchSingleTop = true
@@ -82,11 +83,26 @@ fun AppNavigation() {
             }
         }
     }
+    // ───────────────────────────────────────────────────────────────────────
 
     NavHost(
         navController    = navController,
-        startDestination = if (uiState.isAuthenticated) Screen.Main.route else Screen.Onboarding.route
+        startDestination = Screen.Splash.route
     ) {
+
+        composable(Screen.Splash.route) {
+            SmartPlantCareSplashScreen(
+                onSplashFinished = {
+                    // Dito siya magdedesisyon kung sa Main o Onboarding pagtapos ng animasyon
+                    val nextScreen = if (uiState.isAuthenticated) Screen.Main.route else Screen.Onboarding.route
+
+                    navController.navigate(nextScreen) {
+                        popUpTo(Screen.Splash.route) { inclusive = true }
+                    }
+                }
+            )
+        }
+
         composable(Screen.Onboarding.route) {
             OnboardingScreen(
                 onGetStarted = {
