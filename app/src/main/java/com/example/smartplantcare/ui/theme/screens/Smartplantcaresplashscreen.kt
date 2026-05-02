@@ -28,9 +28,7 @@ private val VibrantGreen = Color(0xFF00A859) // Bright green for leaves
 private val LeafGreen    = Color(0xFF2E7D32) // Mid green for stems/accents
 private val SoftMint     = Color(0xFFE8F5E9) // Subtle glow
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Animation phases
-// ─────────────────────────────────────────────────────────────────────────────
+
 private enum class SplashPhase {
     IDLE,
     S_DROP,         // 'S' zooms in from huge to normal size smoothly
@@ -40,9 +38,6 @@ private enum class SplashPhase {
     FADE_OUT        // Transition out
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Main Composable
-// ─────────────────────────────────────────────────────────────────────────────
 @Composable
 fun SmartPlantCareSplashScreen(
     onSplashFinished: () -> Unit = {}
@@ -60,7 +55,7 @@ fun SmartPlantCareSplashScreen(
         label = "s_alpha"
     )
 
-    // Starts massive (scale 10f) then smoothly shrinks exactly to 1f (no bounce)
+
     val sScale by animateFloatAsState(
         targetValue = if (phase.ordinal >= SplashPhase.S_DROP.ordinal) 1f else 10f,
         animationSpec = tween(800, easing = FastOutSlowInEasing),
@@ -182,7 +177,7 @@ fun SmartPlantCareSplashScreen(
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "GROW SMARTER.",
+                        text = "GROW SMARTER",
                         fontSize = 11.sp,
                         fontFamily = FontFamily.SansSerif,
                         fontWeight = FontWeight.Bold,

@@ -2,22 +2,21 @@ package com.example.smartplantcare.ui.theme.screens
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -32,112 +31,68 @@ import com.example.smartplantcare.R
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
-// ─── DATA ────────────────────────────────────────────────────────────────
-data class OnboardingPageData(
+// COLORS
+private val DarkGreen = Color(0xFF1A3C2E)
+private val MintCircle = Color(0xFFE8F5E9)
+private val TitleColor = Color(0xFF1A1A1A)
+private val SubtitleColor = Color(0xFF8A9490)
+private val DotActive = Color(0xFF1A3C2E)
+private val DotInactive = Color(0xFFD8E4DC)
+private val White = Color.White
+
+data class OnboardingPage(
     val imageRes: Int,
     val title: String,
-    val description: String,
-    val emoji: String,
-    val chips: List<String> = emptyList(),
-    val cardTint: Color = Color(0xFFE8F5E9),
-    val accentColor: Color = Color(0xFF063321)
+    val description: String
 )
 
-// ─── COLORS ───────────────────────────────────────────────────────────────
-private val DarkGreen = Color(0xFF1D4B34)
-private val PrimaryGreen = Color(0xFF2E7D32)
-private val TextMedium = Color(0xFF6B7A6F)
-private val DotInactive = Color(0xFFD0DAD3)
-
-// ─── CHIPS ────────────────────────────────────────────────────────────────
-@Composable
-private fun FeatureChip(label: String, accentColor: Color) {
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(20.dp))
-            .background(accentColor.copy(alpha = 0.10f))
-            .padding(horizontal = 14.dp, vertical = 7.dp)
-    ) {
-        Text(
-            text = label,
-            fontSize = 12.sp,
-            color = accentColor,
-            fontWeight = FontWeight.SemiBold
-        )
-    }
-}
-
-// ─── ONBOARDING SCREEN ────────────────────────────────────────────────────
 @OptIn(ExperimentalFoundationApi::class, ExperimentalAnimationApi::class)
 @Composable
 fun OnboardingScreen(onGetStarted: () -> Unit) {
 
     val pages = listOf(
-        OnboardingPageData(
-            imageRes = R.drawable.splash1, // Ensure these exist in your res/drawable
-            title = "SmartPlant",
-            description = "Connect with nature through intelligent plant monitoring.",
-            emoji = "🪴",
-            chips = listOf("Indoor Plants", "Smart Care"),
-            cardTint = Color(0xFFEAF7EA),
-            accentColor = DarkGreen
+        OnboardingPage(
+            R.drawable.s1,
+            "Detect Plant Disease",
+            "Use your camera to scan your plant and identify possible diseases instantly."
         ),
-        OnboardingPageData(
-            imageRes = R.drawable.splash2,
-            title = "Monitor Plants",
-            description = "Track water, sunlight, and temperature in real-time.",
-            emoji = "📡",
-            chips = listOf("Water", "Light", "Temp"),
-            cardTint = Color(0xFFE8F4FD),
-            accentColor = PrimaryGreen
+        OnboardingPage(
+            R.drawable.s2,
+            "Monitor Plant Health",
+            "Track water, light, and temperature levels to keep your plant healthy."
         ),
-        OnboardingPageData(
-            imageRes = R.drawable.splash3,
-            title = "Grow Smarter",
-            description = "AI-powered plant care suggestions for healthier growth.",
-            emoji = "🌱",
-            chips = listOf("AI Care", "Auto Alerts"),
-            cardTint = Color(0xFFEFF8EF),
-            accentColor = DarkGreen
+        OnboardingPage(
+            R.drawable.s3,
+            "Smart Plant Care",
+            "Get care tips and recommendations to treat diseases and improve plant growth."
         )
     )
 
     val pagerState = rememberPagerState(pageCount = { pages.size })
     val scope = rememberCoroutineScope()
-    val isLastPage = pagerState.currentPage == pages.size - 1
+    val isLastPage = pagerState.currentPage == pages.lastIndex
 
-    // Infinite animations for continuous UI movement
-    val infiniteTransition = rememberInfiniteTransition(label = "infinite")
-
+    // INFINITE ANIMATIONS (Float & Gentle Rotation)
+    val infiniteTransition = rememberInfiniteTransition(label = "float_rotate")
     val floatY by infiniteTransition.animateFloat(
         initialValue = 0f,
-        targetValue = 12f,
+        targetValue = 15f,
         animationSpec = infiniteRepeatable(
-            animation = tween(2000, easing = FastOutSlowInEasing),
+            animation = tween(2500, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
-        label = "floating"
+        label = "floatY"
     )
 
-    val pulse by infiniteTransition.animateFloat(
-        initialValue = 1f,
-        targetValue = 1.08f,
+    // Renamed to animatedRotation to avoid collision with graphicsLayer's rotationZ
+    val animatedRotation by infiniteTransition.animateFloat(
+        initialValue = -2f,
+        targetValue = 2f,
         animationSpec = infiniteRepeatable(
-            animation = tween(1500, easing = FastOutSlowInEasing),
+            animation = tween(3000, easing = LinearEasing),
             repeatMode = RepeatMode.Reverse
         ),
-        label = "pulsing"
-    )
-
-    // Slow rotation for background blobs to make them feel organic
-    val blobRotation by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(20000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "blobRotation"
+        label = "animatedRotation"
     )
 
     Box(
@@ -146,196 +101,152 @@ fun OnboardingScreen(onGetStarted: () -> Unit) {
             .background(
                 Brush.verticalGradient(
                     colors = listOf(
-                        Color(0xFFF7FBF7),
-                        Color(0xFFEAF5EA),
-                        Color(0xFFDFF0E0)
+                        Color(0xFFF4FBF6),
+                        Color.White
                     )
                 )
             )
     ) {
-        // --- Animated Background Blobs ---
-        Box(
-            Modifier
-                .size(350.dp)
-                .offset((-100).dp, (-100).dp)
-                .graphicsLayer { rotationZ = blobRotation }
-                .background(
-                    brush = Brush.radialGradient(
-                        colors = listOf(Color(0xFF2E7D32).copy(alpha = 0.08f), Color.Transparent)
-                    ),
-                    shape = CircleShape
-                )
-        )
-
-        Box(
-            Modifier
-                .size(300.dp)
-                .align(Alignment.BottomEnd)
-                .offset(100.dp, 100.dp)
-                .graphicsLayer { rotationZ = -blobRotation }
-                .background(
-                    brush = Brush.radialGradient(
-                        colors = listOf(Color(0xFF66BB6A).copy(alpha = 0.1f), Color.Transparent)
-                    ),
-                    shape = CircleShape
-                )
-        )
 
         Column(
             modifier = Modifier.fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+
+            // PAGER
             HorizontalPager(
                 state = pagerState,
                 modifier = Modifier.weight(1f)
             ) { page ->
 
                 val data = pages[page]
-
-                // Calculate offset for parallax effects
                 val pageOffset = (pagerState.currentPage - page) + pagerState.currentPageOffsetFraction
                 val absOffset = abs(pageOffset).coerceIn(0f, 1f)
-
-                // Parallax Math
-                val imageScale = 1f - (absOffset * 0.2f) // Images shrink slightly as they swipe away
-                val textTranslationX = pageOffset * 200f // Text slides faster than the page
-                val alphaFade = 1f - absOffset // Fade out elements smoothly
 
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(horizontal = 24.dp)
-                        .graphicsLayer { alpha = alphaFade },
-                    horizontalAlignment = Alignment.CenterHorizontally
+                        .padding(horizontal = 28.dp)
+                        .graphicsLayer {
+                            // Entire page fade/scale
+                            alpha = 1f - (absOffset * 0.35f)
+                            scaleX = 1f - (absOffset * 0.05f)
+                            scaleY = 1f - (absOffset * 0.05f)
+                        },
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
                 ) {
 
-                    Spacer(Modifier.height(60.dp))
+                    Spacer(Modifier.height(40.dp))
 
-                    Box(
-                        contentAlignment = Alignment.BottomCenter,
-                        modifier = Modifier.graphicsLayer {
-                            scaleX = imageScale
-                            scaleY = imageScale
-                        }
+                    // IMAGE CARD
+                    Card(
+                        shape = RoundedCornerShape(32.dp),
+                        colors = CardDefaults.cardColors(containerColor = White),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+                        modifier = Modifier.size(290.dp)
                     ) {
-                        // Glassmorphism Card
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(300.dp),
-                            shape = RoundedCornerShape(32.dp),
-                            colors = CardDefaults.cardColors(Color.White.copy(0.7f)),
-                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.8f)),
-                            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
-                        ) {
-                            Box(
-                                Modifier
-                                    .fillMaxSize()
-                                    .background(
-                                        Brush.linearGradient(
-                                            colors = listOf(
-                                                data.cardTint.copy(alpha = 0.6f),
-                                                Color.White.copy(alpha = 0.3f)
-                                            )
-                                        )
-                                    ),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Image(
-                                    painter = painterResource(data.imageRes),
-                                    contentDescription = null,
-                                    contentScale = ContentScale.Fit,
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .padding(32.dp)
-                                        // Slight internal parallax for the image itself
-                                        .graphicsLayer { translationX = pageOffset * 50f }
-                                )
-                            }
-                        }
-
-                        // Floating Emoji Badge
                         Box(
-                            modifier = Modifier
-                                .offset(y = 28.dp)
-                                .size(64.dp)
-                                .graphicsLayer {
-                                    translationY = floatY * -1f
-                                    scaleX = pulse
-                                    scaleY = pulse
-                                    // Make emoji slightly rotate during swipe
-                                    rotationZ = pageOffset * 45f
-                                }
-                                .clip(CircleShape)
-                                .background(Color.White)
-                                .border(2.dp, data.cardTint, CircleShape),
-                            contentAlignment = Alignment.Center
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier.fillMaxSize()
                         ) {
-                            Text(data.emoji, fontSize = 28.sp)
+
+                            // BACKGROUND CIRCLE (Parallax Effect - moves faster)
+                            Box(
+                                modifier = Modifier
+                                    .size(230.dp)
+                                    .graphicsLayer {
+                                        translationX = pageOffset * 200f
+                                    }
+                                    .clip(CircleShape)
+                                    .background(MintCircle)
+                            )
+
+                            // PLANT IMAGE (Float + Parallax Effect - moves slower)
+                            Image(
+                                painter = painterResource(data.imageRes),
+                                contentDescription = data.title,
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier
+                                    .size(250.dp)
+                                    .graphicsLayer {
+                                        translationX = pageOffset * -50f
+                                        translationY = floatY
+                                        rotationZ = animatedRotation // Fixed naming collision here
+                                        scaleX = 1.05f
+                                        scaleY = 1.05f
+                                    }
+                            )
                         }
                     }
 
-                    Spacer(Modifier.height(50.dp))
+                    Spacer(Modifier.height(40.dp))
 
-                    // Animated Text
-                    Text(
-                        text = data.title,
-                        fontSize = 32.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = DarkGreen,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.graphicsLayer { translationX = textTranslationX }
-                    )
+                    // TITLE (Slide & Fade)
+                    AnimatedContent(
+                        targetState = data.title,
+                        transitionSpec = {
+                            (fadeIn(tween(400)) + slideInVertically(tween(400)) { it / 2 }) togetherWith
+                                    (fadeOut(tween(200)) + slideOutVertically(tween(200)) { -it / 2 })
+                        },
+                        label = "title_animation"
+                    ) { title ->
+                        Text(
+                            text = title,
+                            fontSize = 26.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = TitleColor,
+                            textAlign = TextAlign.Center
+                        )
+                    }
 
                     Spacer(Modifier.height(12.dp))
 
-                    Text(
-                        text = data.description,
-                        fontSize = 15.sp,
-                        color = TextMedium,
-                        textAlign = TextAlign.Center,
-                        lineHeight = 24.sp,
-                        modifier = Modifier.graphicsLayer { translationX = textTranslationX * 1.2f } // Description slides slightly faster
-                    )
-
-                    Spacer(Modifier.height(24.dp))
-
-                    // Animated Chips
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        modifier = Modifier.graphicsLayer { translationX = textTranslationX * 1.4f }
-                    ) {
-                        data.chips.forEach {
-                            FeatureChip(it, data.accentColor)
-                        }
+                    // DESCRIPTION (Slide & Fade delayed slightly)
+                    AnimatedContent(
+                        targetState = data.description,
+                        transitionSpec = {
+                            (fadeIn(tween(400, delayMillis = 100)) + slideInVertically(tween(400, delayMillis = 100)) { it / 3 }) togetherWith
+                                    (fadeOut(tween(200)))
+                        },
+                        label = "desc_animation"
+                    ) { description ->
+                        Text(
+                            text = description,
+                            fontSize = 14.sp,
+                            color = SubtitleColor,
+                            textAlign = TextAlign.Center,
+                            lineHeight = 22.sp,
+                            modifier = Modifier.padding(horizontal = 12.dp)
+                        )
                     }
                 }
             }
 
-            // --- DOT INDICATORS ---
+            // DOT INDICATORS
             Row(
-                modifier = Modifier.padding(bottom = 32.dp),
+                modifier = Modifier.padding(bottom = 20.dp),
                 horizontalArrangement = Arrangement.Center
             ) {
                 repeat(pages.size) { index ->
                     val isActive = index == pagerState.currentPage
 
-                    // Spring animation for smooth dot resizing
                     val width by animateDpAsState(
-                        targetValue = if (isActive) 28.dp else 10.dp,
-                        animationSpec = spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessLow),
-                        label = "dotWidth"
+                        targetValue = if (isActive) 28.dp else 8.dp,
+                        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+                        label = "dot_width"
                     )
 
                     val color by animateColorAsState(
-                        targetValue = if (isActive) DarkGreen else DotInactive,
-                        label = "dotColor"
+                        targetValue = if (isActive) DotActive else DotInactive,
+                        animationSpec = tween(300),
+                        label = "dot_color"
                     )
 
                     Box(
-                        Modifier
-                            .padding(horizontal = 4.dp)
-                            .height(10.dp)
+                        modifier = Modifier
+                            .padding(4.dp)
+                            .height(8.dp)
                             .width(width)
                             .clip(CircleShape)
                             .background(color)
@@ -343,7 +254,13 @@ fun OnboardingScreen(onGetStarted: () -> Unit) {
                 }
             }
 
-            // --- ANIMATED BUTTON ---
+            // BUTTON
+            val scaleBtn by animateFloatAsState(
+                targetValue = if (isLastPage) 1.02f else 1f,
+                animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+                label = "btn_scale"
+            )
+
             Button(
                 onClick = {
                     scope.launch {
@@ -353,35 +270,50 @@ fun OnboardingScreen(onGetStarted: () -> Unit) {
                 },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp)
-                    .height(60.dp),
+                    .padding(horizontal = 28.dp)
+                    .height(56.dp)
+                    .scale(scaleBtn),
                 shape = RoundedCornerShape(30.dp),
-                colors = ButtonDefaults.buttonColors(DarkGreen),
-                elevation = ButtonDefaults.buttonElevation(
-                    defaultElevation = 6.dp,
-                    pressedElevation = 2.dp
-                )
+                colors = ButtonDefaults.buttonColors(containerColor = DarkGreen)
             ) {
-                // Smooth transition between "CONTINUE" and "GET STARTED"
                 AnimatedContent(
                     targetState = isLastPage,
                     transitionSpec = {
-                        (slideInVertically { height -> height } + fadeIn()).togetherWith(
-                            slideOutVertically { height -> -height } + fadeOut())
+                        fadeIn(tween(300)) togetherWith fadeOut(tween(300))
                     },
-                    label = "buttonText"
-                ) { isLast ->
-                    Text(
-                        text = if (isLast) "GET STARTED" else "CONTINUE",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
-                        letterSpacing = 1.sp
-                    )
+                    label = "btn_content"
+                ) { last ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = if (last) "GET STARTED" else "NEXT",
+                            color = White,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 15.sp
+                        )
+
+                        // Animated Icon for the final page
+                        AnimatedVisibility(
+                            visible = last,
+                            enter = slideInHorizontally { it / 2 } + fadeIn(),
+                            exit = fadeOut()
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ArrowForward,
+                                contentDescription = null,
+                                tint = White,
+                                modifier = Modifier
+                                    .padding(start = 8.dp)
+                                    .size(18.dp)
+                            )
+                        }
+                    }
                 }
             }
 
-            Spacer(Modifier.height(32.dp))
+            Spacer(Modifier.height(28.dp))
         }
     }
 }
