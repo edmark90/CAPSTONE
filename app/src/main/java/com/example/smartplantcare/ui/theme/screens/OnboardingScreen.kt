@@ -31,7 +31,7 @@ import com.example.smartplantcare.R
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
-// COLORS
+
 private val DarkGreen = Color(0xFF1A3C2E)
 private val MintCircle = Color(0xFFE8F5E9)
 private val TitleColor = Color(0xFF1A1A1A)
@@ -72,7 +72,7 @@ fun OnboardingScreen(onGetStarted: () -> Unit) {
     val scope = rememberCoroutineScope()
     val isLastPage = pagerState.currentPage == pages.lastIndex
 
-    // INFINITE ANIMATIONS (Float & Gentle Rotation)
+
     val infiniteTransition = rememberInfiniteTransition(label = "float_rotate")
     val floatY by infiniteTransition.animateFloat(
         initialValue = 0f,
@@ -84,7 +84,7 @@ fun OnboardingScreen(onGetStarted: () -> Unit) {
         label = "floatY"
     )
 
-    // Renamed to animatedRotation to avoid collision with graphicsLayer's rotationZ
+
     val animatedRotation by infiniteTransition.animateFloat(
         initialValue = -2f,
         targetValue = 2f,
@@ -120,7 +120,8 @@ fun OnboardingScreen(onGetStarted: () -> Unit) {
             ) { page ->
 
                 val data = pages[page]
-                val pageOffset = (pagerState.currentPage - page) + pagerState.currentPageOffsetFraction
+                val pageOffset =
+                    (pagerState.currentPage - page) + pagerState.currentPageOffsetFraction
                 val absOffset = abs(pageOffset).coerceIn(0f, 1f)
 
                 Column(
@@ -128,7 +129,7 @@ fun OnboardingScreen(onGetStarted: () -> Unit) {
                         .fillMaxSize()
                         .padding(horizontal = 28.dp)
                         .graphicsLayer {
-                            // Entire page fade/scale
+
                             alpha = 1f - (absOffset * 0.35f)
                             scaleX = 1f - (absOffset * 0.05f)
                             scaleY = 1f - (absOffset * 0.05f)
@@ -139,7 +140,7 @@ fun OnboardingScreen(onGetStarted: () -> Unit) {
 
                     Spacer(Modifier.height(40.dp))
 
-                    // IMAGE CARD
+
                     Card(
                         shape = RoundedCornerShape(32.dp),
                         colors = CardDefaults.cardColors(containerColor = White),
@@ -206,7 +207,12 @@ fun OnboardingScreen(onGetStarted: () -> Unit) {
                     AnimatedContent(
                         targetState = data.description,
                         transitionSpec = {
-                            (fadeIn(tween(400, delayMillis = 100)) + slideInVertically(tween(400, delayMillis = 100)) { it / 3 }) togetherWith
+                            (fadeIn(tween(400, delayMillis = 100)) + slideInVertically(
+                                tween(
+                                    400,
+                                    delayMillis = 100
+                                )
+                            ) { it / 3 }) togetherWith
                                     (fadeOut(tween(200)))
                         },
                         label = "desc_animation"
