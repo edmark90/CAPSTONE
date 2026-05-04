@@ -21,12 +21,5 @@ object SystemUiController {
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
     }
 
-    fun showSystemBars(activity: Activity) {
-        val controller = WindowInsetsControllerCompat(
-            activity.window,
-            activity.window.decorView
-        )
 
-        controller.show(WindowInsetsCompat.Type.systemBars())
     }
-}

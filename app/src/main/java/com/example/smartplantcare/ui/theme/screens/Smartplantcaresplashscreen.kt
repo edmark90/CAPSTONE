@@ -35,11 +35,11 @@ private val SoftMint     = Color(0xFFE8F5E9) // Subtle glow
 
 private enum class SplashPhase {
     IDLE,
-    S_DROP,         // 'S' zooms in from huge to normal size smoothly
-    REVEAL_TEXT,    // 'MART PLANT CARE' slides out
-    REVEAL_LOGO,    // Potted plant pops on top, slogan below
-    HOLD,           // Hold for reading
-    FADE_OUT        // Transition out
+    S_DROP,
+    REVEAL_TEXT,
+    REVEAL_LOGO,
+    HOLD,
+    FADE_OUT
 }
 
 @SuppressLint("ContextCastToActivity")
@@ -80,7 +80,7 @@ fun SmartPlantCareSplashScreen(
         label = "screen_alpha"
     )
 
-    // Pulse effect for the logo once it appears
+
     val infiniteTransition = rememberInfiniteTransition(label = "glow_pulse")
     val glowPulse by infiniteTransition.animateFloat(
         initialValue = 0.5f, targetValue = 1f,
@@ -91,19 +91,19 @@ fun SmartPlantCareSplashScreen(
         label = "glow_alpha"
     )
 
-    // Orchestration Timing
+
     LaunchedEffect(Unit) {
         delay(300)
         phase = SplashPhase.S_DROP
-        delay(800)                      // Wait exactly 800ms for S to hit scale 1f
-        phase = SplashPhase.REVEAL_TEXT // 2. Slide out 'MART...' perfectly aligned
+        delay(800)
+        phase = SplashPhase.REVEAL_TEXT
         delay(700)
-        phase = SplashPhase.REVEAL_LOGO // 3. Pop Logo and Slogan
+        phase = SplashPhase.REVEAL_LOGO
         delay(2500)
         phase = SplashPhase.HOLD
         delay(100)
-        phase = SplashPhase.FADE_OUT    // 4. Fade to white
-        delay(800)
+        phase = SplashPhase.FADE_OUT
+        delay(300)
         onSplashFinished()
     }
 

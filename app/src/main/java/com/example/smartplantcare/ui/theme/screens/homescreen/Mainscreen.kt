@@ -61,7 +61,7 @@ sealed class BottomTab(
 ) {
     object Home : BottomTab("tab_home", "Home", Icons.Filled.Home, Icons.Outlined.Home)
     object MyPlants : BottomTab("tab_plants", "Plants", Icons.Filled.Yard, Icons.Outlined.Yard)
-    // IBINALIK SA CameraAlt
+
     object Camera : BottomTab("tab_camera", "Scan", Icons.Filled.CameraAlt, Icons.Outlined.CameraAlt, true)
     object AIDoctor : BottomTab("tab_doctor", "Doctor", Icons.Filled.MedicalServices, Icons.Outlined.MedicalServices)
     object Settings : BottomTab("tab_settings", "Settings", Icons.Filled.Settings, Icons.Outlined.Settings)
