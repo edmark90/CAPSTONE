@@ -126,7 +126,7 @@ fun LoginScreen(
                     }
             ) {
                 Image(
-                    painter            = painterResource(id = R.drawable.login_bg),
+                    painter            = painterResource(id = R.drawable.login),
                     contentDescription = null, // Set to null for accessibility (decorative)
                     modifier           = Modifier
                         .fillMaxSize()

@@ -131,7 +131,7 @@ fun SignUpScreen(
                     }
             ) {
                 Image(
-                    painter            = painterResource(id = R.drawable.signup_plant), // Use your plant image
+                    painter            = painterResource(id = R.drawable.signup ), // Use your plant image
                     contentDescription = null,
                     modifier           = Modifier
                         .fillMaxSize()

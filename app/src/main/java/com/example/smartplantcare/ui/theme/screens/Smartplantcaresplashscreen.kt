@@ -1,5 +1,7 @@
 package com.example.smartplantcare.ui.screens
 
+import android.annotation.SuppressLint
+import android.app.Activity
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
@@ -15,10 +17,12 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.smartplantcare.ui.theme.screens.SystemUiController
 import kotlinx.coroutines.delay
 
 
@@ -38,13 +42,20 @@ private enum class SplashPhase {
     FADE_OUT        // Transition out
 }
 
+@SuppressLint("ContextCastToActivity")
 @Composable
 fun SmartPlantCareSplashScreen(
     onSplashFinished: () -> Unit = {}
 ) {
+
+    val activity = LocalContext.current as Activity
+
+    SideEffect {
+        SystemUiController.hideSystemBars(activity)
+    }
     var phase by remember { mutableStateOf(SplashPhase.IDLE) }
 
-    // Phase Booleans for AnimatedVisibility
+
     val textVisible = phase.ordinal >= SplashPhase.REVEAL_TEXT.ordinal
     val logoVisible = phase.ordinal >= SplashPhase.REVEAL_LOGO.ordinal
 
@@ -83,7 +94,7 @@ fun SmartPlantCareSplashScreen(
     // Orchestration Timing
     LaunchedEffect(Unit) {
         delay(300)
-        phase = SplashPhase.S_DROP      // 1. Slam the 'S' down smoothly
+        phase = SplashPhase.S_DROP
         delay(800)                      // Wait exactly 800ms for S to hit scale 1f
         phase = SplashPhase.REVEAL_TEXT // 2. Slide out 'MART...' perfectly aligned
         delay(700)

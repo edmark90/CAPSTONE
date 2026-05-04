@@ -1,5 +1,7 @@
 package com.example.smartplantcare.ui.theme.screens
 
+import android.annotation.SuppressLint
+import android.app.Activity
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -22,6 +24,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -46,9 +49,16 @@ data class OnboardingPage(
     val description: String
 )
 
+@SuppressLint("ContextCastToActivity")
 @OptIn(ExperimentalFoundationApi::class, ExperimentalAnimationApi::class)
 @Composable
 fun OnboardingScreen(onGetStarted: () -> Unit) {
+
+    val activity = LocalContext.current as Activity
+
+    SideEffect {
+        SystemUiController.hideSystemBars(activity)
+    }
 
     val pages = listOf(
         OnboardingPage(
