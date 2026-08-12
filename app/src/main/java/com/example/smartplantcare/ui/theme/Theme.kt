@@ -1,4 +1,4 @@
-package com.smartplantcare.ui.theme
+package com.example.smartplantcare.ui.theme
 
 import android.app.Activity
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -10,7 +10,19 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
-import com.example.smartplantcare.ui.theme.*
+import com.example.smartplantcare.ui.theme.DarkGreen
+import com.example.smartplantcare.ui.theme.White
+import com.example.smartplantcare.ui.theme.SoftGreen
+import com.example.smartplantcare.ui.theme.LightGreen
+import com.example.smartplantcare.ui.theme.MediumGreen
+import com.example.smartplantcare.ui.theme.AccentGreen
+import com.example.smartplantcare.ui.theme.BackgroundWhite
+import com.example.smartplantcare.ui.theme.TextPrimary
+import com.example.smartplantcare.ui.theme.SurfaceWhite
+import com.example.smartplantcare.ui.theme.TextSecondary
+import com.example.smartplantcare.ui.theme.DividerGray
+import com.example.smartplantcare.ui.theme.ErrorRed
+import com.example.smartplantcare.ui.theme.PlantCareTypography
 
 
 private val LightColorScheme = lightColorScheme(

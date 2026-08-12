@@ -7,11 +7,14 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.rememberScrollableState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material3.*
@@ -119,7 +122,10 @@ fun OnboardingScreen(onGetStarted: () -> Unit) {
     ) {
 
         Column(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                ,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
 
@@ -137,6 +143,7 @@ fun OnboardingScreen(onGetStarted: () -> Unit) {
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
+                        .statusBarsPadding()
                         .padding(horizontal = 28.dp)
                         .graphicsLayer {
 
@@ -155,7 +162,9 @@ fun OnboardingScreen(onGetStarted: () -> Unit) {
                         shape = RoundedCornerShape(32.dp),
                         colors = CardDefaults.cardColors(containerColor = White),
                         elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
-                        modifier = Modifier.size(290.dp)
+                        modifier = Modifier
+                            .fillMaxWidth(0.8f)
+                            .aspectRatio(1f)
                     ) {
                         Box(
                             contentAlignment = Alignment.Center,

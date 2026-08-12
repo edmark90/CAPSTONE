@@ -18,6 +18,11 @@ import kotlin.math.roundToInt
 object ImageProcessor {
 
     private const val TAG = "ImageProcessor"
+    
+    // Image processing constants
+    private const val RGB_MAX_VALUE = 255
+    private const val MOBILENET_NORMALIZATION_FACTOR = 127.5f
+    private const val MOBILENET_NORMALIZATION_OFFSET = 1.0f
 
     /**
      * Decode a gallery URI and apply EXIF orientation so the bitmap is upright.
@@ -92,7 +97,7 @@ object ImageProcessor {
         return Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, true)
     }
 
-    private fun ensureArgb8888(source: Bitmap, recycleSource: Boolean): Bitmap {
+    fun ensureArgb8888(source: Bitmap, recycleSource: Boolean): Bitmap {
         return if (source.config == Bitmap.Config.ARGB_8888) {
             source
         } else {
@@ -175,9 +180,9 @@ object ImageProcessor {
             // tf.keras.applications.mobilenet_v2.preprocess_input: (pixel / 127.5) - 1.0 → [-1, 1]
             when (inputSpec.dataType) {
                 DataType.FLOAT32 -> {
-                    buffer.putFloat(r / 127.5f - 1.0f)
-                    buffer.putFloat(g / 127.5f - 1.0f)
-                    buffer.putFloat(b / 127.5f - 1.0f)
+                    buffer.putFloat(r / MOBILENET_NORMALIZATION_FACTOR - MOBILENET_NORMALIZATION_OFFSET)
+                    buffer.putFloat(g / MOBILENET_NORMALIZATION_FACTOR - MOBILENET_NORMALIZATION_OFFSET)
+                    buffer.putFloat(b / MOBILENET_NORMALIZATION_FACTOR - MOBILENET_NORMALIZATION_OFFSET)
                 }
                 DataType.UINT8, DataType.INT8 -> {
                     buffer.put(quantizeChannel(r, inputSpec))
@@ -190,10 +195,10 @@ object ImageProcessor {
     }
 
     private fun quantizeChannel(pixelValue: Int, spec: LeafClassifier.TensorSpec): Byte {
-        val realValue = pixelValue / 127.5f - 1.0f
+        val realValue = pixelValue / MOBILENET_NORMALIZATION_FACTOR - MOBILENET_NORMALIZATION_OFFSET
         val quantized = (realValue / spec.scale + spec.zeroPoint).roundToInt()
         return when (spec.dataType) {
-            DataType.UINT8 -> quantized.coerceIn(0, 255).toByte()
+            DataType.UINT8 -> quantized.coerceIn(0, RGB_MAX_VALUE).toByte()
             DataType.INT8 -> quantized.coerceIn(-128, 127).toByte()
             else -> quantized.toByte()
         }

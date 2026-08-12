@@ -46,11 +46,11 @@ enum class RejectedReason {
 object ClassificationMessages {
     // PERMANENT THRESHOLD LOGIC
     const val LOW_CONFIDENCE =
-        "Image is too blurry or unclear. Please capture the leaf again."
+        "Unable to confidently identify the plant or disease. Please try again."
     const val LOW_MARGIN =
         "This leaf could not be confidently distinguished from similar classes."
     const val UNKNOWN_LEAF =
-        "Uncertain — not a recognized leaf or image quality too low"
+        "Uncertain — not a recognized leaf. Please try again."
 
     fun messageFor(reason: RejectedReason): String = when (reason) {
         RejectedReason.LowConfidence -> LOW_CONFIDENCE

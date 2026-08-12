@@ -1,6 +1,6 @@
 package com.example.smartplantcare.navigation
 
-import android.app.Activity
+
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
@@ -9,7 +9,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.navigation.NavDestination.Companion.hierarchy
+
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -21,11 +21,13 @@ import com.example.smartplantcare.ui.theme.screens.OnboardingScreen
 import com.example.smartplantcare.ui.screens.SignUpScreen
 import com.example.smartplantcare.ui.screens.SmartPlantCareSplashScreen
 import com.example.smartplantcare.ui.theme.screens.homescreen.MainScreen
+import com.example.smartplantcare.ui.theme.screens.homescreen.SettingsViewModel
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.auth.api.signin.GoogleSignInStatusCodes
 import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.common.api.CommonStatusCodes
+import androidx.compose.ui.res.stringResource
 
 sealed class Screen(val route: String) {
     object Splash     : Screen("splash")
@@ -37,17 +39,17 @@ sealed class Screen(val route: String) {
 
 @Composable
 fun AppNavigation() {
-    val authViewModel: AuthViewModel = viewModel()
+    val context = LocalContext.current
+    val authViewModel: AuthViewModel = viewModel { AuthViewModel(context) }
     val uiState by authViewModel.uiState.collectAsState()
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
-    val context = LocalContext.current
 
     val googleSignInClient = GoogleSignIn.getClient(
         context,
         GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-            .requestIdToken(context.getString(R.string.default_web_client_id))
+            .requestIdToken(stringResource(R.string.default_web_client_id))
             .requestEmail()
             .build()
     )
@@ -95,6 +97,7 @@ fun AppNavigation() {
                 onSplashFinished = {
                     // Dito siya magdedesisyon kung sa Main o Onboarding pagtapos ng animasyon
                     val nextScreen = if (uiState.isAuthenticated) Screen.Main.route else Screen.Onboarding.route
+                    android.util.Log.d("AppNavigation", "Splash finished - isAuthenticated: ${uiState.isAuthenticated}, isGuest: ${uiState.isGuest}, nextScreen: $nextScreen")
 
                     navController.navigate(nextScreen) {
                         popUpTo(Screen.Splash.route) { inclusive = true }
@@ -126,6 +129,7 @@ fun AppNavigation() {
                 },
                 onSignUp         = { navController.navigate(Screen.SignUp.route) },
                 onForgotPassword = { /* TODO */ },
+                onGuestSignIn    = authViewModel::signInAsGuest,
                 onDismissError = authViewModel::clearError
             )
         }
@@ -143,12 +147,31 @@ fun AppNavigation() {
                     }
                 },
                 onLogin  = { navController.popBackStack() },
+                onGuestSignIn = authViewModel::signInAsGuest,
                 onDismissError = authViewModel::clearError
             )
         }
 
         composable(Screen.Main.route) {
-            MainScreen(authViewModel = authViewModel)
+            MainScreen(
+                authViewModel = authViewModel,
+                onNavigateToLogin = {
+                    authViewModel.signOut()
+                    navController.navigate(Screen.Login.route) {
+                        popUpTo(navController.graph.id) { inclusive = true }
+                        launchSingleTop = true
+                        restoreState = true
+                    }
+                },
+                onNavigateToSignUp = {
+                    authViewModel.signOut()
+                    navController.navigate(Screen.SignUp.route) {
+                        popUpTo(navController.graph.id) { inclusive = true }
+                        launchSingleTop = true
+                        restoreState = true
+                    }
+                }
+            )
         }
     }
 }

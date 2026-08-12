@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- App -->
+    <string name="app_name">SmartPlantCare</string>
+    <string name="unstable_connection">Hindi stable ang koneksyon</string>
+
+    <!-- Settings Screen -->
+    <string name="settings_title">Mga Setting</string>
+    <string name="settings_subtitle">I-customize ang iyong SmartPlantCare na karanasan.</string>
+    <string name="guest_user">Panauhing Gumagamit</string>
+    <string name="sign_in">Mag-sign In</string>
+    <string name="sign_up">Mag-sign Up</string>
+    <string name="edit_profile_name">I-edit ang Pangalan ng Profile</string>
+    <string name="change_password">Palitan ang Password</string>
+    <string name="sign_out">Mag-sign Out</string>
+    <string name="google_password_disabled">Naka-sign in ka gamit ang Google. Ang password ay pinamamahalaan ng iyong Google account.</string>
+    <string name="account">Account</string>
+    <string name="sign_in_to_sync">Mag-sign in upang i-sync ang iyong data</string>
+
+    <!-- Language Section -->
+    <string name="language">Wika</string>
+    <string name="english">English</string>
+    <string name="filipino">Filipino</string>
+    <string name="select_language">Pumili ng Wika</string>
+    <string name="done">Tapos na</string>
+
+    <!-- Notification Preferences -->
+    <string name="notification_preferences">MGA NOTIFICATION PREFERENCES</string>
+    <string name="notification_subtitle">Pamahalaan ang iyong pang-araw-araw na mga paalala sa pag-aalaga.</string>
+    <string name="morning_reminder">Paalala sa Umaga</string>
+    <string name="evening_reminder">Paalala sa Gabi</string>
+    <string name="reminder_time">Oras ng Paalala</string>
+    <string name="vibration">Bibrasyon</string>
+
+    <!-- Morning/Evening Messages -->
+    <string name="morning_title">🌅 Magandang Umaga!</string>
+    <string name="morning_message">Oras na para alagaan ang iyong mga halaman at simulan ang pang-araw-araw na pangangalaga.</string>
+    <string name="evening_title">🌆 Magandang Gabi!</string>
+    <string name="evening_message">Huwag kalimutang alagaan ang iyong mga halaman bago ang gabi.</string>
+
+    <!-- About Section -->
+    <string name="about_smartplantcare">TUNGKOL SA SMARTPLANTCARE</string>
+    <string name="app_version">Bersyon ng App</string>
+    <string name="ml_model">Modelong ML</string>
+    <string name="disease_classes">Mga Klase ng Sakit</string>
+    <string name="plantnet_connected">Konektado sa PlantNet</string>
+    <string name="framework">Framework</string>
+    <string name="database">Database</string>
+    <string name="hardware">Hardware</string>
+    <string name="privacy_policy">Patakaran sa Pagkapribado</string>
+    <string name="terms_of_service">Mga Tuntunin ng Serbisyo</string>
+    <string name="version_text">Bersyon 1.0.0</string>
+    <string name="yes">Oo</string>
+
+    <!-- Edit Name Dialog -->
+    <string name="edit_name_title">I-edit ang Pangalan ng Profile</string>
+    <string name="edit_name_label">Pangalan</string>
+    <string name="cancel">Kanselahin</string>
+    <string name="save">I-save</string>
+
+    <!-- Change Password Dialog -->
+    <string name="change_password_title">Palitan ang Password</string>
+    <string name="current_password">Kasalukuyang Password</string>
+    <string name="new_password">Bagong Password</string>
+    <string name="confirm_password">Kumpirmahin ang Password</string>
+    <string name="update_password">I-update</string>
+    <string name="password_requirements">Ang password ay dapat na hindi bababa sa 6 na karakter.</string>
+
+    <!-- Time Picker Dialog -->
+    <string name="select_time">Pumili ng Oras</string>
+    <string name="morning">Umaga</string>
+    <string name="evening">Gabi</string>
+
+    <!-- Sign Out Dialog -->
+    <string name="sign_out_title">Mag-sign Out</string>
+    <string name="sign_out_message">Sigurado ka bang gusto mong mag-sign out?</string>
+    <string name="confirm">Oo</string>
+
+    <!-- Snackbar Messages -->
+    <string name="profile_updated">Matagumpay na na-update ang pangalan ng profile.</string>
+    <string name="password_updated">Matagumpay na na-update ang password.</string>
+    <string name="password_mismatch">Hindi tugma ang mga bagong password.</string>
+    <string name="password_too_short">Ang password ay dapat na hindi bababa sa 6 na karakter.</string>
+    <string name="name_empty">Hindi maaaring walang laman ang pangalan.</string>
+    <string name="password_fields_required">Kailangan ang lahat ng field ng password.</string>
+    <string name="current_password_incorrect">Mali ang kasalukuyang password.</string>
+    <string name="network_error">Error sa network. Suriin ang iyong koneksyon sa internet.</string>
+    <string name="update_failed">Hindi na-update. Pakisubukan muli.</string>
+
+    <!-- Login Screen -->
+    <string name="welcome_back">Maligayang Pagbabalik</string>
+    <string name="sign_in_subtitle">Mag-sign in upang subaybayan ang iyong hardin.</string>
+    <string name="email_address">Email address</string>
+    <string name="password">Password</string>
+    <string name="forgot_password">Nakalimutan ang password?</string>
+    <string name="sign_in_button">MAG-SIGN IN</string>
+    <string name="or_continue_with">o magpatuloy gamit ang</string>
+    <string name="continue_with_google">Magpatuloy gamit ang Google</string>
+    <string name="continue_as_guest">Magpatuloy bilang Panauhin</string>
+    <string name="no_account">Wala kang account?</string>
+    <string name="sign_up_link">Mag-sign up</string>
+    <string name="dismiss">I-dismiss</string>
+
+    <!-- Sign Up Screen -->
+    <string name="create_account">Gumawa ng Account</string>
+    <string name="sign_up_subtitle">Sumali sa konektadong hardin.</string>
+    <string name="full_name">Buong Pangalan</string>
+    <string name="sign_up_button">MAG-SIGN UP</string>
+    <string name="have_account">May account ka na?</string>
+    <string name="log_in_link">Mag-log in</string>
+
+    <!-- Bottom Navigation -->
+    <string name="nav_home">Tahanan</string>
+    <string name="nav_plants">Mga Halaman</string>
+    <string name="nav_scan">I-scan</string>
+    <string name="nav_doctor">Doktor</string>
+    <string name="nav_settings">Mga Setting</string>
+
+    <!-- Other UI -->
+    <string name="insights">Mga Insight</string>
+    <string name="smartplantcare_text">SmartPlantCare</string>
+    <string name="profile">Profile</string>
+    <string name="arrow">Arrow</string>
+    <string name="email_icon">Icon ng Email</string>
+    <string name="lock_icon">Icon ng Lock</string>
+    <string name="toggle_password_visibility">I-toggle ang Visibility ng Password</string>
+    <string name="google_logo">Logo ng Google</string>
+    <string name="guest_icon">Icon ng Panauhin</string>
+    <string name="person_icon">Icon ng Tao</string>
+    <string name="back">Bumalik</string>
+    <string name="sign_up_subtitle_text">I-rehistro ang iyong mga halaman.</string>
+    <string name="grow_together">Lumago nang magkasama.</string>
+
+    <!-- Privacy Policy / Terms of Service -->
+    <string name="privacy_policy_url">https://smartplantcare.app/privacy</string>
+    <string name="terms_of_service_url">https://smartplantcare.app/terms</string>
+</resources>

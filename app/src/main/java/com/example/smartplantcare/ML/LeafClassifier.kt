@@ -88,6 +88,18 @@ class LeafClassifier(context: Context) {
      *   Pass 0 when the bitmap is already upright (e.g. after [ImageProcessor.loadBitmapFromUri]).
      */
     fun classify(bitmap: Bitmap, rotationDegrees: Int = 0): Result {
+        return classify(bitmap, rotationDegrees, null)
+    }
+
+    /**
+     * Classify a bitmap that is already decoded with plant type filtering.
+     * This is the new method that integrates with the plant identification pipeline.
+     *
+     * @param rotationDegrees Camera sensor rotation from [androidx.camera.core.ImageProxy.imageInfo].
+     *   Pass 0 when the bitmap is already upright (e.g. after [ImageProcessor.loadBitmapFromUri]).
+     * @param plantType The detected plant type for filtering disease classes. If null, no filtering is applied.
+     */
+    fun classify(bitmap: Bitmap, rotationDegrees: Int = 0, plantType: PlantType?): Result {
         return try {
             Log.d(TAG, "Classifying bitmap: ${bitmap.width}x${bitmap.height}, rotation: $rotationDegrees")
 
@@ -120,7 +132,7 @@ class LeafClassifier(context: Context) {
             Log.d(TAG, "Running inference")
             val probabilities = runInference(inputBuffer)
             Log.d(TAG, "Building result from probabilities")
-            buildResult(probabilities)
+            buildResult(probabilities, plantType)
         } catch (e: Exception) {
             Log.e(TAG, "Classification failed", e)
             errorResult(
@@ -137,7 +149,13 @@ class LeafClassifier(context: Context) {
     /** Load a gallery image with EXIF orientation applied, then classify. */
     fun classifyFromUri(uri: Uri): Result {
         val upright = ImageProcessor.loadBitmapFromUri(appContext, uri)
-        return classify(upright, rotationDegrees = 0)
+        return classify(upright, rotationDegrees = 0, plantType = null)
+    }
+
+    /** Load a gallery image with EXIF orientation applied, then classify with plant type filtering. */
+    fun classifyFromUri(uri: Uri, plantType: PlantType?): Result {
+        val upright = ImageProcessor.loadBitmapFromUri(appContext, uri)
+        return classify(upright, rotationDegrees = 0, plantType = plantType)
     }
 
     private fun runInference(inputBuffer: java.nio.ByteBuffer): FloatArray {
@@ -175,7 +193,22 @@ class LeafClassifier(context: Context) {
     }
 
     private fun buildResult(probabilities: FloatArray): Result {
-        val ranked = probabilities
+        return buildResult(probabilities, null)
+    }
+
+    /**
+     * Build classification result from probabilities with optional plant type filtering.
+     * When plantType is provided, only disease classes belonging to that plant are considered.
+     */
+    private fun buildResult(probabilities: FloatArray, plantType: PlantType?): Result {
+        val workingProbabilities = if (plantType != null && plantType != PlantType.UNKNOWN) {
+            Log.d(TAG, "Filtering probabilities for plant type: $plantType")
+            DiseaseFilter.filterProbabilities(probabilities, plantType)
+        } else {
+            probabilities
+        }
+
+        val ranked = workingProbabilities
             .mapIndexed { index, confidence -> index to confidence }
             .sortedByDescending { it.second }
 
@@ -189,6 +222,32 @@ class LeafClassifier(context: Context) {
         val margin = top1Confidence - top2Confidence
         val top1ClassName = labels[top1Index]
         val top2ClassName = labels[top2Index] ?: "unknown"
+
+        // If plant type is specified but the best class doesn't belong to it, reject
+        if (plantType != null && plantType != PlantType.UNKNOWN) {
+            if (!DiseaseFilter.isClassValidForPlant(top1Index, plantType)) {
+                Log.w(TAG, "Top class $top1Index ($top1ClassName) is not valid for plant type $plantType")
+                return errorResult(
+                    message = "No valid disease class found for ${plantType.getDisplayName()}",
+                    top1Index = top1Index,
+                    top1Confidence = top1Confidence,
+                    top2Confidence = top2Confidence,
+                    margin = margin,
+                    reason = RejectedReason.UnknownLeaf
+                )
+            }
+        } else if (plantType == PlantType.UNKNOWN) {
+            // If plant type is UNKNOWN, reject the classification
+            Log.w(TAG, "Plant type is UNKNOWN, rejecting classification")
+            return errorResult(
+                message = "Unable to identify plant type",
+                top1Index = top1Index,
+                top1Confidence = top1Confidence,
+                top2Confidence = top2Confidence,
+                margin = margin,
+                reason = RejectedReason.UnknownLeaf
+            )
+        }
 
         val classification = evaluateClassification(
             top1Index = top1Index,
@@ -357,8 +416,9 @@ class LeafClassifier(context: Context) {
         // False predictions should mostly fall BELOW these thresholds.
         // ------------------------------------------------
         // PERMANENT THRESHOLD LOGIC
-        private const val CONFIDENCE_THRESHOLD = 0.52f
-        private const val MARGIN_THRESHOLD = 0.12f
+        // These values are now centralized in AIConfig but kept here for backward compatibility
+        private const val CONFIDENCE_THRESHOLD = AIConfig.DISEASE_CONFIDENCE_THRESHOLD
+        private const val MARGIN_THRESHOLD = AIConfig.DISEASE_MARGIN_THRESHOLD
 
         const val UNCERTAIN_MESSAGE = ClassificationMessages.UNKNOWN_LEAF
     }

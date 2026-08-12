@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -34,6 +35,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -54,6 +56,7 @@ fun LoginScreen(
     onGoogleSignIn:   () -> Unit,
     onSignUp:         () -> Unit,
     onForgotPassword: () -> Unit,
+    onGuestSignIn:    () -> Unit,
     onDismissError:   () -> Unit
 ) {
     val activity = LocalContext.current as Activity
@@ -113,12 +116,13 @@ fun LoginScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(scrollState)
+                .padding()
         ) {
             // ── Hero image (With Parallax Effect) ─────────────────────────────
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(300.dp)
+                    .aspectRatio(16f / 10f)
                     .graphicsLayer {
                         // Creates the parallax effect on scroll
                         translationY = scrollState.value * 0.4f
@@ -157,11 +161,12 @@ fun LoginScreen(
                         .alpha(heroAlpha)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text       = "🪴",
-                            fontSize   = 24.sp
+                        Image(
+                            painter = painterResource(id = R.drawable.appslogo2),
+                            contentDescription = null,
+                            modifier = Modifier.size(34.dp)
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Spacer(modifier = Modifier.width(10.dp))
                         Text(
                             text       = "SmartPlant",
                             fontSize   = 28.sp,
@@ -215,7 +220,7 @@ fun LoginScreen(
                         horizontalAlignment = Alignment.Start
                     ) {
                         Text(
-                            text       = "Welcome back",
+                            text       = stringResource(R.string.welcome_back),
                             fontSize   = 28.sp,
                             fontWeight = FontWeight.ExtraBold,
                             color      = DarkGreen,
@@ -223,7 +228,7 @@ fun LoginScreen(
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text     = "Sign in to monitor your garden.",
+                            text     = stringResource(R.string.sign_in_subtitle),
                             fontSize = 15.sp,
                             color    = TextMedium
                         )
@@ -235,12 +240,11 @@ fun LoginScreen(
                     OutlinedTextField(
                         value         = email,
                         onValueChange = { email = it },
-                        modifier      = Modifier.fillMaxWidth(),
-                        placeholder   = { Text("Email address", color = TextLight, fontSize = 15.sp) },
+                        modifier      = Modifier.fillMaxWidth(),                          placeholder   = { Text(stringResource(R.string.email_address), color = TextLight, fontSize = 15.sp) },
                         leadingIcon   = {
                             Icon(
                                 imageVector        = Icons.Default.Email,
-                                contentDescription = "Email Icon",
+                                contentDescription = stringResource(R.string.email_icon),
                                 tint               = IconColor,
                                 modifier           = Modifier.size(22.dp)
                             )
@@ -268,12 +272,11 @@ fun LoginScreen(
                     OutlinedTextField(
                         value         = password,
                         onValueChange = { password = it },
-                        modifier      = Modifier.fillMaxWidth(),
-                        placeholder   = { Text("Password", color = TextLight, fontSize = 15.sp) },
+                        modifier      = Modifier.fillMaxWidth(),                          placeholder   = { Text(stringResource(R.string.password), color = TextLight, fontSize = 15.sp) },
                         leadingIcon   = {
                             Icon(
                                 imageVector        = Icons.Default.Lock,
-                                contentDescription = "Lock Icon",
+                                contentDescription = stringResource(R.string.lock_icon),
                                 tint               = IconColor,
                                 modifier           = Modifier.size(22.dp)
                             )
@@ -283,7 +286,7 @@ fun LoginScreen(
                                 Crossfade(targetState = passwordVisible, label = "PasswordVisibility") { isVisible ->
                                     Icon(
                                         imageVector        = if (isVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                        contentDescription = "Toggle Password Visibility",
+                                        contentDescription = stringResource(R.string.toggle_password_visibility),
                                         tint               = IconColor,
                                         modifier           = Modifier.size(22.dp)
                                     )
@@ -316,7 +319,7 @@ fun LoginScreen(
                     // ── Forgot password ───────────────────────────────────────
                     Box(modifier = Modifier.fillMaxWidth()) {
                         Text(
-                            text       = "Forgot password?",
+                            text       = stringResource(R.string.forgot_password),
                             fontSize   = 14.sp,
                             color      = DarkGreen,
                             fontWeight = FontWeight.SemiBold,
@@ -364,7 +367,7 @@ fun LoginScreen(
                                 )
                             } else {
                                 Text(
-                                    text          = "SIGN IN",
+                                    text          = stringResource(R.string.sign_in_button),
                                     fontSize      = 16.sp,
                                     fontWeight    = FontWeight.ExtraBold,
                                     color         = Color.White,
@@ -382,7 +385,7 @@ fun LoginScreen(
                     ) {
                         HorizontalDivider(modifier = Modifier.weight(1f), color = BorderColor)
                         Text(
-                            text          = "  or continue with  ",
+                            text          = stringResource(R.string.or_continue_with),
                             fontSize      = 13.sp,
                             color         = TextLight,
                             letterSpacing = 0.5.sp
@@ -411,12 +414,12 @@ fun LoginScreen(
                         ) {
                             Image(
                                 painter            = painterResource(id = R.drawable.ic_google),
-                                contentDescription = "Google Logo",
+                                contentDescription = stringResource(R.string.google_logo),
                                 modifier           = Modifier.size(24.dp)
                             )
                             Spacer(modifier = Modifier.width(12.dp))
                             Text(
-                                text       = "Continue with Google",
+                                text       = stringResource(R.string.continue_with_google),
                                 fontSize   = 15.sp,
                                 fontWeight = FontWeight.Bold,
                                 color      = TextDark
@@ -424,7 +427,53 @@ fun LoginScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(40.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // ── Continue as Guest ────────────────────────────────────────
+                    OutlinedButton(
+                        onClick  = onGuestSignIn,
+                        enabled  = !isLoading,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(52.dp),
+                        shape    = RoundedCornerShape(26.dp),
+                        border   = BorderStroke(
+                            1.5.dp,
+                            Brush.horizontalGradient(
+                                colors = listOf(
+                                    DarkGreen.copy(alpha = 0.25f),
+                                    DarkGreen.copy(alpha = 0.5f),
+                                    DarkGreen.copy(alpha = 0.25f)
+                                )
+                            )
+                        ),
+                        colors   = ButtonDefaults.outlinedButtonColors(
+                            containerColor = DarkGreen.copy(alpha = 0.04f),
+                            contentColor   = DarkGreen
+                        )
+                    ) {
+                        Row(
+                            verticalAlignment     = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                imageVector        = Icons.Outlined.Person,
+                                contentDescription = stringResource(R.string.guest_icon),
+                                tint               = DarkGreen,
+                                modifier           = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text       = stringResource(R.string.continue_as_guest),
+                                fontSize   = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color      = DarkGreen,
+                                letterSpacing = 0.2.sp
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(24.dp))
 
                     // ── Footer ────────────────────────────────────────────────
                     Row(
@@ -433,13 +482,13 @@ fun LoginScreen(
                         verticalAlignment     = Alignment.CenterVertically
                     ) {
                         Text(
-                            text     = "Don't have an account?",
+                            text     = stringResource(R.string.no_account),
                             fontSize = 15.sp,
                             color    = TextMedium
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text       = "Sign up",
+                            text       = stringResource(R.string.sign_up_link),
                             fontSize   = 15.sp,
                             fontWeight = FontWeight.ExtraBold,
                             color      = DarkGreen,
@@ -477,7 +526,7 @@ fun LoginScreen(
                                         modifier = Modifier.weight(1f)
                                     )
                                     Text(
-                                        text = "Dismiss",
+                                        text = stringResource(R.string.dismiss),
                                         color = DarkGreen,
                                         fontWeight = FontWeight.ExtraBold,
                                         fontSize = 13.sp,
