@@ -115,6 +115,9 @@ class PlantIdentifier(context: Context) {
                 bitmap
             }
 
+            // Center-crop to square so Stage 1 and Stage 2 inspect the exact same leaf region
+            working = ImageProcessor.centerCropSquare(working)
+
             // Ensure ARGB_8888 format
             working = ImageProcessor.ensureArgb8888(working, recycleSource = false)
 
@@ -293,7 +296,10 @@ class PlantIdentifier(context: Context) {
     }
 
     /**
-     * Fill input buffer with bitmap pixel data using MobileNetV2 preprocessing.
+     * Fill input buffer with bitmap pixel data normalized to [0.0f, 1.0f].
+     * Note: plantidentification.tflite's internal tfl.quantize operator uses
+     * scale = 1/255 (0.0039215688) and zero_point = -128, which maps [0.0f, 1.0f]
+     * to [-128, 127]. Passing [-1.0f, 1.0f] would clamp all negative values (< 128) to -128.
      */
     private fun fillInputBuffer(bitmap: Bitmap, buffer: ByteBuffer, inputSpec: TensorSpec) {
         val pixels = IntArray(
@@ -309,8 +315,8 @@ class PlantIdentifier(context: Context) {
             bitmap.height
         )
 
-        val MOBILENET_NORMALIZATION_FACTOR = 127.5f
-        val MOBILENET_NORMALIZATION_OFFSET = 1.0f
+        val NORMALIZATION_FACTOR = 255.0f
+        val NORMALIZATION_OFFSET = 0.0f
 
         for (pixel in pixels) {
             val r = pixel shr 16 and 0xFF
@@ -319,14 +325,14 @@ class PlantIdentifier(context: Context) {
 
             when (inputSpec.dataType) {
                 DataType.FLOAT32 -> {
-                    buffer.putFloat(r / MOBILENET_NORMALIZATION_FACTOR - MOBILENET_NORMALIZATION_OFFSET)
-                    buffer.putFloat(g / MOBILENET_NORMALIZATION_FACTOR - MOBILENET_NORMALIZATION_OFFSET)
-                    buffer.putFloat(b / MOBILENET_NORMALIZATION_FACTOR - MOBILENET_NORMALIZATION_OFFSET)
+                    buffer.putFloat(r / NORMALIZATION_FACTOR - NORMALIZATION_OFFSET)
+                    buffer.putFloat(g / NORMALIZATION_FACTOR - NORMALIZATION_OFFSET)
+                    buffer.putFloat(b / NORMALIZATION_FACTOR - NORMALIZATION_OFFSET)
                 }
                 DataType.UINT8, DataType.INT8 -> {
-                    buffer.put(quantizeChannel(r, inputSpec, MOBILENET_NORMALIZATION_FACTOR, MOBILENET_NORMALIZATION_OFFSET))
-                    buffer.put(quantizeChannel(g, inputSpec, MOBILENET_NORMALIZATION_FACTOR, MOBILENET_NORMALIZATION_OFFSET))
-                    buffer.put(quantizeChannel(b, inputSpec, MOBILENET_NORMALIZATION_FACTOR, MOBILENET_NORMALIZATION_OFFSET))
+                    buffer.put(quantizeChannel(r, inputSpec, NORMALIZATION_FACTOR, NORMALIZATION_OFFSET))
+                    buffer.put(quantizeChannel(g, inputSpec, NORMALIZATION_FACTOR, NORMALIZATION_OFFSET))
+                    buffer.put(quantizeChannel(b, inputSpec, NORMALIZATION_FACTOR, NORMALIZATION_OFFSET))
                 }
                 else -> throw IllegalStateException("Unsupported input dtype: ${inputSpec.dataType}")
             }

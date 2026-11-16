@@ -144,34 +144,28 @@ class TreatmentReminderWorker(
                 )
                 notificationHistoryRepository.saveNotification(notification)
 
-                // Re-schedule another overdue check in 12 hours ONLY if:
-                // 1. We are still within the 7-day treatment window
-                // 2. The plan is still active
-                // 3. The day is still the current incomplete day
-                val now = System.currentTimeMillis()
-                val sevenDaysMs = 7L * 24L * 60 * 60 * 1000
-                val planEndTime = plan.startDateMillis + sevenDaysMs
-                val nextOverdueTime = now + (12L * 60 * 60 * 1000)
-
-                // Only re-schedule if the NEXT overdue fire would still be within the 7-day window
-                if (nextOverdueTime < planEndTime) {
-                    val updatedPlan = repository.getPlan(planId)
-                    if (updatedPlan != null && updatedPlan.isActive) {
-                        val updatedCurrentDayIndex = updatedPlan.completedDays.indexOfFirst { !it }
-                        if (updatedCurrentDayIndex == dayIndex) {
-                            NotificationScheduler.scheduleOverdueReminder(
-                                applicationContext,
-                                updatedPlan,
-                                dayIndex
-                            )
-                        } else {
-                            android.util.Log.d("TreatmentReminderWorker", "Day $dayIndex was completed or skipped, not re-scheduling overdue")
-                        }
+                // Re-schedule reminders and another overdue check ONLY if:
+                // 1. The plan is still active
+                // 2. The day is still the current incomplete day
+                val updatedPlan = repository.getPlan(planId)
+                if (updatedPlan != null && updatedPlan.isActive) {
+                    val updatedCurrentDayIndex = updatedPlan.completedDays.indexOfFirst { !it }
+                    if (updatedCurrentDayIndex == dayIndex) {
+                        NotificationScheduler.scheduleDayReminders(
+                            applicationContext,
+                            updatedPlan,
+                            dayIndex
+                        )
+                        NotificationScheduler.scheduleOverdueReminder(
+                            applicationContext,
+                            updatedPlan,
+                            dayIndex
+                        )
                     } else {
-                        android.util.Log.d("TreatmentReminderWorker", "Plan deleted or inactive, not re-scheduling overdue")
+                        android.util.Log.d("TreatmentReminderWorker", "Day $dayIndex was completed or skipped, not re-scheduling overdue")
                     }
                 } else {
-                    android.util.Log.d("TreatmentReminderWorker", "Next overdue would exceed 7-day window, stopping overdue chain")
+                    android.util.Log.d("TreatmentReminderWorker", "Plan deleted or inactive, not re-scheduling overdue")
                 }
             }
         }

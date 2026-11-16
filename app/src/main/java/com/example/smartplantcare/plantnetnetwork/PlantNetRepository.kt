@@ -163,7 +163,12 @@ class PlantNetRepository(
             val decodeOpts = BitmapFactory.Options().apply {
                 inSampleSize = scale
             }
-            val bitmap = BitmapFactory.decodeFile(file.absolutePath, decodeOpts) ?: return null
+            val rawBitmap = BitmapFactory.decodeFile(file.absolutePath, decodeOpts) ?: return null
+            val rotation = com.example.smartplantcare.ML.ImageProcessor.readExifRotationDegrees(file.absolutePath)
+            val bitmap = com.example.smartplantcare.ML.ImageProcessor.orientBitmap(rawBitmap, rotation)
+            if (bitmap !== rawBitmap) {
+                rawBitmap.recycle()
+            }
 
             val outputFile = File(file.parent, "comp_${System.currentTimeMillis()}_${file.name}")
             ByteArrayOutputStream().use { baos ->

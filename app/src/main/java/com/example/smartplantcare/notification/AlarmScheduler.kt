@@ -60,9 +60,12 @@ class AlarmScheduler {
                 context,
                 "${planId}_day${dayIndex}_slot${slot}".hashCode(),
                 intent,
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_NO_CREATE
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_NO_CREATE
             )
-            pendingIntent?.let { alarmManager.cancel(it) }
+            pendingIntent?.let {
+                alarmManager.cancel(it)
+                it.cancel()
+            }
         }
     }
 }

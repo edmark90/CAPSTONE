@@ -20,11 +20,9 @@ object DailyAlarmScheduler {
      * its time, and on device boot.
      */
     fun schedule(context: Context, tag: String, hour: Int = 8, minute: Int = 0, title: String, message: String) {
-        val fixedHour = if (tag == "morning_reminder") 8 else 18
-        val fixedMinute = 0
         val calendar = Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, fixedHour)
-            set(Calendar.MINUTE, fixedMinute)
+            set(Calendar.HOUR_OF_DAY, hour)
+            set(Calendar.MINUTE, minute)
             set(Calendar.SECOND, 0)
             set(Calendar.MILLISECOND, 0)
         }
@@ -32,7 +30,7 @@ object DailyAlarmScheduler {
         if (calendar.timeInMillis <= now) {
             calendar.add(Calendar.DAY_OF_YEAR, 1)
         }
-        setAlarm(context, tag, calendar.timeInMillis, fixedHour, fixedMinute, title, message)
+        setAlarm(context, tag, calendar.timeInMillis, hour, minute, title, message)
     }
 
     /**
@@ -40,16 +38,14 @@ object DailyAlarmScheduler {
      * after the current day's reminder has fired.
      */
     fun scheduleNext(context: Context, tag: String, hour: Int = 8, minute: Int = 0, title: String, message: String) {
-        val fixedHour = if (tag == "morning_reminder") 8 else 18
-        val fixedMinute = 0
         val calendar = Calendar.getInstance().apply {
             add(Calendar.DAY_OF_YEAR, 1)
-            set(Calendar.HOUR_OF_DAY, fixedHour)
-            set(Calendar.MINUTE, fixedMinute)
+            set(Calendar.HOUR_OF_DAY, hour)
+            set(Calendar.MINUTE, minute)
             set(Calendar.SECOND, 0)
             set(Calendar.MILLISECOND, 0)
         }
-        setAlarm(context, tag, calendar.timeInMillis, fixedHour, fixedMinute, title, message)
+        setAlarm(context, tag, calendar.timeInMillis, hour, minute, title, message)
     }
 
     fun cancel(context: Context, tag: String) {
@@ -59,9 +55,12 @@ object DailyAlarmScheduler {
             context,
             tag.hashCode(),
             intent,
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_NO_CREATE
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_NO_CREATE
         )
-        pendingIntent?.let { alarmManager.cancel(it) }
+        pendingIntent?.let {
+            alarmManager.cancel(it)
+            it.cancel()
+        }
     }
 
     private fun setAlarm(context: Context, tag: String, triggerAtMillis: Long, hour: Int, minute: Int, title: String, message: String) {

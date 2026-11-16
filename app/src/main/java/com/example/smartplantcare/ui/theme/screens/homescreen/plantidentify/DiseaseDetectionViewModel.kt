@@ -11,6 +11,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.smartplantcare.ML.AIConfig
 import com.example.smartplantcare.ML.DetectionResult
+import com.example.smartplantcare.ML.ImageProcessor
 import com.example.smartplantcare.ML.LeafClassifier
 import com.example.smartplantcare.ML.PlantIdentifier
 import com.example.smartplantcare.ML.PlantPrediction
@@ -78,10 +79,12 @@ class DiseaseDetectionViewModel(
             try {
                 Log.d(TAG, "Starting detection pipeline for: ${imageFile.absolutePath}")
 
-                // Load bitmap from file
-                val bitmap = BitmapFactory.decodeFile(imageFile.absolutePath)
+                // Load bitmap from file with EXIF rotation applied
+                val bitmap = ImageProcessor.loadBitmapFromFile(imageFile)
                 if (bitmap == null) {
-                    uiState = DiseaseDetectionUiState.Error("Failed to load image")
+                    withContext(Dispatchers.Main) {
+                        uiState = DiseaseDetectionUiState.Error("Failed to load image")
+                    }
                     return@launch
                 }
 

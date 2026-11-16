@@ -1,4 +1,4 @@
-﻿package com.example.smartplantcare.data
+package com.example.smartplantcare.data
 
 import android.content.Context
 import android.graphics.Bitmap
@@ -30,7 +30,9 @@ object ImageUtils {
 
     fun loadBitmapFromPath(filePath: String): Bitmap? {
         return try {
-            BitmapFactory.decodeFile(filePath)
+            val decoded = BitmapFactory.decodeFile(filePath) ?: return null
+            val rotation = com.example.smartplantcare.ML.ImageProcessor.readExifRotationDegrees(filePath)
+            com.example.smartplantcare.ML.ImageProcessor.orientBitmap(decoded, rotation)
         } catch (e: Exception) {
             null
         }
@@ -64,12 +66,38 @@ object ImageUtils {
             options.inSampleSize = calculateInSampleSize(options, reqWidth, reqHeight)
             options.inJustDecodeBounds = false
 
-            if (isUri) {
+            val decoded = if (isUri) {
                 val uri = Uri.parse(imagePathOrUri)
                 resolver.openInputStream(uri).use { BitmapFactory.decodeStream(it, null, options) }
             } else {
                 BitmapFactory.decodeFile(imagePathOrUri, options)
+            } ?: return null
+
+            val rotation = if (isUri) {
+                try {
+                    val uri = Uri.parse(imagePathOrUri)
+                    resolver.openInputStream(uri).use { stream ->
+                        if (stream == null) 0 else {
+                            val exif = androidx.exifinterface.media.ExifInterface(stream)
+                            when (exif.getAttributeInt(
+                                androidx.exifinterface.media.ExifInterface.TAG_ORIENTATION,
+                                androidx.exifinterface.media.ExifInterface.ORIENTATION_NORMAL
+                            )) {
+                                androidx.exifinterface.media.ExifInterface.ORIENTATION_ROTATE_90 -> 90
+                                androidx.exifinterface.media.ExifInterface.ORIENTATION_ROTATE_180 -> 180
+                                androidx.exifinterface.media.ExifInterface.ORIENTATION_ROTATE_270 -> 270
+                                else -> 0
+                            }
+                        }
+                    }
+                } catch (_: Exception) {
+                    0
+                }
+            } else {
+                com.example.smartplantcare.ML.ImageProcessor.readExifRotationDegrees(imagePathOrUri)
             }
+
+            com.example.smartplantcare.ML.ImageProcessor.orientBitmap(decoded, rotation)
         } catch (e: Exception) {
             android.util.Log.e("ImageUtils", "Error loading resized bitmap: $imagePathOrUri", e)
             null

@@ -2,6 +2,7 @@ package com.example.smartplantcare.ML
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
 import android.graphics.Matrix
 import android.net.Uri
@@ -10,9 +11,11 @@ import android.provider.MediaStore
 import android.util.Log
 import androidx.exifinterface.media.ExifInterface
 import org.tensorflow.lite.DataType
+import java.io.File
 import java.io.InputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 object ImageProcessor {
@@ -26,14 +29,19 @@ object ImageProcessor {
 
     /**
      * Decode a gallery URI and apply EXIF orientation so the bitmap is upright.
-     * Training images on disk are read without extra rotation; EXIF must be applied here.
+     * Note: On Android 9+ (API 28+), ImageDecoder automatically applies EXIF orientation,
+     * so manual rotation is only needed on API < 28 to avoid double-rotating the image.
      */
     @Throws(Exception::class)
     fun loadBitmapFromUri(context: Context, uri: Uri): Bitmap {
         return try {
-            val rotation = readExifRotationDegrees(context, uri)
             val decoded = decodeBitmap(context, uri)
-            val result = orientBitmap(decoded, rotation)
+            val result = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
+                val rotation = readExifRotationDegrees(context, uri)
+                orientBitmap(decoded, rotation)
+            } else {
+                decoded
+            }
             // Don't recycle - let GC handle it to prevent "recycled bitmap" crashes
             result
         } catch (e: Exception) {
@@ -43,8 +51,22 @@ object ImageProcessor {
     }
 
     /**
+     * Decode an image file from disk and apply EXIF orientation so the bitmap is upright.
+     */
+    fun loadBitmapFromFile(file: File): Bitmap? {
+        return try {
+            val decoded = BitmapFactory.decodeFile(file.absolutePath) ?: return null
+            val rotation = readExifRotationDegrees(file.absolutePath)
+            orientBitmap(decoded, rotation)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load bitmap from file: ${file.absolutePath}", e)
+            null
+        }
+    }
+
+    /**
      * Shared preprocessing for camera and gallery — matches Python training:
-     * rotate → ARGB_8888 → stretch resize 224×224 → MobileNetV2 normalize/quantize.
+     * rotate → center-crop square → ARGB_8888 → resize 224×224 → MobileNetV2 normalize/quantize.
      */
     fun buildModelInput(
         source: Bitmap,
@@ -55,11 +77,11 @@ object ImageProcessor {
             android.util.Log.d(TAG, "Building model input from ${source.width}x${source.height} bitmap")
             
             var working = orientBitmap(source, rotationDegrees)
+            working = centerCropSquare(working)
 
             // Training uses RGB 3-channel images; Android Bitmaps are ARGB — drop alpha.
             working = ensureArgb8888(working, recycleSource = false)
 
-            // tf.image.resize(..., (224, 224)) — plain stretch, no center-crop or letterbox.
             val resized = Bitmap.createScaledBitmap(
                 working,
                 ModelConfig.INPUT_WIDTH,
@@ -90,11 +112,37 @@ object ImageProcessor {
 
     /** Apply rotation so pixel layout matches an upright photo (camera sensor / EXIF). */
     fun orientBitmap(source: Bitmap, rotationDegrees: Int): Bitmap {
-        if (rotationDegrees == 0) {
+        val normalizedRotation = ((rotationDegrees % 360) + 360) % 360
+        if (normalizedRotation == 0) {
             return source
         }
-        val matrix = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
+        val matrix = Matrix().apply { postRotate(normalizedRotation.toFloat()) }
         return Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, true)
+    }
+
+    /**
+     * Center-crop a rectangular bitmap to a 1:1 square so the leaf aspect ratio is preserved
+     * and surrounding background outside the square viewfinder is excluded before 224x224 scaling.
+     */
+    fun centerCropSquare(source: Bitmap): Bitmap {
+        val width = source.width
+        val height = source.height
+        if (width == height || width <= 0 || height <= 0) {
+            return source
+        }
+        val size = min(width, height)
+        val xOffset = (width - size) / 2
+        val yOffset = (height - size) / 2
+        return Bitmap.createBitmap(source, xOffset, yOffset, size, size)
+    }
+
+    fun readExifRotationDegrees(filePath: String): Int {
+        return try {
+            exifRotationFromInterface(ExifInterface(filePath))
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not read EXIF orientation from file: $filePath", e)
+            0
+        }
     }
 
     fun ensureArgb8888(source: Bitmap, recycleSource: Boolean): Bitmap {
@@ -137,15 +185,19 @@ object ImageProcessor {
     }
 
     private fun exifRotationFromStream(stream: InputStream): Int {
+        return exifRotationFromInterface(ExifInterface(stream))
+    }
+
+    private fun exifRotationFromInterface(exif: ExifInterface): Int {
         return when (
-            ExifInterface(stream).getAttributeInt(
+            exif.getAttributeInt(
                 ExifInterface.TAG_ORIENTATION,
                 ExifInterface.ORIENTATION_NORMAL
             )
         ) {
-            ExifInterface.ORIENTATION_ROTATE_90 -> 90
-            ExifInterface.ORIENTATION_ROTATE_180 -> 180
-            ExifInterface.ORIENTATION_ROTATE_270 -> 270
+            ExifInterface.ORIENTATION_ROTATE_90, ExifInterface.ORIENTATION_TRANSPOSE -> 90
+            ExifInterface.ORIENTATION_ROTATE_180, ExifInterface.ORIENTATION_FLIP_VERTICAL -> 180
+            ExifInterface.ORIENTATION_ROTATE_270, ExifInterface.ORIENTATION_TRANSVERSE -> 270
             else -> 0
         }
     }

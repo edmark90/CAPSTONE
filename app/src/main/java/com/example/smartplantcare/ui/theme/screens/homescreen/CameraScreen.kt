@@ -130,7 +130,8 @@ fun CameraScreen(
         uri?.let { selectedUri ->
             coroutineScope.launch {
                 try {
-                    val bitmap = ImageProcessor.loadBitmapFromUri(context, selectedUri)
+                    val loadedBitmap = ImageProcessor.loadBitmapFromUri(context, selectedUri)
+                    val bitmap = ImageProcessor.centerCropSquare(loadedBitmap)
                     processAndNavigate(bitmap)
                 } catch (e: Exception) {
                     scanError = "Error loading image: ${e.message}"
@@ -278,6 +279,7 @@ fun CameraScreen(
                         imageCapture.takePicture(ContextCompat.getMainExecutor(context), object : ImageCapture.OnImageCapturedCallback() {
                             override fun onCaptureSuccess(image: ImageProxy) {
                                 try {
+                                    val rotationDegrees = image.imageInfo.rotationDegrees
                                     val rawBitmap = image.toBitmap()
                                     image.close()
 
@@ -286,13 +288,19 @@ fun CameraScreen(
                                         return
                                     }
 
-                                    val bitmap = rawBitmap.copy(Bitmap.Config.ARGB_8888, false)
-                                    if (bitmap.width == 0 || bitmap.height == 0) {
+                                    val argbBitmap = rawBitmap.copy(Bitmap.Config.ARGB_8888, false)
+                                    if (argbBitmap.width == 0 || argbBitmap.height == 0) {
                                         scanError = "Invalid image dimensions"
                                         return
                                     }
 
-                                    android.util.Log.d("CameraScreen", "Bitmap captured: ${bitmap.width}x${bitmap.height}")
+                                    val orientedBitmap = ImageProcessor.orientBitmap(argbBitmap, rotationDegrees)
+                                    val bitmap = ImageProcessor.centerCropSquare(orientedBitmap)
+
+                                    android.util.Log.d(
+                                        "CameraScreen",
+                                        "Bitmap captured: raw=${argbBitmap.width}x${argbBitmap.height}, rotation=$rotationDegrees, cropped=${bitmap.width}x${bitmap.height}"
+                                    )
 
                                     // Set bitmap BEFORE showing animation so image appears immediately
                                     scanningBitmap = bitmap

@@ -218,7 +218,10 @@ fun NotificationHistoryScreen(
                                 notification = notifications[index],
                                 onClick = {
                                     viewModel.markAsRead(notifications[index].id)
-                                    onPlanClick(notifications[index].plantId)
+                                    val plantId = notifications[index].plantId
+                                    if (plantId.isNotBlank()) {
+                                        onPlanClick(plantId)
+                                    }
                                 },
                                 onDelete = { viewModel.deleteNotification(notifications[index].id) }
                             )

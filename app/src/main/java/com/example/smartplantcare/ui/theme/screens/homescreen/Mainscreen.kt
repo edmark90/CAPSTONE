@@ -116,7 +116,8 @@ fun MainScreen(
     val userProfile      by authViewModel.userProfile.collectAsState()
     val uiState          by authViewModel.uiState.collectAsState()
     val tabNavController = rememberNavController()
-    val planIdFromIntent = activity.intent?.getStringExtra("plan_id")
+    val mainActivity = activity as? com.example.smartplantcare.MainActivity
+    val planIdFromIntent = mainActivity?.pendingPlanId ?: activity.intent?.getStringExtra("plan_id")
     LaunchedEffect(planIdFromIntent) {
         if (!planIdFromIntent.isNullOrBlank()) {
             tabNavController.navigate(treatmentDetailRoute(planIdFromIntent)) {
@@ -125,7 +126,8 @@ fun MainScreen(
                 }
                 launchSingleTop = true
             }
-            activity.intent.removeExtra("plan_id")
+            mainActivity?.consumePendingPlanId()
+            activity.intent?.removeExtra("plan_id")
         }
     }
 

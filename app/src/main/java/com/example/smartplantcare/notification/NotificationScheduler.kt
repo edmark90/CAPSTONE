@@ -200,7 +200,12 @@ object NotificationScheduler {
         return c.timeInMillis
     }
 
-    fun scheduleDayBoundaryOverdueCheck(context: Context, plan: TreatmentPlan, dayIndex: Int, dayStartMs: Long = plan.startDateMillis + (dayIndex * DAY_MS)) {
+    fun scheduleDayBoundaryOverdueCheck(
+        context: Context,
+        plan: TreatmentPlan,
+        dayIndex: Int,
+        dayStartMs: Long = maxOf(plan.startDateMillis + (dayIndex * DAY_MS), getStartOfToday())
+    ) {
         val now = System.currentTimeMillis()
         val boundary = dayStartMs + DAY_MS
         val delay = boundary - now

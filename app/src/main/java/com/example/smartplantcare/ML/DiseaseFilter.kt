@@ -56,15 +56,25 @@ object DiseaseFilter {
             return filtered
         }
 
+        var sum = 0.0f
         for (i in probabilities.indices) {
             if (i in validIndices) {
                 filtered[i] = probabilities[i]
+                sum += probabilities[i]
             } else {
                 filtered[i] = 0.0f
             }
         }
 
-        Log.d(TAG, "Filtered probabilities for $plantType: valid indices=${validIndices.contentToString()}")
+        if (sum > 0.0f) {
+            for (i in validIndices) {
+                if (i in filtered.indices) {
+                    filtered[i] /= sum
+                }
+            }
+        }
+
+        Log.d(TAG, "Filtered probabilities for $plantType: valid indices=${validIndices.contentToString()}, preNormSum=$sum")
         return filtered
     }
 

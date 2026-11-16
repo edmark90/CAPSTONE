@@ -108,9 +108,16 @@ class SettingsViewModel(
             treatmentEveningMinute = treatmentEveningMinute
         )
 
-        // Daily reminders are fixed at 8 AM and 6 PM unconditionally
-        scheduleReminder(isMorning = true)
-        scheduleReminder(isMorning = false)
+        if (morningReminder) {
+            scheduleReminder(isMorning = true)
+        } else {
+            cancelReminder(isMorning = true)
+        }
+        if (eveningReminder) {
+            scheduleReminder(isMorning = false)
+        } else {
+            cancelReminder(isMorning = false)
+        }
     }
 
     private fun loadAuthState() {
@@ -382,7 +389,11 @@ class SettingsViewModel(
             treatmentMorningEnabled = enabled
         )
 
-        scheduleReminder(isMorning = true)
+        if (enabled) {
+            scheduleReminder(isMorning = true)
+        } else {
+            cancelReminder(isMorning = true)
+        }
         rescheduleActivePlans()
     }
 
@@ -396,7 +407,11 @@ class SettingsViewModel(
             treatmentEveningEnabled = enabled
         )
 
-        scheduleReminder(isMorning = false)
+        if (enabled) {
+            scheduleReminder(isMorning = false)
+        } else {
+            cancelReminder(isMorning = false)
+        }
         rescheduleActivePlans()
     }
 
@@ -429,8 +444,9 @@ class SettingsViewModel(
             treatmentMorningMinute = minute,
             showMorningTimePicker = false
         )
-        // Keep daily reminder fixed at 8 AM, but reschedule treatment plans with custom time
-        scheduleReminder(isMorning = true)
+        if (_state.value.morningReminder) {
+            scheduleReminder(isMorning = true)
+        }
         rescheduleActivePlans()
     }
 
@@ -448,8 +464,9 @@ class SettingsViewModel(
             treatmentEveningMinute = minute,
             showEveningTimePicker = false
         )
-        // Keep daily reminder fixed at 6 PM, but reschedule treatment plans with custom time
-        scheduleReminder(isMorning = false)
+        if (_state.value.eveningReminder) {
+            scheduleReminder(isMorning = false)
+        }
         rescheduleActivePlans()
     }
 
@@ -461,15 +478,14 @@ class SettingsViewModel(
     }
 
     private fun scheduleReminder(isMorning: Boolean) {
-        // Daily reminders are fixed: morning = 8:00 AM, evening = 6:00 PM (18:00)
-        val hour = if (isMorning) 8 else 18
-        val minute = 0
+        val hour = if (isMorning) _state.value.morningHour else _state.value.eveningHour
+        val minute = if (isMorning) _state.value.morningMinute else _state.value.eveningMinute
         val tag = if (isMorning) "morning_reminder" else "evening_reminder"
         val title = if (isMorning) "🌅 Good Morning!" else "🌆 Good Evening!"
         val message = if (isMorning) "Time to check on your plants and start the day's care routine."
             else "Don't forget to give your plants evening care before the night."
 
-        android.util.Log.d("SettingsViewModel", "Scheduling $tag reminder at fixed time $hour:$minute")
+        android.util.Log.d("SettingsViewModel", "Scheduling $tag reminder at $hour:$minute")
         DailyAlarmScheduler.schedule(
             context = context,
             tag = tag,

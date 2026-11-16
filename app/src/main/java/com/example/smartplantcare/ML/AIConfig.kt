@@ -8,9 +8,9 @@ package com.example.smartplantcare.ML
 object AIConfig {
     /**
      * Minimum confidence threshold for plant identification.
-     * Value: 0.25 (25% confidence required)
+     * Value: 0.60 (60% confidence required; a 3-class softmax always has max >= 0.333f)
      */
-    const val PLANT_THRESHOLD = 0.25f
+    const val PLANT_THRESHOLD = 0.60f
 
     /**
      * Minimum confidence threshold for disease classification.

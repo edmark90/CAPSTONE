@@ -269,7 +269,7 @@ class LeafClassifier(context: Context) {
         return Result(
             classification = classification,
             message = message,
-            probabilities = probabilities,
+            probabilities = workingProbabilities,
             top1Index = top1Index,
             top1Confidence = top1Confidence,
             top2Confidence = top2Confidence,
