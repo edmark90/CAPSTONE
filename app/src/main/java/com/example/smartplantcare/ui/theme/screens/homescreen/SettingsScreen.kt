@@ -15,6 +15,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -28,7 +29,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -36,8 +36,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.Font
-import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
@@ -48,34 +47,22 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.example.smartplantcare.R
-import com.example.smartplantcare.ui.theme.AccentGreen
-import com.example.smartplantcare.ui.theme.DarkGreen
 import com.example.smartplantcare.ui.theme.ErrorRed
-import com.example.smartplantcare.ui.theme.LightGreen
-import com.example.smartplantcare.ui.theme.MediumGreen
-import com.example.smartplantcare.ui.theme.OffWhite
 import com.example.smartplantcare.ui.theme.PrimaryGreen
 import com.example.smartplantcare.ui.theme.SoftGreen
 import com.example.smartplantcare.ui.theme.TextDark
 import com.example.smartplantcare.ui.theme.TextLight
 import com.example.smartplantcare.ui.theme.TextMedium
-import kotlinx.coroutines.launch
 
-// ─── Design Tokens (mirrors AIDoctorScreen) ──────────────────────────────────
-private val PageBg        = Color(0xFFF8FAF9)
-private val SurfaceWhite  = Color(0xFFFFFFFF)
-private val CardBorder    = Color(0xFFE8EFEA)
-private val MutedIconBg   = Color(0xFFEFF2F1)
-private val DividerLine   = Color(0xFFE8EFEA)
-
-private val InterFont = FontFamily(
-    Font(R.font.inter_black, FontWeight.Black),
-    Font(R.font.interbold, FontWeight.Bold),
-    Font(R.font.inter_semibold, FontWeight.SemiBold),
-    Font(R.font.inter_24pt_medium, FontWeight.Medium),
-    Font(R.font.inter_24pt_regular, FontWeight.Normal)
-)
+// ─── Design Tokens (shared from HomeUiTokens) ────────────────────────────────
+private val PageBg        = HomeColors.PageBg
+private val SurfaceWhite  = HomeColors.SurfaceWhite
+private val CardBorder    = HomeColors.CardBorder
+private val MutedIconBg   = HomeColors.PlaceholderBg
+private val DividerLine   = HomeColors.DividerLine
+private val InterFont     = HomeInterFont
 
 // ─── SettingsScreen ────────────────────────────────────────────────────────────
 @Composable
@@ -412,7 +399,12 @@ fun SettingsScreen(
 
     // ─── Main Layout ───────────────────────────────────────────────────────────
     Scaffold(
-        snackbarHost = { SnackbarHost(snackbarHostState) },
+        snackbarHost = {
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier.padding(bottom = 96.dp)
+            )
+        },
         containerColor = PageBg
     ) { paddingValues ->
         Column(
@@ -420,7 +412,7 @@ fun SettingsScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
                 .verticalScroll(rememberScrollState())
-                .padding(bottom = 24.dp),
+                .padding(bottom = HomeDimens.BottomBarClearance),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             HeaderSection()
@@ -524,25 +516,27 @@ fun HeaderSection() {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = stringResource(R.string.settings_title),
                         fontFamily = InterFont,
-                        fontSize = 26.sp,
+                        fontSize = 24.sp,
                         fontWeight = FontWeight.Bold,
                         color = TextDark
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = stringResource(R.string.settings_subtitle),
+                        fontFamily = InterFont,
                         fontSize = 13.sp,
                         color = TextMedium
                     )
                 }
+                Spacer(modifier = Modifier.width(12.dp))
                 Image(
                     painter = painterResource(id = R.drawable.appslogo2),
                     contentDescription = null,
-                    modifier = Modifier.size(48.dp)
+                    modifier = Modifier.size(44.dp)
                 )
             }
         }
@@ -701,8 +695,15 @@ fun GoogleProfileSection(
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (!photoUrl.isNullOrBlank()) {
+            val context = LocalContext.current
             AsyncImage(
-                model = photoUrl,
+                model = remember(photoUrl) {
+                    ImageRequest.Builder(context)
+                        .data(photoUrl)
+                        .size(160)
+                        .crossfade(false)
+                        .build()
+                },
                 contentDescription = stringResource(R.string.profile),
                 modifier = Modifier
                     .size(58.dp)
@@ -1299,8 +1300,13 @@ fun LanguageOption(label: String, isSelected: Boolean, onClick: () -> Unit) {
 @Composable
 fun TimeSpinner(value: Int, onIncrement: () -> Unit, onDecrement: () -> Unit) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        IconButton(onClick = onIncrement, modifier = Modifier.size(36.dp)) {
-            Text("▲", fontSize = 14.sp, color = PrimaryGreen)
+        IconButton(onClick = onIncrement, modifier = Modifier.size(42.dp)) {
+            Icon(
+                imageVector = Icons.Filled.KeyboardArrowUp,
+                contentDescription = "Increase",
+                tint = PrimaryGreen,
+                modifier = Modifier.size(26.dp)
+            )
         }
         Text(
             text = String.format("%02d", value),
@@ -1309,8 +1315,13 @@ fun TimeSpinner(value: Int, onIncrement: () -> Unit, onDecrement: () -> Unit) {
             fontWeight = FontWeight.Bold,
             color = TextDark
         )
-        IconButton(onClick = onDecrement, modifier = Modifier.size(36.dp)) {
-            Text("▼", fontSize = 14.sp, color = PrimaryGreen)
+        IconButton(onClick = onDecrement, modifier = Modifier.size(42.dp)) {
+            Icon(
+                imageVector = Icons.Filled.KeyboardArrowDown,
+                contentDescription = "Decrease",
+                tint = PrimaryGreen,
+                modifier = Modifier.size(26.dp)
+            )
         }
     }
 }
@@ -1418,9 +1429,9 @@ fun SectionTitle(title: String) {
 fun SettingsCard(content: @Composable () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = SurfaceWhite),
-        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         border = BorderStroke(1.dp, CardBorder)
     ) {
         Column { content() }
@@ -1504,6 +1515,15 @@ fun SettingsSwitchItem(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .then(
+                if (onCheckedChange != null) {
+                    Modifier.toggleable(
+                        value = isChecked,
+                        role = Role.Switch,
+                        onValueChange = onCheckedChange
+                    )
+                } else Modifier
+            )
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1531,7 +1551,7 @@ fun SettingsSwitchItem(
         )
         Switch(
             checked = isChecked,
-            onCheckedChange = onCheckedChange,
+            onCheckedChange = null,
             colors = SwitchDefaults.colors(
                 checkedThumbColor = Color.White,
                 checkedTrackColor = PrimaryGreen,

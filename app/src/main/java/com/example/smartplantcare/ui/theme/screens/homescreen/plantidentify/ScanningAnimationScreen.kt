@@ -1,34 +1,50 @@
 package com.example.smartplantcare.ui.theme.screens.homescreen.plantidentify
 
-import androidx.compose.animation.core.*
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.rememberAsyncImagePainter
-import java.io.File
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.ui.platform.LocalConfiguration
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import com.example.smartplantcare.ui.theme.screens.homescreen.HomeInterFont
 import kotlinx.coroutines.delay
+import java.io.File
 
-// Palette: layered dark greens instead of one flat color
 private val BgTop = Color(0xFF13221A)
 private val BgBottom = Color(0xFF0A130E)
 private val FramePanel = Color(0xFF1B3324)
@@ -39,20 +55,21 @@ private val AccentGreenDim = Color(0xFF16A34A)
 fun ScanningAnimationScreen(
     imageFile: File?
 ) {
+    val context = LocalContext.current
     val infiniteTransition = rememberInfiniteTransition(label = "scan_transition")
 
     val scanLinePosition by infiniteTransition.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 2000, easing = LinearEasing),
+            animation = tween(durationMillis = 1900, easing = LinearEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "scan_line"
     )
 
     val pulseAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.4f,
+        initialValue = 0.45f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
             animation = tween(durationMillis = 900, easing = FastOutSlowInEasing),
@@ -71,13 +88,15 @@ fun ScanningAnimationScreen(
         label = "glow"
     )
 
-    var messageIndex by remember { mutableStateOf(0) }
-    val messages = listOf(
-        "Identifying plant...",
-        "Analyzing leaf structure...",
-        "Matching species database...",
-        "Almost done..."
-    )
+    var messageIndex by remember { mutableIntStateOf(0) }
+    val messages = remember {
+        listOf(
+            "Identifying plant...",
+            "Analyzing leaf structure...",
+            "Matching species database...",
+            "Almost done..."
+        )
+    }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -86,28 +105,35 @@ fun ScanningAnimationScreen(
         }
     }
 
+    val imageRequest = remember(imageFile) {
+        imageFile?.let {
+            ImageRequest.Builder(context)
+                .data(it)
+                .size(640)
+                .crossfade(false)
+                .build()
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .statusBarsPadding()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(BgTop, BgBottom)
-                )
-            ),
+            .background(Brush.verticalGradient(colors = listOf(BgTop, BgBottom))),
         contentAlignment = Alignment.Center
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(32.dp)
+            verticalArrangement = Arrangement.spacedBy(28.dp)
         ) {
-
-            // ---- Ambient glow behind the frame ----
             Box(contentAlignment = Alignment.Center) {
                 Canvas(
                     modifier = Modifier
-                        .size(300.dp)
-                        .scale(glowScale)
+                        .size(290.dp)
+                        .graphicsLayer {
+                            scaleX = glowScale
+                            scaleY = glowScale
+                        }
                 ) {
                     drawCircle(
                         brush = Brush.radialGradient(
@@ -120,7 +146,7 @@ fun ScanningAnimationScreen(
                     )
                 }
 
-               val configuration = LocalConfiguration.current
+                val configuration = LocalConfiguration.current
                 val frameSize = if (configuration.screenHeightDp < 640) 180.dp else 240.dp
                 Box(
                     modifier = Modifier
@@ -129,15 +155,13 @@ fun ScanningAnimationScreen(
                         .background(FramePanel),
                     contentAlignment = Alignment.Center
                 ) {
-                    // Kung may valid file, i-render ito gamit ang proper aspect cropping layout parameters
-                    if (imageFile != null) {
-                        Image(
-                            painter = rememberAsyncImagePainter(model = imageFile),
+                    if (imageRequest != null) {
+                        AsyncImage(
+                            model = imageRequest,
                             contentDescription = "Plant to Analyze",
                             modifier = Modifier.fillMaxSize(),
                             contentScale = ContentScale.Crop
                         )
-                        // Subtle dark overlay so the scan line and corners stay readable over any photo
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -145,39 +169,31 @@ fun ScanningAnimationScreen(
                         )
                     }
 
-                    // Laser scan line dynamic animation overlay painter canvas
                     Canvas(modifier = Modifier.fillMaxSize()) {
                         val cornerRadiusPx = 24.dp.toPx()
                         val bracketLen = size.width * 0.14f
                         val strokeW = 3.dp.toPx()
 
-                        // Soft outer border, dim and constant
                         drawRoundRect(
-                            color = AccentGreen.copy(alpha = 0.18f),
+                            color = AccentGreen.copy(alpha = 0.2f),
                             cornerRadius = CornerRadius(cornerRadiusPx),
                             style = Stroke(width = strokeW)
                         )
 
-                        // Four corner brackets, viewfinder style, pulsing
                         val c = AccentGreen.copy(alpha = pulseAlpha)
                         val w = size.width
                         val h = size.height
                         val inset = strokeW / 2
 
-                        // top-left
                         drawLine(c, Offset(inset, inset + bracketLen), Offset(inset, inset), strokeWidth = strokeW)
                         drawLine(c, Offset(inset, inset), Offset(inset + bracketLen, inset), strokeWidth = strokeW)
-                        // top-right
                         drawLine(c, Offset(w - inset - bracketLen, inset), Offset(w - inset, inset), strokeWidth = strokeW)
                         drawLine(c, Offset(w - inset, inset), Offset(w - inset, inset + bracketLen), strokeWidth = strokeW)
-                        // bottom-left
                         drawLine(c, Offset(inset, h - inset - bracketLen), Offset(inset, h - inset), strokeWidth = strokeW)
                         drawLine(c, Offset(inset, h - inset), Offset(inset + bracketLen, h - inset), strokeWidth = strokeW)
-                        // bottom-right
                         drawLine(c, Offset(w - inset - bracketLen, h - inset), Offset(w - inset, h - inset), strokeWidth = strokeW)
                         drawLine(c, Offset(w - inset, h - inset - bracketLen), Offset(w - inset, h - inset), strokeWidth = strokeW)
 
-                        // Moving sweep line segment vector
                         val lineY = size.height * scanLinePosition
                         drawLine(
                             brush = Brush.horizontalGradient(
@@ -195,22 +211,22 @@ fun ScanningAnimationScreen(
                 }
             }
 
-            Text(
-                text = messages[messageIndex],
-                color = Color.White.copy(alpha = pulseAlpha),
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Medium,
-                style = MaterialTheme.typography.bodyLarge
-            )
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    text = messages[messageIndex],
+                    fontFamily = HomeInterFont,
+                    color = Color.White,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "Please wait while we identify your plant",
+                    fontFamily = HomeInterFont,
+                    color = Color.White.copy(alpha = 0.6f),
+                    fontSize = 13.sp
+                )
+            }
 
-            Text(
-                text = "Please wait while we identify your plant",
-                color = Color.White.copy(alpha = 0.55f),
-                fontSize = 13.sp,
-                style = MaterialTheme.typography.bodySmall
-            )
-
-            // Progress dots, one lit per message step
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 messages.indices.forEach { index ->
                     val active = index == messageIndex
@@ -219,7 +235,7 @@ fun ScanningAnimationScreen(
                             .size(if (active) 8.dp else 6.dp)
                             .clip(RoundedCornerShape(50))
                             .background(
-                                if (active) AccentGreen else Color.White.copy(alpha = 0.2f)
+                                if (active) AccentGreen else Color.White.copy(alpha = 0.25f)
                             )
                     )
                 }

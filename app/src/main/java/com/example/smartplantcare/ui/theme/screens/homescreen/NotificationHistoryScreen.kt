@@ -3,51 +3,76 @@ package com.example.smartplantcare.ui.theme.screens.homescreen
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.DoneAll
-import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Eco
 import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Schedule
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.WbSunny
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import com.example.smartplantcare.data.NotificationHistory
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.*
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.safeDrawing
-
-// ─── Color Palette ───────────────────────────────────────────────────────────
-private val PrimaryDark   = Color(0xFF0D2B1F)
-private val PrimaryGreen  = Color(0xFF1B4332)
-private val SoftGreen     = Color(0xFFE8F5E9)
-private val LightBg       = Color(0xFFF5F7F5)
-private val TextDark      = Color(0xFF1F2937)
-private val TextMedium    = Color(0xFF4B5563)
-private val TextLight     = Color(0xFF9CA3AF)
-private val Divider       = Color(0xFFE5E7EB)
-private val ReadCardBg    = Color(0xFFFFFFFF)
-private val UnreadCardBg  = Color(0xFFF0FDF4)
-private val StatusGreen   = Color(0xFF059669)
-private val StatusAmber   = Color(0xFFD97706)
-private val StatusRed     = Color(0xFFDC2626)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -59,83 +84,141 @@ fun NotificationHistoryScreen(
     val notifications by viewModel.notifications.collectAsState()
     val unreadCount by viewModel.unreadCount.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
+    var showClearDialog by remember { mutableStateOf(false) }
 
-    // Optimize: Only show badge when unreadCount changes
     val showBadge by remember(unreadCount) { derivedStateOf { unreadCount > 0 } }
 
     LaunchedEffect(Unit) {
         viewModel.loadNotifications()
     }
 
+    if (showClearDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearDialog = false },
+            title = {
+                Text(
+                    text = "Clear All Notifications",
+                    fontFamily = HomeInterFont,
+                    fontWeight = FontWeight.Bold,
+                    color = HomeColors.TextPrimary
+                )
+            },
+            text = {
+                Text(
+                    text = "Remove all notification history? This will not cancel your active reminders.",
+                    fontFamily = HomeInterFont,
+                    fontSize = 14.sp,
+                    color = HomeColors.TextSecondary
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.deleteAllNotifications()
+                        showClearDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = HomeColors.AlertRed),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Clear All", color = Color.White, fontWeight = FontWeight.SemiBold)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = { showClearDialog = false },
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, HomeColors.CardBorder)
+                ) {
+                    Text("Cancel", color = HomeColors.TextSecondary)
+                }
+            },
+            containerColor = HomeColors.SurfaceWhite,
+            shape = RoundedCornerShape(22.dp)
+        )
+    }
+
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            "Notifications",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 20.sp,
-                            color = PrimaryDark
-                        )
-                        if (showBadge) {
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Surface(
-                                color = Color(0xFFDC2626),
-                                shape = RoundedCornerShape(12.dp)
+            Column(modifier = Modifier.background(HomeColors.SurfaceWhite)) {
+                TopAppBar(
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "Notifications",
+                                fontFamily = HomeInterFont,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 19.sp,
+                                color = HomeColors.TextPrimary
+                            )
+                            if (showBadge) {
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Surface(
+                                    color = HomeColors.AlertRed,
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Text(
+                                        text = "$unreadCount new",
+                                        fontFamily = HomeInterFont,
+                                        color = Color.White,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                        }
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = onBackClick) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back",
+                                tint = HomeColors.TextPrimary
+                            )
+                        }
+                    },
+                    actions = {
+                        if (notifications.isNotEmpty() && unreadCount > 0) {
+                            TextButton(
+                                onClick = { viewModel.markAllAsRead() },
+                                colors = ButtonDefaults.textButtonColors(
+                                    contentColor = HomeColors.ForestPrimary
+                                )
                             ) {
+                                Icon(
+                                    imageVector = Icons.Default.DoneAll,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = "$unreadCount new",
-                                    color = Color.White,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                    text = "Mark read",
+                                    fontFamily = HomeInterFont,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold
                                 )
                             }
                         }
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBackClick) {
-                        Icon(
-                            Icons.Default.ArrowBack,
-                            contentDescription = "Back",
-                            tint = PrimaryDark
-                        )
-                    }
-                },
-                actions = {
-                    if (notifications.isNotEmpty() && unreadCount > 0) {
-                        TextButton(
-                            onClick = { viewModel.markAllAsRead() },
-                            colors = ButtonDefaults.textButtonColors(
-                                contentColor = PrimaryGreen
-                            )
-                        ) {
-                            Icon(
-                                Icons.Default.DoneAll,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                "Mark all read",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
+                        if (notifications.isNotEmpty()) {
+                            IconButton(onClick = { showClearDialog = true }) {
+                                Icon(
+                                    imageVector = Icons.Default.DeleteSweep,
+                                    contentDescription = "Clear all notifications",
+                                    tint = HomeColors.TextSecondary
+                                )
+                            }
                         }
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.White,
-                    scrolledContainerColor = Color.White
-                ),
-                windowInsets = WindowInsets.safeDrawing
-            )
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = HomeColors.SurfaceWhite,
+                        scrolledContainerColor = HomeColors.SurfaceWhite
+                    ),
+                    windowInsets = WindowInsets.statusBars
+                )
+                HorizontalDivider(color = HomeColors.DividerLine, thickness = 1.dp)
+            }
         },
-        containerColor = LightBg
+        containerColor = HomeColors.PageBg
     ) { innerPadding ->
         Box(
             modifier = Modifier
@@ -146,10 +229,11 @@ fun NotificationHistoryScreen(
                 isLoading -> {
                     CircularProgressIndicator(
                         modifier = Modifier.align(Alignment.Center),
-                        color = PrimaryGreen,
+                        color = HomeColors.ForestPrimary,
                         strokeWidth = 3.dp
                     )
                 }
+
                 notifications.isEmpty() -> {
                     Column(
                         modifier = Modifier
@@ -160,70 +244,75 @@ fun NotificationHistoryScreen(
                     ) {
                         Surface(
                             shape = CircleShape,
-                            color = SoftGreen,
+                            color = HomeColors.SoftMint,
                             modifier = Modifier.size(72.dp)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
-                                    Icons.Default.NotificationsOff,
+                                    imageVector = Icons.Default.NotificationsOff,
                                     contentDescription = null,
-                                    tint = PrimaryGreen.copy(alpha = 0.6f),
-                                    modifier = Modifier.size(36.dp)
+                                    tint = HomeColors.ForestMedium,
+                                    modifier = Modifier.size(34.dp)
                                 )
                             }
                         }
-                        Spacer(modifier = Modifier.height(20.dp))
+                        Spacer(modifier = Modifier.height(18.dp))
                         Text(
-                            "No notifications yet",
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = TextDark
+                            text = "No notifications yet",
+                            fontFamily = HomeInterFont,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = HomeColors.TextPrimary
                         )
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            "Your plant care reminders and alerts\nwill appear here",
-                            fontSize = 14.sp,
-                            color = TextMedium,
-                            lineHeight = 20.sp,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            text = "Your plant care reminders and alerts will appear here.",
+                            fontFamily = HomeInterFont,
+                            fontSize = 13.sp,
+                            color = HomeColors.TextSecondary,
+                            lineHeight = 19.sp,
+                            textAlign = TextAlign.Center
                         )
                     }
                 }
+
                 else -> {
-                    // Section header
                     LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .navigationBarsPadding(),
                         contentPadding = PaddingValues(
                             start = 16.dp,
                             end = 16.dp,
-                            top = 8.dp,
-                            bottom = 24.dp
+                            top = 12.dp,
+                            bottom = 28.dp
                         ),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         item {
                             Text(
-                                if (unreadCount > 0) "Recent" else "All notifications",
-                                fontSize = 13.sp,
+                                text = if (unreadCount > 0) "Recent" else "All notifications",
+                                fontFamily = HomeInterFont,
+                                fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                color = TextMedium,
-                                modifier = Modifier.padding(bottom = 4.dp, start = 4.dp)
+                                color = HomeColors.TextSecondary,
+                                modifier = Modifier.padding(bottom = 2.dp, start = 4.dp)
                             )
                         }
                         items(
-                            count = notifications.size,
-                            key = { index -> notifications[index].id }
-                        ) { index ->
+                            items = notifications,
+                            key = { it.id }
+                        ) { notification ->
                             NotificationItem(
-                                notification = notifications[index],
+                                notification = notification,
                                 onClick = {
-                                    viewModel.markAsRead(notifications[index].id)
-                                    val plantId = notifications[index].plantId
+                                    viewModel.markAsRead(notification.id)
+                                    val plantId = notification.plantId
                                     if (plantId.isNotBlank()) {
                                         onPlanClick(plantId)
                                     }
                                 },
-                                onDelete = { viewModel.deleteNotification(notifications[index].id) }
+                                onDelete = { viewModel.deleteNotification(notification.id) }
                             )
                         }
                     }
@@ -235,17 +324,32 @@ fun NotificationHistoryScreen(
 
 @Composable
 fun NotificationItem(
-    notification: com.example.smartplantcare.data.NotificationHistory,
+    notification: NotificationHistory,
     onClick: () -> Unit,
     onDelete: () -> Unit
 ) {
-    val dateFormat = SimpleDateFormat("MMM dd, yyyy", Locale.getDefault())
-    val timeFormat = SimpleDateFormat("h:mm a", Locale.getDefault())
-    val dateStr = dateFormat.format(Date(notification.timestamp))
-    val timeStr = timeFormat.format(Date(notification.timestamp))
+    val context = LocalContext.current
+    val formattedDateTime = remember(notification.timestamp) {
+        HomeDateFormatter.formatDateTime(notification.timestamp)
+    }
 
-    // Check if this is an overdue notification
     val isOverdue = notification.title.contains("Overdue", ignoreCase = true)
+    val isGeneralDaily = notification.plantId.isBlank()
+
+    val imageRequest = remember(notification.plantImageUrl) {
+        if (notification.plantImageUrl.isNotBlank()) {
+            val data: Any = if (notification.plantImageUrl.startsWith("/")) {
+                File(notification.plantImageUrl)
+            } else {
+                notification.plantImageUrl
+            }
+            ImageRequest.Builder(context)
+                .data(data)
+                .size(160)
+                .crossfade(false)
+                .build()
+        } else null
+    }
 
     Card(
         modifier = Modifier
@@ -254,203 +358,215 @@ fun NotificationItem(
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
             containerColor = when {
-                isOverdue -> Color(0xFFFFF8F8)
-                !notification.isRead -> Color(0xFFF7FCF8)
-                else -> Color.White
+                isOverdue -> Color(0xFFFFFAFA)
+                !notification.isRead -> Color(0xFFF5FBF7)
+                else -> HomeColors.SurfaceWhite
             }
         ),
-        elevation = CardDefaults.cardElevation(
-            defaultElevation = if (notification.isRead) 0.dp else 1.dp
-        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         border = BorderStroke(
             width = 1.dp,
             color = when {
-                isOverdue -> StatusRed.copy(alpha = 0.15f)
-                !notification.isRead -> PrimaryGreen.copy(alpha = 0.15f)
-                else -> Divider.copy(alpha = 0.5f)
+                isOverdue -> HomeColors.AlertRed.copy(alpha = 0.22f)
+                !notification.isRead -> HomeColors.ForestPrimary.copy(alpha = 0.22f)
+                else -> HomeColors.CardBorder
             }
         )
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .padding(14.dp),
             verticalAlignment = Alignment.Top
         ) {
-            // ─── Plant Image with Unread Badge Overlay ────────────────────
-            Box(
-                modifier = Modifier.size(56.dp)
-            ) {
+            Box(modifier = Modifier.size(52.dp)) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .clip(RoundedCornerShape(12.dp))
                         .background(
                             when {
-                                isOverdue -> Color(0xFFFEE2E2)
-                                !notification.isRead -> SoftGreen
-                                else -> Color(0xFFF3F4F6)
+                                isOverdue -> HomeColors.AlertBg
+                                !notification.isRead -> HomeColors.SoftMint
+                                else -> HomeColors.PlaceholderBg
                             }
                         ),
                     contentAlignment = Alignment.Center
                 ) {
-                    val imageModel = remember(notification.plantImageUrl) {
-                        if (notification.plantImageUrl.isNotBlank()) {
-                            val file = File(notification.plantImageUrl)
-                            if (file.exists()) android.net.Uri.fromFile(file) else notification.plantImageUrl
-                        } else null
-                    }
-
-                    if (imageModel != null) {
-                        AsyncImage(
-                            model = imageModel,
-                            contentDescription = "Plant",
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Crop
-                        )
-                    } else {
-                        Text(
-                            text = if (isOverdue) "⚠️" else "🌿",
-                            fontSize = 24.sp
-                        )
+                    when {
+                        imageRequest != null -> {
+                            AsyncImage(
+                                model = imageRequest,
+                                contentDescription = "Plant",
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Crop
+                            )
+                        }
+                        isOverdue -> {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = null,
+                                tint = HomeColors.AlertRed,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                        isGeneralDaily -> {
+                            Icon(
+                                imageVector = Icons.Default.WbSunny,
+                                contentDescription = null,
+                                tint = HomeColors.ForestMedium,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                        else -> {
+                            Icon(
+                                imageVector = Icons.Default.Eco,
+                                contentDescription = null,
+                                tint = HomeColors.ForestPrimary,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
                     }
                 }
 
-                // Clean notification badge overlay (dot) on top-right corner of the image
                 if (isOverdue || !notification.isRead) {
                     Box(
                         modifier = Modifier
-                            .size(12.dp)
-                            .offset(x = 4.dp, y = (-4).dp)
+                            .size(11.dp)
+                            .offset(x = 3.dp, y = (-3).dp)
                             .align(Alignment.TopEnd)
                             .clip(CircleShape)
                             .background(Color.White)
                             .padding(2.dp)
                             .clip(CircleShape)
-                            .background(
-                                if (isOverdue) StatusRed else PrimaryGreen
-                            )
+                            .background(if (isOverdue) HomeColors.AlertRed else HomeColors.ForestPrimary)
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.width(14.dp))
+            Spacer(modifier = Modifier.width(12.dp))
 
-            // ─── Notification Content ─────────────────────────────────────
             Column(modifier = Modifier.weight(1f)) {
-                // Plant name + status badges row
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
                         text = notification.plantName.ifBlank { notification.title },
-                        fontSize = 15.sp,
+                        fontFamily = HomeInterFont,
+                        fontSize = 14.sp,
                         fontWeight = FontWeight.Bold,
-                        color = when {
-                            isOverdue -> StatusRed
-                            else -> PrimaryDark
-                        },
+                        color = if (isOverdue) HomeColors.AlertRed else HomeColors.TextPrimary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
                     )
-                    
-                    Spacer(modifier = Modifier.width(8.dp))
-                    
-                    // Day Badge
-                    Surface(
-                        color = SoftGreen,
-                        shape = RoundedCornerShape(6.dp)
-                    ) {
-                        Text(
-                            text = "Day ${notification.day}",
-                            fontSize = 10.sp,
-                            color = PrimaryGreen,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
-                    }
-                    
+
                     Spacer(modifier = Modifier.width(6.dp))
 
-                    // Status Badge
-                    Surface(
-                        color = when {
-                            isOverdue -> StatusRed.copy(alpha = 0.1f)
-                            notification.isCompleted -> StatusGreen.copy(alpha = 0.1f)
-                            else -> StatusAmber.copy(alpha = 0.1f)
-                        },
-                        shape = RoundedCornerShape(6.dp)
-                    ) {
-                        Text(
-                            text = when {
-                                isOverdue -> "Overdue"
-                                notification.isCompleted -> "Done"
-                                else -> "Pending"
-                            },
-                            fontSize = 10.sp,
+                    if (isGeneralDaily) {
+                        Surface(
+                            color = HomeColors.SoftMint,
+                            shape = RoundedCornerShape(6.dp)
+                        ) {
+                            Text(
+                                text = "Daily",
+                                fontFamily = HomeInterFont,
+                                fontSize = 10.sp,
+                                color = HomeColors.ForestPrimary,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                            )
+                        }
+                    } else {
+                        Surface(
+                            color = HomeColors.SoftMint,
+                            shape = RoundedCornerShape(6.dp)
+                        ) {
+                            Text(
+                                text = "Day ${notification.day}",
+                                fontFamily = HomeInterFont,
+                                fontSize = 10.sp,
+                                color = HomeColors.ForestPrimary,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(5.dp))
+
+                        Surface(
                             color = when {
-                                isOverdue -> StatusRed
-                                notification.isCompleted -> StatusGreen
-                                else -> StatusAmber
+                                isOverdue -> HomeColors.AlertBg
+                                notification.isCompleted -> HomeColors.SuccessBg
+                                else -> HomeColors.WarningBg
                             },
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
+                            shape = RoundedCornerShape(6.dp)
+                        ) {
+                            Text(
+                                text = when {
+                                    isOverdue -> "Overdue"
+                                    notification.isCompleted -> "Done"
+                                    else -> "Pending"
+                                },
+                                fontFamily = HomeInterFont,
+                                fontSize = 10.sp,
+                                color = when {
+                                    isOverdue -> HomeColors.AlertRed
+                                    notification.isCompleted -> HomeColors.SuccessGreen
+                                    else -> HomeColors.WarningAmber
+                                },
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(5.dp))
 
-                // Message
                 Text(
                     text = notification.message,
+                    fontFamily = HomeInterFont,
                     fontSize = 13.sp,
-                    color = if (notification.isRead) TextMedium else TextDark,
+                    color = if (notification.isRead) HomeColors.TextSecondary else HomeColors.TextPrimary,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     lineHeight = 18.sp,
                     fontWeight = if (!notification.isRead) FontWeight.Medium else FontWeight.Normal
                 )
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(7.dp))
 
-                // Timestamp
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         imageVector = Icons.Default.Schedule,
                         contentDescription = null,
-                        tint = TextLight,
+                        tint = HomeColors.TextMuted,
                         modifier = Modifier.size(12.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        text = "$dateStr • $timeStr",
+                        text = formattedDateTime,
+                        fontFamily = HomeInterFont,
                         fontSize = 11.sp,
-                        color = TextLight,
+                        color = HomeColors.TextMuted,
                         fontWeight = FontWeight.Medium
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.width(4.dp))
 
-            // ─── Delete Button ────────────────────────────────────────────
             IconButton(
                 onClick = onDelete,
-                modifier = Modifier
-                    .size(36.dp)
-                    .padding(0.dp)
+                modifier = Modifier.size(34.dp)
             ) {
                 Icon(
-                    Icons.Default.Delete,
+                    imageVector = Icons.Default.Delete,
                     contentDescription = "Delete",
-                    tint = TextLight,
-                    modifier = Modifier.size(18.dp)
+                    tint = HomeColors.TextMuted,
+                    modifier = Modifier.size(17.dp)
                 )
             }
         }

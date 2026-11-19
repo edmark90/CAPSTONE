@@ -17,6 +17,20 @@ import android.util.Log
 object DiseaseFilter {
     private const val TAG = "DiseaseFilter"
 
+    private fun logDebug(msg: String) {
+        try {
+            Log.d(TAG, msg)
+        } catch (_: RuntimeException) {
+        }
+    }
+
+    private fun logWarn(msg: String) {
+        try {
+            Log.w(TAG, msg)
+        } catch (_: RuntimeException) {
+        }
+    }
+
     /**
      * Disease class indices for each plant type.
      * These indices correspond to the class_mapping.json file.
@@ -52,7 +66,7 @@ object DiseaseFilter {
         val filtered = FloatArray(probabilities.size)
 
         if (validIndices.isEmpty()) {
-            Log.w(TAG, "No valid class indices for plant type: $plantType")
+            logWarn("No valid class indices for plant type: $plantType")
             return filtered
         }
 
@@ -74,7 +88,7 @@ object DiseaseFilter {
             }
         }
 
-        Log.d(TAG, "Filtered probabilities for $plantType: valid indices=${validIndices.contentToString()}, preNormSum=$sum")
+        logDebug("Filtered probabilities for $plantType: valid indices=${validIndices.contentToString()}, preNormSum=$sum")
         return filtered
     }
 
@@ -89,7 +103,7 @@ object DiseaseFilter {
         val validIndices = getValidClassIndices(plantType)
 
         if (validIndices.isEmpty()) {
-            Log.w(TAG, "No valid class indices for plant type: $plantType")
+            logWarn("No valid class indices for plant type: $plantType")
             return null
         }
 
@@ -104,10 +118,10 @@ object DiseaseFilter {
         }
 
         return if (bestIndex >= 0) {
-            Log.d(TAG, "Best valid class for $plantType: index=$bestIndex confidence=$bestConfidence")
+            logDebug("Best valid class for $plantType: index=$bestIndex confidence=$bestConfidence")
             Pair(bestIndex, bestConfidence)
         } else {
-            Log.w(TAG, "No valid class found for $plantType")
+            logWarn("No valid class found for $plantType")
             null
         }
     }

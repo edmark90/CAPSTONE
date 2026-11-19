@@ -1,7 +1,8 @@
 package com.example.smartplantcare.ui.theme.screens.homescreen
 
-import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.widget.Toast
@@ -9,20 +10,57 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MedicalServices
-import androidx.compose.material.icons.filled.VolumeUp
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -32,42 +70,23 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.Font
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.example.smartplantcare.ML.DiseaseRepository
-import com.example.smartplantcare.R
-import com.example.smartplantcare.ui.theme.LightGray
-import com.example.smartplantcare.ui.theme.MediumGreen
-import com.example.smartplantcare.ui.theme.PrimaryGreen
-import com.example.smartplantcare.ui.theme.SoftGreen
-import com.example.smartplantcare.ui.theme.TextDark
-import com.example.smartplantcare.ui.theme.TextLight
-import com.example.smartplantcare.ui.theme.TextMedium
 import java.io.File
 import java.util.Locale
 
-// ─── Design Tokens (mirrors AIDoctorScreen / SettingsScreen) ────────────────
-private val PageBg        = Color(0xFFF8FAF9)
-private val SurfaceWhite  = Color(0xFFFFFFFF)
-private val CardBorder    = Color(0xFFE8EFEA)
-private val SuccessGreen  = Color(0xFF10B981)
-private val SuccessBg     = Color(0xFFECFDF5)
-private val AlertRed      = Color(0xFFEF4444)
-private val AlertBg       = Color(0xFFFEF2F2)
-private val PlaceholderBg = Color(0xFFEFF2F1)
-private val MutedIcon     = Color(0xFF9CA3AF)
-
-private val InterFont = FontFamily(
-    Font(R.font.inter_black, FontWeight.Black),
-    Font(R.font.interbold, FontWeight.Bold),
-    Font(R.font.inter_semibold, FontWeight.SemiBold),
-    Font(R.font.inter_24pt_medium, FontWeight.Medium),
-    Font(R.font.inter_24pt_regular, FontWeight.Normal)
+private data class WordSpan(
+    val word: String,
+    val startChar: Int,
+    val endChar: Int,
+    val globalIndex: Int
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -78,197 +97,297 @@ fun TreatmentPlanDetailScreen(
     onBackClick: () -> Unit
 ) {
     val plan by viewModel.selectedPlan.collectAsState()
-    LaunchedEffect(planId) { viewModel.loadPlan(planId) }
+    val isDetailLoading by viewModel.isDetailLoading.collectAsState()
+
+    LaunchedEffect(planId) {
+        if (planId.isNotBlank()) {
+            viewModel.loadPlan(planId)
+        }
+    }
 
     Scaffold(
-
         topBar = {
-
-            TopAppBar(
-                modifier = Modifier
-                    .windowInsetsPadding(WindowInsets.statusBars)
-                    .padding(top = 17.dp),
-                title = {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.fillMaxWidth().padding(end = 48.dp)
-                    ) {
+            Column(modifier = Modifier.background(HomeColors.SurfaceWhite)) {
+                CenterAlignedTopAppBar(
+                    windowInsets = WindowInsets.statusBars,
+                    title = {
                         val currentPlan = plan
                         val isHealthy = currentPlan?.isHealthy == true
-                        Text(
-                            currentPlan?.plantName?.ifBlank { "Unknown Plant" } ?: "Loading...",
-                            fontFamily = InterFont,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 18.sp,
-                            color = if (currentPlan == null) TextDark else if (isHealthy) MediumGreen else AlertRed
-                        )
-                        Spacer(Modifier.height(2.dp))
-                        val badgeColor = when {
-                            currentPlan == null -> SoftGreen
-                            isHealthy -> SuccessBg
-                            else -> AlertBg
-                        }
-                        val badgeTextColor = when {
-                            currentPlan == null -> MediumGreen
-                            isHealthy -> SuccessGreen
-                            else -> AlertRed
-                        }
-                        val badgeText = when {
-                            currentPlan == null -> "Loading"
-                            isHealthy -> "Healthy"
-                            else -> "In Care"
-                        }
-                        Surface(color = badgeColor, shape = RoundedCornerShape(50)) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(
-                                badgeText,
-                                fontSize = 10.sp,
-                                color = badgeTextColor,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
-                                fontWeight = FontWeight.SemiBold
+                                text = currentPlan?.plantName?.ifBlank { "Plant" }
+                                    ?: if (isDetailLoading) "Loading..." else "Treatment Plan",
+                                fontFamily = HomeInterFont,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 17.sp,
+                                color = when {
+                                    currentPlan == null -> HomeColors.TextPrimary
+                                    isHealthy -> HomeColors.ForestMedium
+                                    else -> HomeColors.AlertRed
+                                },
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
+                            Spacer(Modifier.height(2.dp))
+                            val badgeColor = when {
+                                currentPlan == null -> HomeColors.SoftMint
+                                isHealthy -> HomeColors.SuccessBg
+                                else -> HomeColors.AlertBg
+                            }
+                            val badgeTextColor = when {
+                                currentPlan == null -> HomeColors.ForestMedium
+                                isHealthy -> HomeColors.SuccessGreen
+                                else -> HomeColors.AlertRed
+                            }
+                            val badgeText = when {
+                                currentPlan == null -> if (isDetailLoading) "Loading" else "Unavailable"
+                                isHealthy -> "Healthy"
+                                currentPlan.completedCount >= 7 -> "Completed"
+                                else -> "In Care"
+                            }
+                            Surface(color = badgeColor, shape = RoundedCornerShape(50)) {
+                                Text(
+                                    text = badgeText,
+                                    fontFamily = HomeInterFont,
+                                    fontSize = 10.sp,
+                                    color = badgeTextColor,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
                         }
-                    }
-                },
-                navigationIcon = {
-                    Box(
-                        modifier = Modifier
-                            .padding(start = 8.dp)
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(SoftGreen),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        IconButton(onClick = onBackClick, modifier = Modifier.size(40.dp)) {
+                    },
+                    navigationIcon = {
+                        IconButton(
+                            onClick = onBackClick,
+                            modifier = Modifier
+                                .padding(start = 8.dp)
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(HomeColors.SoftMint)
+                        ) {
                             Icon(
-                                Icons.Default.ArrowBack,
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                                 contentDescription = "Back",
-                                tint = PrimaryGreen,
+                                tint = HomeColors.ForestPrimary,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = SurfaceWhite)
-            )
+                    },
+                    colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                        containerColor = HomeColors.SurfaceWhite
+                    )
+                )
+                HorizontalDivider(color = HomeColors.DividerLine, thickness = 1.dp)
+            }
         },
-        containerColor = PageBg
+        containerColor = HomeColors.PageBg
     ) { innerPadding ->
-        plan?.let { p ->
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding)
-                    .padding(horizontal = 20.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                // 1. Image & Match Badge Section
-                item { ImageHeaderSection(p.imageUrl, p.confidence) }
+        when {
+            plan != null -> {
+                val p = plan!!
+                val currentDayIndex = p.computedCurrentDayIndex
+                val tasks = remember(p.sevenDayPlan) {
+                    if (p.sevenDayPlan.size >= 7) p.sevenDayPlan.take(7)
+                    else p.sevenDayPlan + List(7 - p.sevenDayPlan.size) { "Upcoming treatment" }
+                }
 
-                // 2. Progress Overview Section
-                item { ProgressSection(p.completedCount, p.computedCurrentDayIndex) }
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding),
+                    contentPadding = PaddingValues(
+                        start = 20.dp,
+                        end = 20.dp,
+                        top = 16.dp,
+                        bottom = 32.dp
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    item { ImageHeaderSection(p.imageUrl, p.confidence) }
 
-                // 3. Disease Information Section
-                item { DiseaseInformationSection(p.diseaseName, p.isHealthy) }
+                    item { ProgressSection(p.completedCount, currentDayIndex) }
 
-                // 4. AI Doctor Notes Section
-                item { DoctorNotesSection() }
+                    item { DiseaseInformationSection(p.diseaseName, p.isHealthy) }
 
-                // 5. Treatment Schedule Header
-                item {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            "Treatment Schedule",
-                            fontFamily = InterFont,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 18.sp,
-                            color = TextDark,
-                            modifier = Modifier.padding(top = 8.dp)
+                    item {
+                        DoctorNotesSection(
+                            isHealthy = p.isHealthy,
+                            isCompleted = p.completedCount >= 7
                         )
-                        Spacer(Modifier.width(8.dp))
-                        Surface(color = SoftGreen, shape = RoundedCornerShape(50)) {
+                    }
+
+                    item {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(top = 4.dp)
+                        ) {
                             Text(
-                                "7 Days",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MediumGreen,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+                                text = "Treatment Schedule",
+                                fontFamily = HomeInterFont,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 17.sp,
+                                color = HomeColors.TextPrimary
                             )
+                            Spacer(Modifier.width(8.dp))
+                            Surface(color = HomeColors.SoftMint, shape = RoundedCornerShape(50)) {
+                                Text(
+                                    text = "7 Days",
+                                    fontFamily = HomeInterFont,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = HomeColors.ForestMedium,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    itemsIndexed(tasks) { index, task ->
+                        val dayNum = index + 1
+                        val isCompleted = p.completedDays.getOrElse(index) { false }
+                        val isCurrent = index == currentDayIndex
+                        val isLocked = index > currentDayIndex
+                        val isLast = index == tasks.lastIndex
+                        val displayTask = if (isCompleted || isCurrent) task else "Upcoming treatment"
+
+                        TimelineItem(
+                            dayNum = dayNum,
+                            task = displayTask,
+                            isCompleted = isCompleted,
+                            isCurrent = isCurrent,
+                            isLocked = isLocked,
+                            isLast = isLast,
+                            onMarkDone = { viewModel.toggleDayComplete(planId, index) },
+                            onUndo = { viewModel.undoDayComplete(planId, index) }
+                        )
+                    }
+
+                    item { Spacer(modifier = Modifier.navigationBarsPadding()) }
+                }
+            }
+
+            isDetailLoading -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(
+                        color = HomeColors.ForestPrimary,
+                        strokeWidth = 3.5.dp
+                    )
+                }
+            }
+
+            else -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding)
+                        .padding(32.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = "Treatment plan not found",
+                            fontFamily = HomeInterFont,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = HomeColors.TextPrimary
+                        )
+                        Text(
+                            text = "This plan may have been removed or is no longer available.",
+                            fontFamily = HomeInterFont,
+                            fontSize = 13.sp,
+                            color = HomeColors.TextSecondary,
+                            textAlign = TextAlign.Center
+                        )
+                        Button(
+                            onClick = onBackClick,
+                            shape = RoundedCornerShape(14.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = HomeColors.ForestPrimary)
+                        ) {
+                            Text("Go Back", color = Color.White, fontWeight = FontWeight.SemiBold)
                         }
                     }
                 }
-
-                // 6. Timeline List
-                val currentDayIndex = p.computedCurrentDayIndex
-                val tasks = if (p.sevenDayPlan.size >= 7) p.sevenDayPlan.take(7) else p.sevenDayPlan + List(7 - p.sevenDayPlan.size) { "Upcoming treatment" }
-                itemsIndexed(tasks) { index, task ->
-                    val dayNum = index + 1
-                    val isCompleted = p.completedDays.getOrElse(index) { false }
-                    val isCurrent = index == currentDayIndex
-                    val isLocked = index > currentDayIndex
-                    val isLast = index == tasks.lastIndex
-
-                    val displayTask = if (isCompleted || isCurrent) task else "Upcoming treatment"
-
-                    TimelineItem(
-                        dayNum = dayNum,
-                        task = displayTask,
-                        isCompleted = isCompleted,
-                        isCurrent = isCurrent,
-                        isLocked = isLocked,
-                        isLast = isLast,
-                        onMarkDone = { viewModel.toggleDayComplete(planId, index) },
-                        onUndo = { viewModel.undoDayComplete(planId, index) }
-                    )
-                }
-
-                item { Spacer(modifier = Modifier.height(24.dp)) }
             }
-        } ?: Box(Modifier.fillMaxSize(), Alignment.Center) {
-            CircularProgressIndicator(color = PrimaryGreen, strokeWidth = 4.dp)
         }
     }
 }
 
 @Composable
 fun ImageHeaderSection(imageUrl: String, confidence: Float) {
+    val context = LocalContext.current
+    val imageRequest = remember(imageUrl) {
+        if (imageUrl.isNotBlank()) {
+            val data: Any = if (imageUrl.startsWith("/")) File(imageUrl) else imageUrl
+            ImageRequest.Builder(context)
+                .data(data)
+                .size(1024)
+                .crossfade(false)
+                .build()
+        } else null
+    }
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(220.dp)
+            .height(210.dp)
             .clip(RoundedCornerShape(20.dp))
-            .background(PlaceholderBg),
+            .background(HomeColors.PlaceholderBg),
         contentAlignment = Alignment.Center
     ) {
-        val imageModel = remember(imageUrl) {
-            if (imageUrl.isNotBlank()) {
-                val file = File(imageUrl)
-                if (file.exists()) Uri.fromFile(file) else imageUrl
-            } else null
-        }
-
-        if (imageModel != null) {
-            AsyncImage(model = imageModel, contentDescription = "Plant", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        if (imageRequest != null) {
+            AsyncImage(
+                model = imageRequest,
+                contentDescription = "Plant",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
         } else {
-            Icon(Icons.Default.Image, contentDescription = null, tint = MutedIcon, modifier = Modifier.size(48.dp))
+            Icon(
+                imageVector = Icons.Default.Image,
+                contentDescription = null,
+                tint = HomeColors.TextMuted,
+                modifier = Modifier.size(44.dp)
+            )
         }
 
-        // Confidence Match Badge
-        val confidencePercentage = ((confidence * 100).toInt())
-        Surface(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(12.dp),
-            color = SurfaceWhite,
-            shape = RoundedCornerShape(50),
-            shadowElevation = 2.dp
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
+        val confidencePercentage = (confidence * 100).toInt()
+        if (confidencePercentage > 0) {
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(12.dp),
+                color = HomeColors.SurfaceWhite.copy(alpha = 0.95f),
+                shape = RoundedCornerShape(50),
+                border = BorderStroke(1.dp, HomeColors.CardBorder)
             ) {
-                Icon(Icons.Default.Check, contentDescription = null, tint = SuccessGreen, modifier = Modifier.size(14.dp))
-                Spacer(modifier = Modifier.width(5.dp))
-                Text("$confidencePercentage% Match", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = TextDark)
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = null,
+                        tint = HomeColors.SuccessGreen,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text(
+                        text = "$confidencePercentage% Match",
+                        fontFamily = HomeInterFont,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = HomeColors.TextPrimary
+                    )
+                }
             }
         }
     }
@@ -279,52 +398,68 @@ fun ProgressSection(completedCount: Int, currentDayIndex: Int) {
     val progress = (completedCount / 7f).coerceIn(0f, 1f)
     val percent = ((completedCount / 7f) * 100).toInt()
     val isComplete = completedCount >= 7
+
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = SurfaceWhite),
-        border = BorderStroke(1.dp, CardBorder),
-        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = HomeColors.SurfaceWhite),
+        border = BorderStroke(1.dp, HomeColors.CardBorder),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
-        Row(modifier = Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(contentAlignment = Alignment.Center, modifier = Modifier.size(64.dp)) {
+        Row(
+            modifier = Modifier.padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(contentAlignment = Alignment.Center, modifier = Modifier.size(62.dp)) {
                 CircularProgressIndicator(
                     progress = { progress },
                     modifier = Modifier.fillMaxSize(),
-                    color = if (isComplete) SuccessGreen else PrimaryGreen,
-                    trackColor = SoftGreen,
+                    color = if (isComplete) HomeColors.SuccessGreen else HomeColors.ForestPrimary,
+                    trackColor = HomeColors.SoftMint,
                     strokeWidth = 6.dp,
                     strokeCap = StrokeCap.Round
                 )
-                Text("$percent%", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = TextDark)
+                Text(
+                    text = "$percent%",
+                    fontFamily = HomeInterFont,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = HomeColors.TextPrimary
+                )
             }
-            Spacer(modifier = Modifier.width(20.dp))
+            Spacer(modifier = Modifier.width(18.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    if (isComplete) "Plan Completed" else "Day ${currentDayIndex + 1} of 7",
-                    fontFamily = InterFont,
+                    text = if (isComplete) "Plan Completed" else "Day ${currentDayIndex + 1} of 7",
+                    fontFamily = HomeInterFont,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp,
-                    color = TextDark
+                    fontSize = 17.sp,
+                    color = HomeColors.TextPrimary
                 )
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(3.dp))
                 Text(
-                    if (isComplete) "Great job! Your treatment plan is complete."
-                    else "Treatment Plan Progress",
+                    text = if (isComplete) "Great job! Your 7-day plan is finished."
+                    else "$completedCount of 7 treatment days completed",
+                    fontFamily = HomeInterFont,
                     fontSize = 13.sp,
-                    color = TextMedium,
+                    color = HomeColors.TextSecondary,
                     lineHeight = 18.sp
                 )
             }
             if (isComplete) {
                 Box(
                     modifier = Modifier
-                        .size(40.dp)
+                        .size(38.dp)
                         .clip(CircleShape)
-                        .background(SuccessBg),
+                        .background(HomeColors.SuccessBg),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Default.Check, contentDescription = null, tint = SuccessGreen, modifier = Modifier.size(20.dp))
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = null,
+                        tint = HomeColors.SuccessGreen,
+                        modifier = Modifier.size(18.dp)
+                    )
                 }
             }
         }
@@ -332,39 +467,56 @@ fun ProgressSection(completedCount: Int, currentDayIndex: Int) {
 }
 
 @Composable
-fun DoctorNotesSection() {
+fun DoctorNotesSection(
+    isHealthy: Boolean = false,
+    isCompleted: Boolean = false
+) {
+    val noteBody = when {
+        isHealthy -> "Your plant leaf looks healthy! Maintain consistent morning watering, good sunlight, and weekly leaf underside checks."
+        isCompleted -> "Your 7-day treatment schedule is finished. Keep monitoring new leaves for spots over the coming week."
+        else -> "Follow each daily step in order without skipping. Water cleanly at the soil base and inspect leaves for new spots daily."
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = SoftGreen),
-        border = BorderStroke(1.dp, Color(0xFFC8E6C9)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = HomeColors.SoftMint),
+        border = BorderStroke(1.dp, HomeColors.SoftMintStrong),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
-        Column(modifier = Modifier.padding(20.dp)) {
+        Column(modifier = Modifier.padding(18.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
-                        .size(36.dp)
+                        .size(34.dp)
                         .clip(CircleShape)
-                        .background(SurfaceWhite),
+                        .background(HomeColors.SurfaceWhite),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Default.MedicalServices, contentDescription = null, tint = MediumGreen, modifier = Modifier.size(18.dp))
+                    Icon(
+                        imageVector = Icons.Default.MedicalServices,
+                        contentDescription = null,
+                        tint = HomeColors.ForestMedium,
+                        modifier = Modifier.size(18.dp)
+                    )
                 }
-                Spacer(modifier = Modifier.width(12.dp))
+                Spacer(modifier = Modifier.width(10.dp))
                 Text(
-                    "AI DOCTOR NOTES",
-                    fontFamily = InterFont,
+                    text = "AI DOCTOR NOTES",
+                    fontFamily = HomeInterFont,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 12.sp,
-                    color = MediumGreen,
-                    letterSpacing = 0.5.sp
+                    fontSize = 11.sp,
+                    color = HomeColors.ForestPrimary,
+                    letterSpacing = 0.6.sp
                 )
             }
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(10.dp))
             Text(
-                "The disease appears to be improving. Continue following the treatment schedule consistently. Avoid overwatering and monitor for new spots every day.",
-                fontSize = 13.sp, color = TextMedium, lineHeight = 20.sp
+                text = noteBody,
+                fontFamily = HomeInterFont,
+                fontSize = 13.sp,
+                color = HomeColors.TextSecondary,
+                lineHeight = 19.sp
             )
         }
     }
@@ -373,43 +525,34 @@ fun DoctorNotesSection() {
 @Composable
 fun DiseaseInformationSection(diseaseName: String, isHealthy: Boolean) {
     val context = LocalContext.current
+    val mainHandler = remember { Handler(Looper.getMainLooper()) }
     var tts by remember { mutableStateOf<TextToSpeech?>(null) }
-    var currentWordIndex by remember { mutableStateOf(-1) }
-    var speakText by remember { mutableStateOf("") }
+    var currentWordIndex by remember { mutableIntStateOf(-1) }
     var isSpeaking by remember { mutableStateOf(false) }
     var ttsInitialized by remember { mutableStateOf(false) }
 
-    // Map disease name to repository key
     val diseaseKey = remember(diseaseName, isHealthy) {
         when {
-            isHealthy -> {
-                when {
-                    diseaseName.contains("Chili", ignoreCase = true) -> "Chili_Healthy_Leaf"
-                    diseaseName.contains("Eggplant", ignoreCase = true) -> "Eggplant_Healthy Leaf"
-                    diseaseName.contains("Tomato", ignoreCase = true) -> "Tomato_healthy"
-                    else -> null
-                }
+            isHealthy -> when {
+                diseaseName.contains("Chili", ignoreCase = true) -> "Chili_Healthy_Leaf"
+                diseaseName.contains("Eggplant", ignoreCase = true) -> "Eggplant_Healthy Leaf"
+                diseaseName.contains("Tomato", ignoreCase = true) -> "Tomato_healthy"
+                else -> null
             }
-            diseaseName.contains("Bacterial Spot", ignoreCase = true) -> {
-                when {
-                    diseaseName.contains("Chili", ignoreCase = true) -> "Chili_Bacterial_Spot"
-                    diseaseName.contains("Tomato", ignoreCase = true) -> "Tomato_Bacterial_spot"
-                    else -> null
-                }
+            diseaseName.contains("Bacterial Spot", ignoreCase = true) -> when {
+                diseaseName.contains("Chili", ignoreCase = true) -> "Chili_Bacterial_Spot"
+                diseaseName.contains("Tomato", ignoreCase = true) -> "Tomato_Bacterial_spot"
+                else -> null
             }
-            diseaseName.contains("Cercospora", ignoreCase = true) -> {
-                when {
-                    diseaseName.contains("Chili", ignoreCase = true) -> "Chili_Cercospora_Leaf_Spot"
-                    diseaseName.contains("Eggplant", ignoreCase = true) -> "Eggplant_Cercospora Leaf Spot"
-                    else -> null
-                }
+            diseaseName.contains("Cercospora", ignoreCase = true) -> when {
+                diseaseName.contains("Chili", ignoreCase = true) -> "Chili_Cercospora_Leaf_Spot"
+                diseaseName.contains("Eggplant", ignoreCase = true) -> "Eggplant_Cercospora Leaf Spot"
+                else -> null
             }
-            diseaseName.contains("Leaf Curl", ignoreCase = true) || diseaseName.contains("Curl Virus", ignoreCase = true) -> {
-                when {
-                    diseaseName.contains("Chili", ignoreCase = true) -> "Chili_Curl_Virus"
-                    diseaseName.contains("Tomato", ignoreCase = true) -> "Tomato__Tomato_YellowLeaf__Curl_Virus"
-                    else -> null
-                }
+            diseaseName.contains("Leaf Curl", ignoreCase = true) || diseaseName.contains("Curl Virus", ignoreCase = true) -> when {
+                diseaseName.contains("Chili", ignoreCase = true) -> "Chili_Curl_Virus"
+                diseaseName.contains("Tomato", ignoreCase = true) -> "Tomato__Tomato_YellowLeaf__Curl_Virus"
+                else -> null
             }
             diseaseName.contains("Nutrient", ignoreCase = true) || diseaseName.contains("Deficiency", ignoreCase = true) -> "Chili_Nutrition_Deficiency"
             diseaseName.contains("White Spot", ignoreCase = true) -> "Chili_White_Spot"
@@ -427,57 +570,84 @@ fun DiseaseInformationSection(diseaseName: String, isHealthy: Boolean) {
         }
     }
 
-    val diseaseData = remember(diseaseKey) {
-        DiseaseRepository.getDiseaseInfo(diseaseKey)
-    }
-
+    val diseaseData = remember(diseaseKey) { DiseaseRepository.getDiseaseInfo(diseaseKey) }
     val description = diseaseData.description
     val causes = diseaseData.causes
 
-    // Update speakText when data changes
-    LaunchedEffect(description, causes) {
-        speakText = "Description. $description. Causes. $causes"
+    // Precompute spoken text & word character intervals once when text changes (zero per-word allocations)
+    val ttsData = remember(description, causes) {
+        val descPrefix = "Description. "
+        val causesPrefix = ". Causes. "
+        val fullText = "$descPrefix$description$causesPrefix$causes"
+
+        val descWords = description.split(" ")
+        val causesWords = causes.split(" ")
+        val spans = ArrayList<WordSpan>(descWords.size + causesWords.size + 4)
+
+        var cursor = descPrefix.length
+        var globalIdx = 1
+        val descSpans = ArrayList<WordSpan>(descWords.size)
+        for (word in descWords) {
+            val end = cursor + word.length
+            val span = WordSpan(word, cursor, end, globalIdx++)
+            descSpans.add(span)
+            spans.add(span)
+            cursor = end + 1
+        }
+
+        cursor += causesPrefix.length - 1
+        val causeSpans = ArrayList<WordSpan>(causesWords.size)
+        for (word in causesWords) {
+            val end = cursor + word.length
+            val span = WordSpan(word, cursor, end, globalIdx++)
+            causeSpans.add(span)
+            spans.add(span)
+            cursor = end + 1
+        }
+
+        Triple(fullText, descSpans, causeSpans) to spans
     }
 
-    // Initialize TTS with UtteranceProgressListener
-    DisposableEffect(Unit) {
-        val textToSpeech = TextToSpeech(context) { status ->
+    val speakText = ttsData.first.first
+    val descSpans = ttsData.first.second
+    val causeSpans = ttsData.first.third
+    val allSpans = ttsData.second
+
+    DisposableEffect(context, allSpans) {
+        lateinit var textToSpeech: TextToSpeech
+        textToSpeech = TextToSpeech(context) { status ->
             if (status == TextToSpeech.SUCCESS) {
-                tts?.language = Locale.US
-                ttsInitialized = true
+                textToSpeech.language = Locale.US
+                mainHandler.post { ttsInitialized = true }
             }
         }
 
-        // Set up UtteranceProgressListener for word tracking
         textToSpeech.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {
-                currentWordIndex = 0
-                isSpeaking = true
+                mainHandler.post {
+                    currentWordIndex = 0
+                    isSpeaking = true
+                }
             }
 
             override fun onDone(utteranceId: String?) {
-                currentWordIndex = -1
-                isSpeaking = false
+                mainHandler.post {
+                    currentWordIndex = -1
+                    isSpeaking = false
+                }
             }
 
             override fun onError(utteranceId: String?) {
-                currentWordIndex = -1
-                isSpeaking = false
+                mainHandler.post {
+                    currentWordIndex = -1
+                    isSpeaking = false
+                }
             }
 
             override fun onRangeStart(utteranceId: String?, start: Int, end: Int, frame: Int) {
-                // Calculate word index based on character position
-                val fullText = speakText
-                val words = fullText.split(" ")
-                var charCount = 0
-                var wordIndex = 0
-                for (word in words) {
-                    if (start >= charCount && start < charCount + word.length) {
-                        currentWordIndex = wordIndex
-                        break
-                    }
-                    charCount += word.length + 1 // +1 for space
-                    wordIndex++
+                val match = allSpans.firstOrNull { start >= it.startChar && start < it.endChar }
+                if (match != null) {
+                    mainHandler.post { currentWordIndex = match.globalIndex }
                 }
             }
         })
@@ -485,83 +655,74 @@ fun DiseaseInformationSection(diseaseName: String, isHealthy: Boolean) {
         tts = textToSpeech
 
         onDispose {
-            tts?.stop()
-            tts?.shutdown()
+            mainHandler.removeCallbacksAndMessages(null)
+            textToSpeech.stop()
+            textToSpeech.shutdown()
             currentWordIndex = -1
             isSpeaking = false
             ttsInitialized = false
         }
     }
 
-    // Create annotated string with highlighting
-    val descriptionWords = description.split(" ")
-    val causesWords = causes.split(" ")
-    val descriptionWordOffset = 1 // "Description." is word 0
-
-    val annotatedDescription = remember(currentWordIndex, description) {
+    val annotatedDescription = remember(currentWordIndex, descSpans) {
         buildAnnotatedString {
-            descriptionWords.forEachIndexed { index, word ->
-                val globalIndex = index + descriptionWordOffset
-                val isHighlighted = currentWordIndex == globalIndex
-                if (isHighlighted) {
-                    withStyle(SpanStyle(background = PrimaryGreen, color = Color.White)) {
-                        append(word)
+            descSpans.forEachIndexed { i, span ->
+                if (currentWordIndex == span.globalIndex) {
+                    withStyle(SpanStyle(background = HomeColors.ForestPrimary, color = Color.White)) {
+                        append(span.word)
                     }
                 } else {
-                    append(word)
+                    append(span.word)
                 }
-                if (index < descriptionWords.lastIndex) {
-                    append(" ")
-                }
+                if (i < descSpans.lastIndex) append(" ")
             }
         }
     }
 
-    val annotatedCauses = remember(currentWordIndex, causes) {
+    val annotatedCauses = remember(currentWordIndex, causeSpans) {
         buildAnnotatedString {
-            causesWords.forEachIndexed { index, word ->
-                val globalIndex = index + descriptionWordOffset + descriptionWords.size
-                val isHighlighted = currentWordIndex == globalIndex
-                if (isHighlighted) {
-                    withStyle(SpanStyle(background = PrimaryGreen, color = Color.White)) {
-                        append(word)
+            causeSpans.forEachIndexed { i, span ->
+                if (currentWordIndex == span.globalIndex) {
+                    withStyle(SpanStyle(background = HomeColors.ForestPrimary, color = Color.White)) {
+                        append(span.word)
                     }
                 } else {
-                    append(word)
+                    append(span.word)
                 }
-                if (index < causesWords.lastIndex) {
-                    append(" ")
-                }
+                if (i < causeSpans.lastIndex) append(" ")
             }
         }
     }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = SurfaceWhite),
-        border = BorderStroke(1.dp, CardBorder),
-        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = HomeColors.SurfaceWhite),
+        border = BorderStroke(1.dp, HomeColors.CardBorder),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
-        Column(modifier = Modifier.padding(20.dp)) {
-            // Header
+        Column(modifier = Modifier.padding(18.dp)) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    if (isHealthy) "Plant Health" else "Disease Information",
-                    fontFamily = InterFont,
+                    text = if (isHealthy) "Plant Health" else "Disease Information",
+                    fontFamily = HomeInterFont,
                     fontWeight = FontWeight.Bold,
                     fontSize = 17.sp,
-                    color = TextDark,
+                    color = HomeColors.TextPrimary,
                     modifier = Modifier.weight(1f)
                 )
 
-                // Speaker Button
                 IconButton(
                     onClick = {
-                        if (ttsInitialized && !isSpeaking) {
+                        if (!ttsInitialized) return@IconButton
+                        if (isSpeaking) {
+                            tts?.stop()
+                            isSpeaking = false
+                            currentWordIndex = -1
+                        } else {
                             tts?.let { textToSpeech ->
                                 textToSpeech.stop()
                                 currentWordIndex = -1
@@ -571,55 +732,58 @@ fun DiseaseInformationSection(diseaseName: String, isHealthy: Boolean) {
                             }
                         }
                     },
-                    enabled = ttsInitialized && !isSpeaking,
+                    enabled = ttsInitialized,
                     modifier = Modifier
-                        .size(40.dp)
-                        .background(
-                            if (ttsInitialized && !isSpeaking) SoftGreen else LightGray,
-                            CircleShape
-                        )
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .background(if (isSpeaking) HomeColors.AlertBg else if (ttsInitialized) HomeColors.SoftMint else HomeColors.PlaceholderBg)
                 ) {
                     Icon(
-                        Icons.Default.VolumeUp,
-                        contentDescription = "Listen",
-                        tint = if (ttsInitialized && !isSpeaking) PrimaryGreen else MutedIcon,
-                        modifier = Modifier.size(20.dp)
+                        imageVector = if (isSpeaking) Icons.Default.Stop else Icons.AutoMirrored.Filled.VolumeUp,
+                        contentDescription = if (isSpeaking) "Stop listening" else "Listen",
+                        tint = when {
+                            isSpeaking -> HomeColors.AlertRed
+                            ttsInitialized -> HomeColors.ForestPrimary
+                            else -> HomeColors.TextMuted
+                        },
+                        modifier = Modifier.size(19.dp)
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
-            // Description
             Text(
-                "Description",
-                fontFamily = InterFont,
+                text = "Description",
+                fontFamily = HomeInterFont,
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 13.sp,
-                color = MediumGreen
+                color = HomeColors.ForestMedium
             )
             Spacer(modifier = Modifier.height(6.dp))
             Text(
-                annotatedDescription,
+                text = annotatedDescription,
+                fontFamily = HomeInterFont,
                 fontSize = 13.sp,
-                color = TextMedium,
+                color = HomeColors.TextSecondary,
                 lineHeight = 20.sp
             )
-            Spacer(modifier = Modifier.height(16.dp))
 
-            // Causes
+            Spacer(modifier = Modifier.height(14.dp))
+
             Text(
-                "Causes",
-                fontFamily = InterFont,
+                text = "Causes",
+                fontFamily = HomeInterFont,
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 13.sp,
-                color = MediumGreen
+                color = HomeColors.ForestMedium
             )
             Spacer(modifier = Modifier.height(6.dp))
             Text(
-                annotatedCauses,
+                text = annotatedCauses,
+                fontFamily = HomeInterFont,
                 fontSize = 13.sp,
-                color = TextMedium,
+                color = HomeColors.TextSecondary,
                 lineHeight = 20.sp
             )
         }
@@ -637,14 +801,14 @@ fun TimelineItem(
     onMarkDone: () -> Unit,
     onUndo: () -> Unit
 ) {
-    Row(modifier = Modifier
-        .fillMaxWidth()
-        .height(IntrinsicSize.Min)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(IntrinsicSize.Min)
     ) {
-        // Left Column: Icon and Vertical Line
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.width(44.dp)
+            modifier = Modifier.width(40.dp)
         ) {
             Box(
                 modifier = Modifier
@@ -652,26 +816,23 @@ fun TimelineItem(
                     .clip(CircleShape)
                     .background(
                         when {
-                            isCompleted -> PrimaryGreen
-                            isLocked -> Color(0xFFE9EDEB)
-                            else -> SurfaceWhite
+                            isCompleted -> HomeColors.ForestPrimary
+                            isLocked -> HomeColors.PlaceholderBg
+                            else -> HomeColors.SurfaceWhite
                         }
                     )
                     .border(
-                        when {
-                            isCurrent -> BorderStroke(2.dp, PrimaryGreen)
-                            isCompleted -> BorderStroke(2.dp, PrimaryGreen)
-                            else -> BorderStroke(1.dp, CardBorder)
-                        },
-                        CircleShape
+                        width = if (isCurrent || isCompleted) 2.dp else 1.dp,
+                        color = if (isCurrent || isCompleted) HomeColors.ForestPrimary else HomeColors.CardBorder,
+                        shape = CircleShape
                     ),
                 contentAlignment = Alignment.Center
             ) {
                 when {
-                    isCompleted -> Icon(Icons.Default.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
-                    isLocked -> Icon(Icons.Default.Lock, contentDescription = null, tint = MutedIcon, modifier = Modifier.size(16.dp))
-                    isCurrent -> Text("$dayNum", fontFamily = InterFont, fontWeight = FontWeight.Bold, color = PrimaryGreen, fontSize = 14.sp)
-                    else -> Text("$dayNum", fontFamily = InterFont, fontWeight = FontWeight.Bold, color = TextLight, fontSize = 14.sp)
+                    isCompleted -> Icon(Icons.Default.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(17.dp))
+                    isLocked -> Icon(Icons.Default.Lock, contentDescription = null, tint = HomeColors.TextMuted, modifier = Modifier.size(15.dp))
+                    isCurrent -> Text("$dayNum", fontFamily = HomeInterFont, fontWeight = FontWeight.Bold, color = HomeColors.ForestPrimary, fontSize = 13.sp)
+                    else -> Text("$dayNum", fontFamily = HomeInterFont, fontWeight = FontWeight.Bold, color = HomeColors.TextMuted, fontSize = 13.sp)
                 }
             }
 
@@ -681,47 +842,49 @@ fun TimelineItem(
                         .width(2.dp)
                         .weight(1f)
                         .padding(vertical = 4.dp)
-                        .background(if (isCompleted) PrimaryGreen.copy(alpha = 0.25f) else Color(0xFFE3EAE6))
+                        .background(
+                            if (isCompleted) HomeColors.ForestPrimary.copy(alpha = 0.3f)
+                            else HomeColors.DividerLine
+                        )
                 )
             }
         }
 
-        Spacer(modifier = Modifier.width(14.dp))
+        Spacer(modifier = Modifier.width(12.dp))
 
-        // Right Column: The Task Card
         Column(
             modifier = Modifier
                 .weight(1f)
-                .padding(bottom = if (isLast) 0.dp else 16.dp)
+                .padding(bottom = if (isLast) 0.dp else 14.dp)
         ) {
             val context = LocalContext.current
             if (isCurrent) {
-                // Highlighted Card for Today
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = SurfaceWhite),
-                    border = BorderStroke(1.5.dp, PrimaryGreen),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
+                    colors = CardDefaults.cardColors(containerColor = HomeColors.SurfaceWhite),
+                    border = BorderStroke(1.5.dp, HomeColors.ForestPrimary),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        Surface(color = SoftGreen, shape = RoundedCornerShape(50)) {
+                        Surface(color = HomeColors.SoftMint, shape = RoundedCornerShape(50)) {
                             Text(
-                                "Day $dayNum • Today",
-                                fontFamily = InterFont,
+                                text = "Day $dayNum • Today",
+                                fontFamily = HomeInterFont,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = PrimaryGreen,
+                                color = HomeColors.ForestPrimary,
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                             )
                         }
                         Spacer(modifier = Modifier.height(10.dp))
                         Text(
-                            task,
+                            text = task,
+                            fontFamily = HomeInterFont,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Medium,
                             lineHeight = 20.sp,
-                            color = TextDark
+                            color = HomeColors.TextPrimary
                         )
                         Spacer(modifier = Modifier.height(14.dp))
 
@@ -730,19 +893,25 @@ fun TimelineItem(
                                 onMarkDone()
                                 Toast.makeText(
                                     context,
-                                    "Today's treatment has been marked as completed.",
+                                    "Day $dayNum marked as completed.",
                                     Toast.LENGTH_SHORT
                                 ).show()
                             },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(48.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = PrimaryGreen),
+                                .height(46.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = HomeColors.ForestPrimary),
                             shape = RoundedCornerShape(12.dp)
                         ) {
                             Icon(Icons.Default.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Mark as Done", color = Color.White, fontFamily = InterFont, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = "Mark as Done",
+                                color = Color.White,
+                                fontFamily = HomeInterFont,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp
+                            )
                         }
                     }
                 }
@@ -750,13 +919,16 @@ fun TimelineItem(
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = if (isLocked) Color(0xFFF6F8F7) else SurfaceWhite),
-                    border = BorderStroke(1.dp, CardBorder)
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isLocked) Color(0xFFF3F6F4) else HomeColors.SurfaceWhite
+                    ),
+                    border = BorderStroke(1.dp, HomeColors.CardBorder),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
                 ) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(16.dp)
+                            .padding(14.dp)
                     ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -766,32 +938,33 @@ fun TimelineItem(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
                                     text = "Day $dayNum",
-                                    fontFamily = InterFont,
+                                    fontFamily = HomeInterFont,
                                     fontSize = 12.sp,
-                                    color = if (isLocked) TextLight else TextMedium,
+                                    color = if (isLocked) HomeColors.TextMuted else HomeColors.TextSecondary,
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 if (isCompleted) {
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Surface(color = SuccessBg, shape = RoundedCornerShape(50)) {
+                                    Surface(color = HomeColors.SuccessBg, shape = RoundedCornerShape(50)) {
                                         Text(
-                                            "Completed",
-                                            fontSize = 9.sp,
+                                            text = "Completed",
+                                            fontFamily = HomeInterFont,
+                                            fontSize = 10.sp,
                                             fontWeight = FontWeight.Bold,
-                                            color = SuccessGreen,
+                                            color = HomeColors.SuccessGreen,
                                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                                         )
                                     }
                                 }
                             }
 
-                            // Undo Button shows up here when the task is completed
                             if (isCompleted) {
                                 Text(
                                     text = "Undo",
-                                    fontSize = 13.sp,
+                                    fontFamily = HomeInterFont,
+                                    fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = AlertRed,
+                                    color = HomeColors.AlertRed,
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(6.dp))
                                         .clickable { onUndo() }
@@ -800,14 +973,14 @@ fun TimelineItem(
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(6.dp))
 
                         Text(
                             text = task,
-                            fontSize = 14.sp,
-                            color = if (isLocked) TextLight else TextDark,
-                            lineHeight = 20.sp,
-                            maxLines = Int.MAX_VALUE
+                            fontFamily = HomeInterFont,
+                            fontSize = 13.sp,
+                            color = if (isLocked) HomeColors.TextMuted else HomeColors.TextPrimary,
+                            lineHeight = 19.sp
                         )
                     }
                 }

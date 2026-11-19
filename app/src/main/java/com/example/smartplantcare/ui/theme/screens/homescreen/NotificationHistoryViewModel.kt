@@ -6,10 +6,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.smartplantcare.data.NotificationHistory
 import com.example.smartplantcare.data.NotificationHistoryRepository
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class NotificationHistoryViewModel(
     private val context: Context
@@ -37,8 +39,11 @@ class NotificationHistoryViewModel(
         viewModelScope.launch {
             try {
                 _isLoading.value = true
-                _notifications.value = repository.getAllNotifications()
-                _unreadCount.value = repository.getUnreadCount()
+                val (items, unread) = withContext(Dispatchers.IO) {
+                    repository.getAllNotifications() to repository.getUnreadCount()
+                }
+                _notifications.value = items
+                _unreadCount.value = unread
                 _isLoading.value = false
             } catch (e: Exception) {
                 Log.e("NotificationHistoryViewModel", "Failed to load notifications", e)
@@ -50,7 +55,7 @@ class NotificationHistoryViewModel(
     fun loadUnreadCount() {
         viewModelScope.launch {
             try {
-                _unreadCount.value = repository.getUnreadCount()
+                _unreadCount.value = withContext(Dispatchers.IO) { repository.getUnreadCount() }
             } catch (e: Exception) {
                 Log.e("NotificationHistoryViewModel", "Failed to load unread count", e)
                 _unreadCount.value = 0
@@ -61,12 +66,13 @@ class NotificationHistoryViewModel(
     fun markAsRead(id: String) {
         viewModelScope.launch {
             try {
-                repository.markAsRead(id)
-                // Optimize: Update local state instead of reloading from database
-                _notifications.value = _notifications.value.map {
+                // Optimistic local UI update for instant zero-lag feedback
+                val updated = _notifications.value.map {
                     if (it.id == id) it.copy(isRead = true) else it
                 }
-                _unreadCount.value = _notifications.value.count { !it.isRead }
+                _notifications.value = updated
+                _unreadCount.value = updated.count { !it.isRead }
+                withContext(Dispatchers.IO) { repository.markAsRead(id) }
             } catch (e: Exception) {
                 Log.e("NotificationHistoryViewModel", "Failed to mark as read", e)
             }
@@ -76,10 +82,9 @@ class NotificationHistoryViewModel(
     fun markAllAsRead() {
         viewModelScope.launch {
             try {
-                repository.markAllAsRead()
-                // Optimize: Update local state instead of reloading from database
                 _notifications.value = _notifications.value.map { it.copy(isRead = true) }
                 _unreadCount.value = 0
+                withContext(Dispatchers.IO) { repository.markAllAsRead() }
             } catch (e: Exception) {
                 Log.e("NotificationHistoryViewModel", "Failed to mark all as read", e)
             }
@@ -89,10 +94,10 @@ class NotificationHistoryViewModel(
     fun deleteNotification(id: String) {
         viewModelScope.launch {
             try {
-                repository.deleteNotification(id)
-
-                _notifications.value = _notifications.value.filter { it.id != id }
-                _unreadCount.value = _notifications.value.count { !it.isRead }
+                val filtered = _notifications.value.filter { it.id != id }
+                _notifications.value = filtered
+                _unreadCount.value = filtered.count { !it.isRead }
+                withContext(Dispatchers.IO) { repository.deleteNotification(id) }
             } catch (e: Exception) {
                 Log.e("NotificationHistoryViewModel", "Failed to delete notification", e)
             }
@@ -102,9 +107,9 @@ class NotificationHistoryViewModel(
     fun deleteAllNotifications() {
         viewModelScope.launch {
             try {
-                repository.deleteAllNotifications()
                 _notifications.value = emptyList()
                 _unreadCount.value = 0
+                withContext(Dispatchers.IO) { repository.deleteAllNotifications() }
             } catch (e: Exception) {
                 Log.e("NotificationHistoryViewModel", "Failed to delete all notifications", e)
             }

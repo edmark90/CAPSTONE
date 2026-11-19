@@ -8,8 +8,11 @@ import android.graphics.Bitmap
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.StringRes
 import androidx.core.content.ContextCompat
 import androidx.compose.animation.core.*
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -19,6 +22,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Assignment
+import androidx.compose.material.icons.automirrored.outlined.Assignment
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -32,7 +37,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -44,6 +51,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.example.smartplantcare.R
 import com.example.smartplantcare.auth.AuthViewModel
 import com.example.smartplantcare.data.ClassificationResult
 import com.example.smartplantcare.ui.theme.screens.homescreen.plantidentify.PlantIdentifyScreen
@@ -56,33 +64,35 @@ import com.example.smartplantcare.notification.NotificationScheduler
 import com.example.smartplantcare.ML.DiseaseRepository
 import com.example.smartplantcare.ui.theme.screens.SystemUiController
 import com.example.smartplantcare.ui.theme.screens.resultscreen.ResultScreen
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 // ─── Color Palette ────────────────────────────────────────────────────────────
-private val ColorBg              = Color(0xFFF2F5F3)
-private val ColorSurface         = Color(0xFFFFFFFF)
-private val ColorPrimary         = Color(0xFF1D4B34)
-private val ColorPrimaryLight    = Color(0xFF2D6E4E)
-private val ColorPrimaryGlow     = Color(0xFF3A8F65)
-private val ColorPrimaryChip     = Color(0xFFE8F2EC)
-private val ColorInactive        = Color(0xFFB0BDB6)
-private val ColorNavBar          = Color(0xFFFDFEFD)
+private val ColorBg              = HomeColors.PageBg
+private val ColorSurface         = HomeColors.SurfaceWhite
+private val ColorPrimary         = HomeColors.ForestPrimary
+private val ColorPrimaryLight    = HomeColors.ForestMedium
+private val ColorPrimaryGlow     = HomeColors.MintGlow
+private val ColorPrimaryChip     = HomeColors.SoftMint
+private val ColorInactive        = HomeColors.NavInactive
+private val ColorNavBar          = HomeColors.SurfaceWhite
 
 // ─── Tab Routes ───────────────────────────────────────────────────────────────
 sealed class BottomTab(
     val route          : String,
-    val label          : String,
+    @StringRes val labelRes : Int,
     val selectedIcon   : ImageVector,
     val unselectedIcon : ImageVector,
     val isCamera       : Boolean = false
 ) {
-    object Home     : BottomTab("tab_home",     "Home",     Icons.Filled.Home,           Icons.Outlined.Home)
-    object MyPlants : BottomTab("tab_plants",   "Plants",   Icons.Filled.Yard,           Icons.Outlined.Yard)
-    object Camera   : BottomTab("tab_camera",   "Scan",     Icons.Filled.CameraAlt,      Icons.Outlined.CameraAlt, true)
-    object AIDoctor : BottomTab("tab_doctor",   "Doctor",   Icons.Filled.MedicalServices,Icons.Outlined.MedicalServices)
-    object Settings : BottomTab("tab_settings", "Settings", Icons.Filled.Settings,       Icons.Outlined.Settings)
-    object Result   : BottomTab("tab_result",   "Result",   Icons.Filled.Assignment,     Icons.Outlined.Assignment)
-    object PlantIdentify : BottomTab("plant_identify", "PlantIdentify", Icons.Filled.CameraAlt, Icons.Outlined.CameraAlt)
+    object Home     : BottomTab("tab_home",     R.string.nav_home,     Icons.Filled.Home,           Icons.Outlined.Home)
+    object MyPlants : BottomTab("tab_plants",   R.string.nav_plants,   Icons.Filled.Yard,           Icons.Outlined.Yard)
+    object Camera   : BottomTab("tab_camera",   R.string.nav_scan,     Icons.Filled.CameraAlt,      Icons.Outlined.CameraAlt, true)
+    object AIDoctor : BottomTab("tab_doctor",   R.string.nav_doctor,   Icons.Filled.MedicalServices,Icons.Outlined.MedicalServices)
+    object Settings : BottomTab("tab_settings", R.string.nav_settings, Icons.Filled.Settings,       Icons.Outlined.Settings)
+    object Result   : BottomTab("tab_result",   R.string.nav_scan,     Icons.AutoMirrored.Filled.Assignment, Icons.AutoMirrored.Outlined.Assignment)
+    object PlantIdentify : BottomTab("plant_identify", R.string.nav_plants, Icons.Filled.CameraAlt, Icons.Outlined.CameraAlt)
 }
 
 private val allTabs = listOf(
@@ -111,7 +121,7 @@ fun MainScreen(
 
     val activity = LocalContext.current as Activity
     val appContext = LocalContext.current.applicationContext
-    SideEffect { SystemUiController.hideSystemBars(activity) }
+    LaunchedEffect(Unit) { SystemUiController.hideSystemBars(activity) }
 
     val userProfile      by authViewModel.userProfile.collectAsState()
     val uiState          by authViewModel.uiState.collectAsState()
@@ -178,6 +188,24 @@ fun MainScreen(
             }
         }
     )
+
+    val settingsViewModel: SettingsViewModel = viewModel(
+        factory = object : androidx.lifecycle.ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+                if (modelClass.isAssignableFrom(SettingsViewModel::class.java)) {
+                    return SettingsViewModel(appContext) as T
+                }
+                throw IllegalArgumentException("Unknown ViewModel class")
+            }
+        }
+    )
+
+    LaunchedEffect(Unit) {
+        treatmentPlanViewModel.loadPlans()
+        notificationHistoryViewModel.loadUnreadCount()
+    }
+
     val coroutineScope = rememberCoroutineScope()
 
     val navBackStackEntry by tabNavController.currentBackStackEntryAsState()
@@ -203,18 +231,18 @@ fun MainScreen(
         }
     }
 
-    Scaffold(
-        modifier       = Modifier.fillMaxSize(),
-        containerColor = ColorBg
-    ) { innerPadding ->
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .then(if (isCameraFocused || isResultFocused || isDetailFocused || isPlantIdentifyFocused || isNotificationHistoryFocused) Modifier else Modifier.padding(innerPadding))
-            ) {
-            NavHost(
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(ColorBg)
+    ) {
+        NavHost(
                 navController    = tabNavController,
                 startDestination = BottomTab.Home.route,
+                enterTransition  = { fadeIn(tween(150)) },
+                exitTransition   = { fadeOut(tween(120)) },
+                popEnterTransition = { fadeIn(tween(150)) },
+                popExitTransition  = { fadeOut(tween(120)) },
                 modifier         = Modifier
                     .fillMaxSize()
                     .background(ColorBg)
@@ -222,27 +250,44 @@ fun MainScreen(
                 composable(BottomTab.Home.route) {
                     key(refreshKey) {
                         val unreadCount by notificationHistoryViewModel.unreadCount.collectAsState()
+                        val plans by treatmentPlanViewModel.plans.collectAsState()
 
-                        // Load unread count when Home screen is displayed
-                        androidx.compose.runtime.LaunchedEffect(Unit) {
-                            try {
-                                notificationHistoryViewModel.loadUnreadCount()
-                            } catch (e: Exception) {
-                                android.util.Log.e("MainScreen", "Failed to load unread count", e)
-                            }
+                        LaunchedEffect(Unit) {
+                            notificationHistoryViewModel.loadUnreadCount()
                         }
 
                         HomeScreen(
                             userName = userProfile.name,
                             userEmail = userProfile.email,
                             unreadCount = unreadCount,
+                            plans = plans,
                             onNotificationClick = {
                                 tabNavController.navigate(ROUTE_NOTIFICATION_HISTORY)
+                            },
+                            onScanClick = {
+                                goToTab(tabNavController, BottomTab.Camera.route)
+                            },
+                            onIdentifyClick = {
+                                tabNavController.navigate(BottomTab.PlantIdentify.route)
+                            },
+                            onDoctorClick = {
+                                goToTab(tabNavController, BottomTab.AIDoctor.route)
+                            },
+                            onPlanClick = { id ->
+                                tabNavController.navigate(treatmentDetailRoute(id))
                             }
                         )
                     }
                 }
-                composable(BottomTab.MyPlants.route) { key(refreshKey) { MyPlantsScreen(isAuthenticated = uiState.isAuthenticated, isGuest = uiState.isGuest, onNavigateToLogin = { onNavigateToLogin?.invoke() }) } }
+                composable(BottomTab.MyPlants.route) {
+                    key(refreshKey) {
+                        MyPlantsScreen(
+                            isAuthenticated = uiState.isAuthenticated,
+                            isGuest = uiState.isGuest,
+                            onNavigateToLogin = { onNavigateToLogin?.invoke() }
+                        )
+                    }
+                }
                 composable(BottomTab.Camera.route) {
                     key(refreshKey) {
                         CameraScreen(
@@ -298,6 +343,7 @@ fun MainScreen(
                                 onViewTreatmentPlan = {
                                     val pred = prediction
                                     val dis = disease
+                                    val bitmapToSave = capturedBitmap
                                     requestNotificationPermissionIfNeeded()
                                     val newId = "local_${System.currentTimeMillis()}_${(1000..9999).random()}"
 
@@ -314,28 +360,31 @@ fun MainScreen(
 
                                     coroutineScope.launch {
                                         try {
-                                            val repository = TreatmentPlanRepository(appContext)
-                                            val savedImageUrl = capturedBitmap?.let { bitmap ->
-                                                ImageUtils.saveBitmapToInternalStorage(appContext, bitmap)
-                                            } ?: ""
-                                            val plan = TreatmentPlan(
-                                                id = newId,
-                                                plantName = pred.className.split("_").firstOrNull() ?: "Plant",
-                                                diseaseName = dis.diseaseName,
-                                                className = pred.className,
-                                                imageUrl = savedImageUrl,
-                                                startDateMillis = System.currentTimeMillis(),
-                                                sevenDayPlan = dis.sevenDayPlan,
-                                                currentDayIndex = 0,
-                                                lastNotificationSent = 0L,
-                                                nextScheduledNotification = 0L,
-                                                lastOverdueCheck = 0L,
-                                                confidence = pred.confidence,
-                                                isHealthy = pred.className.contains("Healthy", ignoreCase = true)
-                                            )
-                                            repository.savePlan(plan)
-                                            NotificationScheduler.scheduleInitialDay1(appContext, plan)
-                                            treatmentPlanViewModel.loadPlan(newId)
+                                            val plan = withContext(Dispatchers.IO) {
+                                                val repository = TreatmentPlanRepository(appContext)
+                                                val savedImageUrl = bitmapToSave?.let { bitmap ->
+                                                    ImageUtils.saveBitmapToInternalStorage(appContext, bitmap)
+                                                } ?: ""
+                                                val newPlan = TreatmentPlan(
+                                                    id = newId,
+                                                    plantName = pred.className.split("_").firstOrNull() ?: "Plant",
+                                                    diseaseName = dis.diseaseName,
+                                                    className = pred.className,
+                                                    imageUrl = savedImageUrl,
+                                                    startDateMillis = System.currentTimeMillis(),
+                                                    sevenDayPlan = dis.sevenDayPlan,
+                                                    currentDayIndex = 0,
+                                                    lastNotificationSent = 0L,
+                                                    nextScheduledNotification = 0L,
+                                                    lastOverdueCheck = 0L,
+                                                    confidence = pred.confidence,
+                                                    isHealthy = pred.className.contains("Healthy", ignoreCase = true)
+                                                )
+                                                repository.savePlan(newPlan)
+                                                NotificationScheduler.scheduleInitialDay1(appContext, newPlan)
+                                                newPlan
+                                            }
+                                            treatmentPlanViewModel.loadPlan(plan.id)
                                             treatmentPlanViewModel.loadPlans()
                                         } catch (e: Exception) {
                                             android.util.Log.e("ResultScreen", "Failed to save plant", e)
@@ -349,17 +398,6 @@ fun MainScreen(
                 }
                 composable(BottomTab.Settings.route) {
                     key(refreshKey) {
-                        val settingsViewModel: SettingsViewModel = viewModel(
-                            factory = object : androidx.lifecycle.ViewModelProvider.Factory {
-                                @Suppress("UNCHECKED_CAST")
-                                override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
-                                    if (modelClass.isAssignableFrom(SettingsViewModel::class.java)) {
-                                        return SettingsViewModel(appContext) as T
-                                    }
-                                    throw IllegalArgumentException("Unknown ViewModel class")
-                                }
-                            }
-                        )
                         SettingsScreen(
                             userName  = userProfile.name,
                             userEmail = userProfile.email,
@@ -403,13 +441,12 @@ fun MainScreen(
                 }
             }
 
-            if (!isCameraFocused && !isResultFocused && !isDetailFocused && !isPlantIdentifyFocused && !isNotificationHistoryFocused) {
-                Box(modifier = Modifier.align(Alignment.BottomCenter)) {
-                    FloatingBottomBar(
-                        navController = tabNavController,
-                        currentRoute = currentRoute
-                    )
-                }
+        if (!isCameraFocused && !isResultFocused && !isDetailFocused && !isPlantIdentifyFocused && !isNotificationHistoryFocused) {
+            Box(modifier = Modifier.align(Alignment.BottomCenter)) {
+                FloatingBottomBar(
+                    navController = tabNavController,
+                    currentRoute = currentRoute
+                )
             }
         }
     }
@@ -439,31 +476,30 @@ private fun FloatingBottomBar(
         modifier = Modifier
             .fillMaxWidth()
             .navigationBarsPadding()
-            .padding(horizontal = 20.dp)
-            .padding(bottom = 20.dp),
+            .padding(horizontal = 16.dp, vertical = 14.dp),
         contentAlignment = Alignment.BottomCenter
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(72.dp)
+                .height(68.dp)
                 .shadow(
-                    elevation    = 16.dp,
-                    shape        = RoundedCornerShape(36.dp),
-                    spotColor    = Color(0xFF1D4B34).copy(alpha = 0.18f),
-                    ambientColor = Color.Black.copy(alpha = 0.06f)
+                    elevation    = 6.dp,
+                    shape        = RoundedCornerShape(32.dp),
+                    spotColor    = ColorPrimary.copy(alpha = 0.14f),
+                    ambientColor = Color.Black.copy(alpha = 0.05f)
                 )
-                .background(ColorNavBar, RoundedCornerShape(36.dp))
+                .background(ColorNavBar, RoundedCornerShape(32.dp))
                 .border(
                     width = 1.dp,
-                    color = Color(0xFFE4EEE8),
-                    shape = RoundedCornerShape(36.dp)
+                    color = HomeColors.CardBorder,
+                    shape = RoundedCornerShape(32.dp)
                 ),
             verticalAlignment = Alignment.CenterVertically
         ) {
             allTabs.forEach { tab ->
                 if (tab.isCamera) {
-                    Spacer(modifier = Modifier.weight(1.4f))
+                    Spacer(modifier = Modifier.weight(1.25f))
                 } else {
                     val isSelected = currentRoute == tab.route
                     NavTabItem(
@@ -476,80 +512,49 @@ private fun FloatingBottomBar(
             }
         }
 
-        // Floating Camera Button
-        Column(
-            modifier = Modifier.offset(y = (-8).dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+        // Center Floating Scan Button
+        Box(
+            modifier = Modifier
+                .offset(y = (-14).dp)
+                .size(64.dp)
+                .graphicsLayer {
+                    scaleX = cameraClickScale
+                    scaleY = cameraClickScale
+                }
+                .shadow(
+                    elevation    = 6.dp,
+                    shape        = CircleShape,
+                    spotColor    = ColorPrimary.copy(alpha = 0.28f),
+                    ambientColor = Color.Black.copy(alpha = 0.08f)
+                )
+                .background(Color.White, CircleShape)
+                .padding(4.dp),
+            contentAlignment = Alignment.Center
         ) {
             Box(
-                modifier = Modifier.size(80.dp),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(CircleShape)
+                    .background(
+                        brush = Brush.linearGradient(
+                            colors = listOf(ColorPrimaryLight, ColorPrimary)
+                        )
+                    )
+                    .clickable(
+                        interactionSource = cameraInteractionSource,
+                        indication        = null
+                    ) {
+                        goToTab(navController, BottomTab.Camera.route)
+                    },
                 contentAlignment = Alignment.Center
             ) {
-                // Static idle glow ring (no infinite transition)
-                Box(
-                    modifier = Modifier
-                        .size(64.dp)
-                        .clip(CircleShape)
-                        .background(
-                            brush = Brush.radialGradient(
-                                colors = listOf(ColorPrimaryGlow.copy(alpha = 0.28f), Color.Transparent)
-                            )
-                        )
+                Icon(
+                    imageVector        = Icons.Filled.CameraAlt,
+                    contentDescription = stringResource(BottomTab.Camera.labelRes),
+                    tint               = Color.White,
+                    modifier           = Modifier.size(26.dp)
                 )
-
-                // Main Button Body
-                Box(
-                    modifier = Modifier
-                        .size(76.dp)
-                        .graphicsLayer {
-                            scaleX = cameraClickScale
-                            scaleY = cameraClickScale
-                        }
-                        .shadow(
-                            elevation    = 12.dp,
-                            shape        = CircleShape,
-                            spotColor    = Color(0xFF1D4B34).copy(alpha = 0.3f),
-                            ambientColor = Color.Black.copy(alpha = 0.08f)
-                        )
-                        .background(Color.White, CircleShape)
-                        .padding(5.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .clip(CircleShape)
-                            .background(
-                                brush = Brush.linearGradient(
-                                    colors = listOf(ColorPrimaryLight, ColorPrimary, Color(0xFF152E20))
-                                )
-                            )
-                            .clickable(
-                                interactionSource = cameraInteractionSource,
-                                indication        = null
-                            ) {
-                                goToTab(navController, BottomTab.Camera.route)
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector        = Icons.Filled.CameraAlt,
-                            contentDescription = "Scan Plant",
-                            tint               = Color.White,
-                            modifier           = Modifier.size(28.dp)
-                        )
-                    }
-                }
             }
-
-            Spacer(modifier = Modifier.height(4.dp))
-
-            Text(
-                text       = "Scan",
-                fontSize   = 10.sp,
-                fontWeight = FontWeight.SemiBold,
-                color      = ColorPrimary
-            )
         }
     }
 }
@@ -562,9 +567,8 @@ private fun NavTabItem(
     onClick   : () -> Unit,
     modifier  : Modifier = Modifier
 ) {
-    // Direct color swap instead of animateColorAsState — removes a
-    // per-frame animation job for every tab, every switch.
     val iconTint = if (isSelected) ColorPrimary else ColorInactive
+    val label = stringResource(tab.labelRes)
 
     Column(
         modifier = modifier
@@ -573,14 +577,14 @@ private fun NavTabItem(
                 indication        = null,
                 onClick           = onClick
             )
-            .padding(vertical = 8.dp),
+            .padding(vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
         Box(
             modifier = Modifier
-                .size(width = 46.dp, height = 32.dp)
-                .clip(RoundedCornerShape(16.dp))
+                .size(width = 44.dp, height = 30.dp)
+                .clip(RoundedCornerShape(14.dp))
                 .background(
                     if (isSelected) ColorPrimaryChip else Color.Transparent
                 ),
@@ -588,20 +592,22 @@ private fun NavTabItem(
         ) {
             Icon(
                 imageVector        = if (isSelected) tab.selectedIcon else tab.unselectedIcon,
-                contentDescription = null,
+                contentDescription = label,
                 tint               = iconTint,
-                modifier           = Modifier.size(22.dp)
+                modifier           = Modifier.size(20.dp)
             )
         }
 
-        Spacer(modifier = Modifier.height(3.dp))
+        Spacer(modifier = Modifier.height(2.dp))
 
         Text(
-            text       = tab.label,
+            text       = label,
+            fontFamily = HomeInterFont,
             fontSize   = 10.sp,
-            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
             color      = iconTint,
-            letterSpacing = 0.2.sp
+            maxLines   = 1,
+            overflow   = TextOverflow.Ellipsis
         )
     }
 }

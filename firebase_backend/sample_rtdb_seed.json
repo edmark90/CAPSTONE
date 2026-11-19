@@ -1,0 +1,191 @@
+{
+  "users": {
+    "uid_owner_demo": {
+      "profile": {
+        "displayName": "Garden Owner",
+        "email": "owner@example.com",
+        "createdAt": 1730966400000
+      },
+      "fcmTokens": {
+        "pixel8_token_id": {
+          "token": "fcm_token_placeholder_min_20_chars_abc123456",
+          "platform": "android",
+          "appVersion": "1.0",
+          "updatedAt": 1730966400000
+        }
+      },
+      "devices": {
+        "spc-unit-0001": {
+          "role": "owner",
+          "ownershipEpoch": 1,
+          "addedAt": 1730966400000
+        }
+      },
+      "notificationPreferences": {
+        "criticalAlerts": true,
+        "weatherSuspension": true,
+        "irrigationEvents": true,
+        "environmentalWarnings": true
+      }
+    }
+  },
+  "deviceSecrets": {
+    "spc-unit-0001": {
+      "claimCodeSha256": "REPLACE_WITH_SHA256_OF_SPC_CLAIM_CODE",
+      "deviceAuthSecretSha256": "REPLACE_WITH_SHA256_OF_SPC_DEVICE_AUTH_SECRET",
+      "provisionedAt": 1730966400000
+    }
+  },
+  "devices": {
+    "spc-unit-0001": {
+      "meta": {
+        "deviceId": "spc-unit-0001",
+        "displayName": "Backyard Vegetable Bed",
+        "model": "SmartPlantCare-3Zone",
+        "hardwareRevision": "ESP32-WROOM32-V3.1-I2C",
+        "firmwareVersion": "3.1.0-i2c",
+        "ownershipState": "OWNED",
+        "ownerUid": "uid_owner_demo",
+        "ownershipEpoch": 1,
+        "resetRequired": false,
+        "claimedAt": 1730966400000,
+        "location": {
+          "lat": 14.5995,
+          "lon": 120.9842,
+          "timezone": "Asia/Manila"
+        }
+      },
+      "acl": {
+        "ownerUid": "uid_owner_demo",
+        "members": {
+          "uid_owner_demo": {
+            "role": "owner",
+            "addedAt": 1730966400000,
+            "addedBy": "system_claim"
+          }
+        },
+        "invitations": {}
+      },
+      "status": {
+        "online": true,
+        "lastSeenAt": 1730966450000,
+        "bootId": "b4A1F-120",
+        "firmwareVersion": "3.1.0-i2c",
+        "ipAddress": "192.168.1.120",
+        "wifiRssi": -58,
+        "mode": "OUTDOOR",
+        "rainSuspensionActive": false,
+        "weatherAdvisoryActive": false,
+        "weatherUnavailableFault": false,
+        "emergencyStop": false,
+        "faultLockout": false,
+        "activeValve": "none",
+        "pumpState": "OFF",
+        "irrigationState": "IDLE",
+        "physicalLoadsEnabled": false,
+        "lcdAddress": 39,
+        "freeHeap": 214000,
+        "ownershipEpoch": 1
+      },
+      "telemetry": {
+        "updatedAt": 1730966450000,
+        "temperatureC": 29.4,
+        "humidityPct": 68.0,
+        "dhtValid": true,
+        "tempBand": "NORMAL",
+        "humidityBand": "NORMAL",
+        "lightRaw": 2180,
+        "lightBrightnessPct": 57.6,
+        "lightValid": true,
+        "lightBand": "NORMAL",
+        "rainRawWet": false,
+        "rainWetConfirmed": false,
+        "rainValid": true,
+        "reservoirAirGapInches": 2.35,
+        "reservoirPct": 77.5,
+        "reservoirValid": true,
+        "reservoirState": "NORMAL",
+        "soil": {
+          "tomato": {
+            "raw": 2260,
+            "pct": 52.1,
+            "valid": true,
+            "needsWater": false
+          },
+          "chili": {
+            "raw": 2380,
+            "pct": 45.8,
+            "valid": true,
+            "needsWater": false
+          },
+          "eggplant": {
+            "raw": 2190,
+            "pct": 55.8,
+            "valid": true,
+            "needsWater": false
+          }
+        }
+      },
+      "weather": {
+        "provider": "open-meteo",
+        "valid": true,
+        "rainProbabilityPct": 25,
+        "windowHours": 3,
+        "windowLabel": "NEXT 3 H",
+        "fetchedAt": 1730966400000,
+        "validUntil": 1730970000000
+      },
+      "config": {
+        "mode": "OUTDOOR",
+        "rainThresholdPct": 60,
+        "wetConfirmMs": 30000,
+        "dryRecoverMs": 120000,
+        "reservoirFullGapIn": 1.0,
+        "reservoirEmptyGapIn": 7.0,
+        "reservoirLowPct": 20.0,
+        "reservoirCriticalPct": 10.0,
+        "tempHighC": 35.0,
+        "humLowRh": 40.0,
+        "lightHighPct": 85.0,
+        "lightLowPct": 20.0,
+        "buzzerMuted": false,
+        "physicalLoadsEnabled": false,
+        "crops": {
+          "tomato": {
+            "enabled": true,
+            "dryRaw": 3250,
+            "wetRaw": 1350,
+            "startPct": 35.0,
+            "stopPct": 55.0,
+            "pulseMs": 4000,
+            "maxRuntimeMs": 15000,
+            "cooldownMs": 180000
+          },
+          "chili": {
+            "enabled": true,
+            "dryRaw": 3250,
+            "wetRaw": 1350,
+            "startPct": 32.0,
+            "stopPct": 52.0,
+            "pulseMs": 4000,
+            "maxRuntimeMs": 15000,
+            "cooldownMs": 180000
+          },
+          "eggplant": {
+            "enabled": true,
+            "dryRaw": 3250,
+            "wetRaw": 1350,
+            "startPct": 38.0,
+            "stopPct": 58.0,
+            "pulseMs": 4000,
+            "maxRuntimeMs": 15000,
+            "cooldownMs": 180000
+          }
+        }
+      },
+      "commandRequests": {},
+      "commandResults": {},
+      "events": {}
+    }
+  }
+}

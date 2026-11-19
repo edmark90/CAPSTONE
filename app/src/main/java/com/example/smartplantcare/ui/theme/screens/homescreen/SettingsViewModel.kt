@@ -15,6 +15,7 @@ import com.example.smartplantcare.notification.NotificationScheduler
 import com.google.firebase.auth.FirebaseAuth
 import com.example.smartplantcare.util.NetworkMonitor
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -107,17 +108,6 @@ class SettingsViewModel(
             treatmentEveningHour = treatmentEveningHour,
             treatmentEveningMinute = treatmentEveningMinute
         )
-
-        if (morningReminder) {
-            scheduleReminder(isMorning = true)
-        } else {
-            cancelReminder(isMorning = true)
-        }
-        if (eveningReminder) {
-            scheduleReminder(isMorning = false)
-        } else {
-            cancelReminder(isMorning = false)
-        }
     }
 
     private fun loadAuthState() {
@@ -210,7 +200,7 @@ class SettingsViewModel(
     }
 
     fun setLanguage(lang: String) {
-        prefs.edit().putString("language", lang).commit()
+        prefs.edit().putString("language", lang).apply()
         _state.value = _state.value.copy(language = lang, showLanguageDialog = false)
         // Locale will be applied by the SharedPreferences listener in MainScreen
         // using the Activity context, which triggers full recomposition
@@ -485,24 +475,28 @@ class SettingsViewModel(
         val message = if (isMorning) "Time to check on your plants and start the day's care routine."
             else "Don't forget to give your plants evening care before the night."
 
-        android.util.Log.d("SettingsViewModel", "Scheduling $tag reminder at $hour:$minute")
-        DailyAlarmScheduler.schedule(
-            context = context,
-            tag = tag,
-            hour = hour,
-            minute = minute,
-            title = title,
-            message = message
-        )
+        viewModelScope.launch(Dispatchers.IO) {
+            android.util.Log.d("SettingsViewModel", "Scheduling $tag reminder at $hour:$minute")
+            DailyAlarmScheduler.schedule(
+                context = context,
+                tag = tag,
+                hour = hour,
+                minute = minute,
+                title = title,
+                message = message
+            )
+        }
     }
 
     private fun cancelReminder(isMorning: Boolean) {
         val tag = if (isMorning) "morning_reminder" else "evening_reminder"
-        DailyAlarmScheduler.cancel(context, tag)
+        viewModelScope.launch(Dispatchers.IO) {
+            DailyAlarmScheduler.cancel(context, tag)
+        }
     }
 
     private fun rescheduleActivePlans() {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             try {
                 NotificationScheduler.rescheduleAllActivePlans(context)
             } catch (e: Exception) {

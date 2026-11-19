@@ -4,22 +4,44 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
+import android.view.ScaleGestureDetector
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.camera.core.*
+import androidx.camera.core.Camera
+import androidx.camera.core.CameraControl
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
+import androidx.camera.core.ImageProxy
+import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
-import com.example.smartplantcare.ML.DiseaseRepository
-import com.example.smartplantcare.ML.ImageProcessor
-import com.example.smartplantcare.ML.InferencePipeline
-import com.example.smartplantcare.data.ClassificationResult
-import androidx.compose.animation.core.*
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -28,38 +50,63 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.ClipOp
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
-import com.example.smartplantcare.ui.theme.DarkGreen
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.example.smartplantcare.ML.DiseaseRepository
+import com.example.smartplantcare.ML.ImageProcessor
+import com.example.smartplantcare.ML.InferencePipeline
+import com.example.smartplantcare.data.ClassificationResult
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.util.concurrent.Executors
 
 @Composable
 fun CameraScreen(
@@ -75,6 +122,7 @@ fun CameraScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val coroutineScope = rememberCoroutineScope()
+    val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
     val imageCapture = remember {
         ImageCapture.Builder()
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
@@ -84,16 +132,33 @@ fun CameraScreen(
     var scanError by remember { mutableStateOf<String?>(null) }
     var scanningBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var showScanningAnimation by remember { mutableStateOf(false) }
+    var isCapturing by remember { mutableStateOf(false) }
 
     var cameraControl by remember { mutableStateOf<CameraControl?>(null) }
+    var hasFlashUnit by remember { mutableStateOf(false) }
     var isFlashOn by remember { mutableStateOf(false) }
 
     var hasCameraPermission by remember {
-        mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+                PackageManager.PERMISSION_GRANTED
+        )
     }
 
-    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
         hasCameraPermission = granted
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            try {
+                cameraControl?.enableTorch(false)
+            } catch (_: Exception) {
+            }
+            cameraExecutor.shutdown()
+        }
     }
 
     fun processAndNavigate(bitmap: Bitmap) {
@@ -101,10 +166,10 @@ fun CameraScreen(
         showScanningAnimation = true
         coroutineScope.launch {
             try {
-                android.util.Log.d("CameraScreen", "Running pipeline")
-                val pipeline = InferencePipeline.getInstance(context)
-                val pipelineResult = pipeline.runPipeline(bitmap, rotationDegrees = 0)
-                android.util.Log.d("CameraScreen", "Pipeline completed: ${pipelineResult.isSuccess}")
+                val pipelineResult = withContext(Dispatchers.Default) {
+                    val pipeline = InferencePipeline.getInstance(context)
+                    pipeline.runPipeline(bitmap, rotationDegrees = 0)
+                }
 
                 handlePipelineResult(
                     pipelineResult = pipelineResult,
@@ -115,6 +180,7 @@ fun CameraScreen(
                     onFinishScanning = {
                         showScanningAnimation = false
                         scanningBitmap = null
+                        isCapturing = false
                     }
                 )
             } catch (e: Exception) {
@@ -122,18 +188,26 @@ fun CameraScreen(
                 scanError = "Error: ${e.message}"
                 showScanningAnimation = false
                 scanningBitmap = null
+                isCapturing = false
             }
         }
     }
 
-    val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+    val galleryLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
         uri?.let { selectedUri ->
+            isCapturing = true
             coroutineScope.launch {
                 try {
-                    val loadedBitmap = ImageProcessor.loadBitmapFromUri(context, selectedUri)
-                    val bitmap = ImageProcessor.centerCropSquare(loadedBitmap)
-                    processAndNavigate(bitmap)
+                    val cropped = withContext(Dispatchers.IO) {
+                        val loaded = ImageProcessor.loadBitmapFromUri(context, selectedUri)
+                        val sq = ImageProcessor.centerCropSquare(loaded)
+                        downscaleForDisplay(sq, 1080)
+                    }
+                    processAndNavigate(cropped)
                 } catch (e: Exception) {
+                    isCapturing = false
                     scanError = "Error loading image: ${e.message}"
                 }
             }
@@ -141,244 +215,316 @@ fun CameraScreen(
     }
 
     LaunchedEffect(Unit) {
-        if (!hasCameraPermission) permissionLauncher.launch(Manifest.permission.CAMERA)
+        if (!hasCameraPermission) {
+            permissionLauncher.launch(Manifest.permission.CAMERA)
+        }
     }
 
-    // Show scanning animation screen immediately when user taps capture
     if (showScanningAnimation) {
-        DiseaseScanningAnimationScreen(
-            bitmap = scanningBitmap,
-            onScanComplete = {
-                // Navigation handled by processAndNavigate
-            }
-        )
+        DiseaseScanningAnimationScreen(bitmap = scanningBitmap)
         return
     }
 
-    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+    val configuration = LocalConfiguration.current
+    val boxSize = if (configuration.screenHeightDp < 640) 210.dp else 260.dp
 
-        // 1. Live Camera Preview Background
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+    ) {
         if (hasCameraPermission) {
             CameraPreview(
                 modifier = Modifier.fillMaxSize(),
                 lifecycleOwner = lifecycleOwner,
                 imageCapture = imageCapture,
-                onCameraBound = { control -> cameraControl = control }
+                onCameraBound = { camera ->
+                    cameraControl = camera.cameraControl
+                    hasFlashUnit = camera.cameraInfo.hasFlashUnit()
+                }
             )
-        }
-
-        // 2. Standard cinematic dimming overlay habang nag-aabang ng live viewfinder target
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        listOf(Color.Black.copy(0.45f), Color.Transparent, Color.Black.copy(0.55f))
-                    )
+            // Centered cutout overlay framing the exact square scan zone
+            ViewfinderCutoutOverlay(boxSize = boxSize)
+        } else {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .padding(horizontal = 32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "Camera Access Needed",
+                    fontFamily = HomeInterFont,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
                 )
-        )
-
-        // Top-Left Close Navigation Control Handle
-        IconButton(
-            onClick = onBackClick,
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .statusBarsPadding()
-                .padding(20.dp)
-                .size(40.dp)
-                .clip(CircleShape)
-                .background(Color.Black.copy(0.35f))
-        ) {
-            Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
+                Text(
+                    text = "Allow camera permission or pick a leaf photo from your gallery.",
+                    fontFamily = HomeInterFont,
+                    fontSize = 13.sp,
+                    color = Color.White.copy(alpha = 0.75f),
+                    textAlign = TextAlign.Center
+                )
+                Button(
+                    onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) },
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = HomeColors.ForestMedium)
+                ) {
+                    Text("Allow Camera", color = Color.White, fontWeight = FontWeight.SemiBold)
+                }
+            }
         }
 
-        // Central Processing Architecture Block (Ang Box kung saan nakapaloob ang layout square container)
+        // Top Bar: Close + Mode Badge
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .padding(horizontal = 20.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            IconButton(
+                onClick = onBackClick,
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.45f))
+            ) {
+                Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
+            }
+
+            Surface(
+                color = Color.Black.copy(alpha = 0.45f),
+                shape = RoundedCornerShape(50)
+            ) {
+                Text(
+                    text = "Leaf Disease Scan",
+                    fontFamily = HomeInterFont,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.size(42.dp))
+        }
+
+        // Center Frame & Instructions
         Column(
             modifier = Modifier.align(Alignment.Center),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            val configuration = LocalConfiguration.current
-            val boxSize = if (configuration.screenHeightDp < 640) 200.dp else 260.dp
-            Box(
-                modifier = Modifier.size(boxSize),
-                contentAlignment = Alignment.Center
-            ) {
-                // Static viewfinder corners — scan animation handled by DiseaseScanningAnimationScreen
-                ScanFrame(
-                    modifier = Modifier.matchParentSize(),
-                    isScanning = false,
-                    hasImage = false
-                )
-            }
+            StaticScanFrame(modifier = Modifier.size(boxSize))
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(22.dp))
 
-            // Note below the box with a semi-transparent background for readability
             Column(
                 modifier = Modifier
-                    .padding(horizontal = 24.dp)
+                    .padding(horizontal = 28.dp)
                     .background(
-                        color = Color.Black.copy(alpha = 0.5f),
-                        shape = RoundedCornerShape(12.dp)
+                        color = Color.Black.copy(alpha = 0.55f),
+                        shape = RoundedCornerShape(14.dp)
                     )
-                    .padding(vertical = 12.dp, horizontal = 16.dp),
+                    .padding(vertical = 10.dp, horizontal = 16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = "Scan only Tomato, Chili, or Eggplant leaves for accurate disease detection",
+                    text = "Center Tomato, Chili, or Eggplant leaf inside the square",
+                    fontFamily = HomeInterFont,
                     color = Color.White,
                     fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Center
                 )
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "Hold phone 10–15 cm away for best results",
-                    color = Color.White.copy(alpha = 0.75f),
+                    text = "Hold steady 10–15 cm away · Pinch to zoom",
+                    fontFamily = HomeInterFont,
+                    color = Color.White.copy(alpha = 0.78f),
                     fontSize = 11.sp,
-                    fontWeight = FontWeight.Normal,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    textAlign = TextAlign.Center
                 )
             }
-
-
         }
 
-        // Bottom Dashboard Core Interaction Bar
+        // Bottom Controls Bar
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
-                .padding(36.dp),
+                .navigationBarsPadding()
+                .padding(horizontal = 32.dp, vertical = 28.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
-            // Gallery Button
             IconButton(
                 onClick = { galleryLauncher.launch("image/*") },
-                enabled = !showScanningAnimation,
+                enabled = !showScanningAnimation && !isCapturing,
                 modifier = Modifier
-                    .size(48.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(Color.White.copy(0.15f))
+                    .size(50.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.45f))
+                    .border(1.dp, Color.White.copy(alpha = 0.2f), CircleShape)
             ) {
                 Icon(
-                    Icons.Default.PhotoLibrary,
+                    imageVector = Icons.Default.PhotoLibrary,
                     contentDescription = "Gallery",
                     tint = Color.White
                 )
             }
 
-            // Capture Trigger Shutter Module
+            // Shutter CTA
+            val shutterInteraction = remember { MutableInteractionSource() }
             Box(
                 modifier = Modifier
-                    .size(76.dp)
+                    .size(78.dp)
                     .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.25f))
-                    .clickable(enabled = !showScanningAnimation) {
-                        imageCapture.takePicture(ContextCompat.getMainExecutor(context), object : ImageCapture.OnImageCapturedCallback() {
-                            override fun onCaptureSuccess(image: ImageProxy) {
-                                try {
-                                    val rotationDegrees = image.imageInfo.rotationDegrees
-                                    val rawBitmap = image.toBitmap()
-                                    image.close()
-
-                                    if (rawBitmap == null) {
-                                        scanError = "Failed to capture image"
-                                        return
+                    .background(Color.White.copy(alpha = 0.28f))
+                    .clickable(
+                        interactionSource = shutterInteraction,
+                        indication = null,
+                        enabled = hasCameraPermission && !showScanningAnimation && !isCapturing
+                    ) {
+                        isCapturing = true
+                        imageCapture.takePicture(
+                            cameraExecutor,
+                            object : ImageCapture.OnImageCapturedCallback() {
+                                override fun onCaptureSuccess(image: ImageProxy) {
+                                    coroutineScope.launch {
+                                        try {
+                                            val prepared = withContext(Dispatchers.Default) {
+                                                val rotationDegrees = image.imageInfo.rotationDegrees
+                                                val rawBitmap = image.toBitmap()
+                                                image.close()
+                                                val argb = rawBitmap.copy(Bitmap.Config.ARGB_8888, false)
+                                                if (argb.width == 0 || argb.height == 0) {
+                                                    throw IllegalStateException("Invalid image dimensions")
+                                                }
+                                                val oriented = ImageProcessor.orientBitmap(argb, rotationDegrees)
+                                                val cropped = ImageProcessor.centerCropSquare(oriented)
+                                                downscaleForDisplay(cropped, 1080)
+                                            }
+                                            processAndNavigate(prepared)
+                                        } catch (e: Exception) {
+                                            try {
+                                                image.close()
+                                            } catch (_: Exception) {
+                                            }
+                                            android.util.Log.e("CameraScreen", "Error processing capture", e)
+                                            scanError = "Failed to process capture"
+                                            isCapturing = false
+                                        }
                                     }
+                                }
 
-                                    val argbBitmap = rawBitmap.copy(Bitmap.Config.ARGB_8888, false)
-                                    if (argbBitmap.width == 0 || argbBitmap.height == 0) {
-                                        scanError = "Invalid image dimensions"
-                                        return
+                                override fun onError(e: ImageCaptureException) {
+                                    coroutineScope.launch(Dispatchers.Main) {
+                                        android.util.Log.e("CameraScreen", "Capture error", e)
+                                        scanError = "Capture failed: ${e.message}"
+                                        showScanningAnimation = false
+                                        isCapturing = false
                                     }
-
-                                    val orientedBitmap = ImageProcessor.orientBitmap(argbBitmap, rotationDegrees)
-                                    val bitmap = ImageProcessor.centerCropSquare(orientedBitmap)
-
-                                    android.util.Log.d(
-                                        "CameraScreen",
-                                        "Bitmap captured: raw=${argbBitmap.width}x${argbBitmap.height}, rotation=$rotationDegrees, cropped=${bitmap.width}x${bitmap.height}"
-                                    )
-
-                                    // Set bitmap BEFORE showing animation so image appears immediately
-                                    scanningBitmap = bitmap
-                                    processAndNavigate(bitmap)
-
-                                } catch (e: Exception) {
-                                    image.close()
-                                    android.util.Log.e("CameraScreen", "Error processing capture", e)
-                                    scanError = "Failed to process capture"
                                 }
                             }
-
-                            override fun onError(e: ImageCaptureException) {
-                                android.util.Log.e("CameraScreen", "Capture error", e)
-                                scanError = "Capture failed: ${e.message}"
-                                showScanningAnimation = false
-                            }
-                        })
+                        )
                     },
                 contentAlignment = Alignment.Center
             ) {
                 Box(
                     modifier = Modifier
-                        .size(60.dp)
+                        .size(62.dp)
                         .clip(CircleShape)
-                        .background(DarkGreen),
+                        .background(HomeColors.ForestPrimary),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        Icons.Default.Camera,
-                        contentDescription = "Capture",
-                        tint = Color.White,
-                        modifier = Modifier.size(30.dp)
-                    )
+                    if (isCapturing) {
+                        CircularProgressIndicator(
+                            color = Color.White,
+                            strokeWidth = 2.5.dp,
+                            modifier = Modifier.size(26.dp)
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Camera,
+                            contentDescription = "Capture",
+                            tint = Color.White,
+                            modifier = Modifier.size(30.dp)
+                        )
+                    }
                 }
             }
 
-            // Flashlight Toggle System
             IconButton(
                 onClick = {
-                    isFlashOn = !isFlashOn
-                    cameraControl?.enableTorch(isFlashOn)
+                    if (hasFlashUnit) {
+                        isFlashOn = !isFlashOn
+                        cameraControl?.enableTorch(isFlashOn)
+                    }
                 },
-                enabled = !showScanningAnimation,
+                enabled = hasFlashUnit && !showScanningAnimation && !isCapturing,
                 modifier = Modifier
-                    .size(48.dp)
+                    .size(50.dp)
                     .clip(CircleShape)
-                    .background(Color.White.copy(0.15f))
+                    .background(Color.Black.copy(alpha = 0.45f))
+                    .border(1.dp, Color.White.copy(alpha = 0.2f), CircleShape)
             ) {
                 Icon(
                     imageVector = if (isFlashOn) Icons.Default.FlashOn else Icons.Default.FlashOff,
                     contentDescription = "Flash",
-                    tint = if (isFlashOn) Color(0xFFFFEB3B) else Color.White
+                    tint = when {
+                        !hasFlashUnit -> Color.White.copy(alpha = 0.35f)
+                        isFlashOn -> Color(0xFFFFEB3B)
+                        else -> Color.White
+                    }
                 )
             }
         }
     }
 
     if (scanError != null) {
-        androidx.compose.material3.AlertDialog(
+        AlertDialog(
             onDismissRequest = {
                 scanError = null
                 scanningBitmap = null
                 showScanningAnimation = false
+                isCapturing = false
             },
-            title = { Text("Analysis Failed") },
-            text = { Text(scanError.orEmpty()) },
+            title = {
+                Text(
+                    text = "Analysis Failed",
+                    fontFamily = HomeInterFont,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = { Text(scanError.orEmpty(), fontFamily = HomeInterFont) },
             confirmButton = {
-                TextButton(onClick = {
-                    scanError = null
-                    scanningBitmap = null
-                    showScanningAnimation = false
-                }) {
-                    Text("Try Again")
+                TextButton(
+                    onClick = {
+                        scanError = null
+                        scanningBitmap = null
+                        showScanningAnimation = false
+                        isCapturing = false
+                    }
+                ) {
+                    Text("Try Again", color = HomeColors.ForestPrimary, fontWeight = FontWeight.SemiBold)
                 }
-            }
+            },
+            containerColor = HomeColors.SurfaceWhite,
+            shape = RoundedCornerShape(22.dp)
         )
     }
+}
+
+private fun downscaleForDisplay(bitmap: Bitmap, maxSize: Int): Bitmap {
+    if (bitmap.width <= maxSize && bitmap.height <= maxSize) return bitmap
+    val ratio = maxSize.toFloat() / maxOf(bitmap.width, bitmap.height)
+    val targetW = (bitmap.width * ratio).toInt().coerceAtLeast(1)
+    val targetH = (bitmap.height * ratio).toInt().coerceAtLeast(1)
+    return Bitmap.createScaledBitmap(bitmap, targetW, targetH, true)
 }
 
 private suspend fun handlePipelineResult(
@@ -398,7 +544,9 @@ private suspend fun handlePipelineResult(
     val prediction = pipelineResult.predictionResult
     val classification = pipelineResult.classification
     if (pipelineResult.isSuccess && prediction != null && classification != null && bitmap != null) {
-        val diseaseInfo = DiseaseRepository.getDiseaseInfo(prediction.className)
+        val diseaseInfo = withContext(Dispatchers.IO) {
+            DiseaseRepository.getDiseaseInfo(prediction.className)
+        }
         onAnalyzePhoto(bitmap, rotationDegrees, prediction, diseaseInfo, classification)
         onFinishScanning()
     } else {
@@ -408,71 +556,47 @@ private suspend fun handlePipelineResult(
 }
 
 @Composable
-private fun ScanFrame(modifier: Modifier, isScanning: Boolean, hasImage: Boolean) {
-    val alpha by rememberInfiniteTransition(label = "frameAlpha").animateFloat(
-        initialValue = 0.4f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            tween(if(isScanning) 500 else 1100),
-            RepeatMode.Reverse
-        ),
-        label = "frameAlpha"
-    )
+private fun ViewfinderCutoutOverlay(boxSize: Dp) {
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        val boxPx = boxSize.toPx()
+        val left = (size.width - boxPx) / 2f
+        val top = (size.height - boxPx) / 2f
+        val cornerPx = 22.dp.toPx()
 
-    val scanLinePosition by rememberInfiniteTransition(label = "scanLine").animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1200, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "scanLine"
-    )
+        val cutoutPath = Path().apply {
+            addRoundRect(
+                RoundRect(
+                    rect = Rect(left, top, left + boxPx, top + boxPx),
+                    cornerRadius = CornerRadius(cornerPx, cornerPx)
+                )
+            )
+        }
+        clipPath(cutoutPath, clipOp = ClipOp.Difference) {
+            drawRect(Color.Black.copy(alpha = 0.45f))
+        }
+    }
+}
 
+@Composable
+private fun StaticScanFrame(modifier: Modifier) {
     Canvas(modifier = modifier) {
-        val cornerLength = 36.dp.toPx()
-        val strokeWidth = 5.dp.toPx() // Bahagyang nirebisa para mas makapal at kitang-kita
+        val cornerLength = 34.dp.toPx()
+        val strokeWidth = 4.dp.toPx()
+        val cornerColor = HomeColors.MintGlow
+        val w = size.width
+        val h = size.height
 
-        // Kapag may larawan na, gawing mas matingkad na berde o puti ang corners para umangat sa puting matte background
-        val cornerColor = if (hasImage) Color(0xFF1B5E20) else Color.White.copy(alpha = alpha)
-
-        // Top-Left
         drawLine(cornerColor, Offset(0f, 0f), Offset(cornerLength, 0f), strokeWidth, cap = StrokeCap.Round)
         drawLine(cornerColor, Offset(0f, 0f), Offset(0f, cornerLength), strokeWidth, cap = StrokeCap.Round)
 
-        // Top-Right
-        drawLine(cornerColor, Offset(size.width, 0f), Offset(size.width - cornerLength, 0f), strokeWidth, cap = StrokeCap.Round)
-        drawLine(cornerColor, Offset(size.width, 0f), Offset(size.width, cornerLength), strokeWidth, cap = StrokeCap.Round)
+        drawLine(cornerColor, Offset(w, 0f), Offset(w - cornerLength, 0f), strokeWidth, cap = StrokeCap.Round)
+        drawLine(cornerColor, Offset(w, 0f), Offset(w, cornerLength), strokeWidth, cap = StrokeCap.Round)
 
-        // Bottom-Left
-        drawLine(cornerColor, Offset(0f, size.height), Offset(cornerLength, size.height), strokeWidth, cap = StrokeCap.Round)
-        drawLine(cornerColor, Offset(0f, size.height), Offset(0f, size.height - cornerLength), strokeWidth, cap = StrokeCap.Round)
+        drawLine(cornerColor, Offset(0f, h), Offset(cornerLength, h), strokeWidth, cap = StrokeCap.Round)
+        drawLine(cornerColor, Offset(0f, h), Offset(0f, h - cornerLength), strokeWidth, cap = StrokeCap.Round)
 
-        // Bottom-Right
-        drawLine(cornerColor, Offset(size.width, size.height), Offset(size.width - cornerLength, size.height), strokeWidth, cap = StrokeCap.Round)
-        drawLine(cornerColor, Offset(size.width, size.height), Offset(size.width, size.height - cornerLength), strokeWidth, cap = StrokeCap.Round)
-
-        if (isScanning) {
-            val lineY = size.height * scanLinePosition
-            val scanColor = Color(0xFF2E7D32)
-
-            drawRect(
-                brush = Brush.verticalGradient(
-                    colors = listOf(Color.Transparent, scanColor.copy(alpha = 0.35f)),
-                    startY = maxOf(0f, lineY - 40.dp.toPx()),
-                    endY = lineY
-                ),
-                topLeft = Offset(0f, maxOf(0f, lineY - 40.dp.toPx())),
-                size = Size(size.width, minOf(40.dp.toPx(), lineY))
-            )
-
-            drawLine(
-                color = scanColor,
-                start = Offset(0f, lineY),
-                end = Offset(size.width, lineY),
-                strokeWidth = 3.dp.toPx()
-            )
-        }
+        drawLine(cornerColor, Offset(w, h), Offset(w - cornerLength, h), strokeWidth, cap = StrokeCap.Round)
+        drawLine(cornerColor, Offset(w, h), Offset(w, h - cornerLength), strokeWidth, cap = StrokeCap.Round)
     }
 }
 
@@ -481,24 +605,67 @@ private fun CameraPreview(
     modifier: Modifier = Modifier,
     lifecycleOwner: LifecycleOwner,
     imageCapture: ImageCapture,
-    onCameraBound: (CameraControl) -> Unit
+    onCameraBound: (Camera) -> Unit
 ) {
-    AndroidView(modifier = modifier, factory = { ctx ->
-        PreviewView(ctx).also { previewView ->
-            ProcessCameraProvider.getInstance(ctx).addListener({
-                val provider = ProcessCameraProvider.getInstance(ctx).get()
-                val preview = Preview.Builder().build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
-                provider.unbindAll()
+    val context = LocalContext.current
+    var cameraProvider by remember { mutableStateOf<ProcessCameraProvider?>(null) }
 
-                val camera = provider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, imageCapture)
-                onCameraBound(camera.cameraControl)
-
-            }, ContextCompat.getMainExecutor(ctx))
+    DisposableEffect(Unit) {
+        onDispose {
+            try {
+                cameraProvider?.unbindAll()
+            } catch (_: Exception) {
+            }
         }
-    })
+    }
+
+    AndroidView(
+        modifier = modifier,
+        factory = { ctx ->
+            PreviewView(ctx).also { previewView ->
+                val future = ProcessCameraProvider.getInstance(ctx)
+                future.addListener({
+                    try {
+                        val provider = future.get()
+                        cameraProvider = provider
+                        val preview = Preview.Builder().build().also {
+                            it.setSurfaceProvider(previewView.surfaceProvider)
+                        }
+                        provider.unbindAll()
+                        val camera = provider.bindToLifecycle(
+                            lifecycleOwner,
+                            CameraSelector.DEFAULT_BACK_CAMERA,
+                            preview,
+                            imageCapture
+                        )
+
+                        val scaleDetector = ScaleGestureDetector(
+                            ctx,
+                            object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+                                override fun onScale(detector: ScaleGestureDetector): Boolean {
+                                    val ratio = camera.cameraInfo.zoomState.value?.zoomRatio ?: 1f
+                                    camera.cameraControl.setZoomRatio(ratio * detector.scaleFactor)
+                                    return true
+                                }
+                            }
+                        )
+                        previewView.setOnTouchListener { v, event ->
+                            scaleDetector.onTouchEvent(event)
+                            if (event.action == android.view.MotionEvent.ACTION_UP) {
+                                v.performClick()
+                            }
+                            true
+                        }
+                        onCameraBound(camera)
+                    } catch (e: Exception) {
+                        android.util.Log.e("CameraPreview", "Camera bind failed", e)
+                    }
+                }, ContextCompat.getMainExecutor(ctx))
+            }
+        }
+    )
 }
 
-// Palette for disease scanning animation
 private val DiseaseBgTop = Color(0xFF13221A)
 private val DiseaseBgBottom = Color(0xFF0A130E)
 private val DiseaseFramePanel = Color(0xFF1B3324)
@@ -507,8 +674,7 @@ private val DiseaseAccentGreenDim = Color(0xFF16A34A)
 
 @Composable
 private fun DiseaseScanningAnimationScreen(
-    bitmap: Bitmap?,
-    onScanComplete: () -> Unit = {}
+    bitmap: Bitmap?
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "disease_scan_transition")
 
@@ -516,14 +682,14 @@ private fun DiseaseScanningAnimationScreen(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 2000, easing = LinearEasing),
+            animation = tween(durationMillis = 1900, easing = LinearEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "disease_scan_line"
     )
 
     val pulseAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.4f,
+        initialValue = 0.45f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
             animation = tween(durationMillis = 900, easing = FastOutSlowInEasing),
@@ -543,12 +709,14 @@ private fun DiseaseScanningAnimationScreen(
     )
 
     var messageIndex by remember { mutableStateOf(0) }
-    val messages = listOf(
-        "Analyzing leaf...",
-        "Detecting disease...",
-        "Checking symptoms...",
-        "Almost done..."
-    )
+    val messages = remember {
+        listOf(
+            "Analyzing leaf...",
+            "Detecting disease...",
+            "Checking symptoms...",
+            "Almost done..."
+        )
+    }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -562,23 +730,22 @@ private fun DiseaseScanningAnimationScreen(
             .fillMaxSize()
             .statusBarsPadding()
             .background(
-                Brush.verticalGradient(
-                    colors = listOf(DiseaseBgTop, DiseaseBgBottom)
-                )
+                Brush.verticalGradient(colors = listOf(DiseaseBgTop, DiseaseBgBottom))
             ),
         contentAlignment = Alignment.Center
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(32.dp)
+            verticalArrangement = Arrangement.spacedBy(28.dp)
         ) {
-
-            // ---- Ambient glow behind the frame ----
             Box(contentAlignment = Alignment.Center) {
                 Canvas(
                     modifier = Modifier
-                        .size(300.dp)
-                        .scale(glowScale)
+                        .size(290.dp)
+                        .graphicsLayer {
+                            scaleX = glowScale
+                            scaleY = glowScale
+                        }
                 ) {
                     drawCircle(
                         brush = Brush.radialGradient(
@@ -591,7 +758,6 @@ private fun DiseaseScanningAnimationScreen(
                     )
                 }
 
-                // ---- Scan frame with moving line and image render layer ----
                 Box(
                     modifier = Modifier
                         .size(240.dp)
@@ -599,8 +765,6 @@ private fun DiseaseScanningAnimationScreen(
                         .background(DiseaseFramePanel),
                     contentAlignment = Alignment.Center
                 ) {
-                    // Render the captured bitmap
-                    android.util.Log.d("DiseaseScanningAnimationScreen", "Bitmap check: ${bitmap?.width}x${bitmap?.height}")
                     if (bitmap != null) {
                         key(bitmap) {
                             Image(
@@ -610,7 +774,6 @@ private fun DiseaseScanningAnimationScreen(
                                 contentScale = ContentScale.Crop
                             )
                         }
-                        // Subtle dark overlay
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -618,39 +781,31 @@ private fun DiseaseScanningAnimationScreen(
                         )
                     }
 
-                    // Laser scan line dynamic animation overlay
                     Canvas(modifier = Modifier.fillMaxSize()) {
                         val cornerRadiusPx = 24.dp.toPx()
                         val bracketLen = size.width * 0.14f
                         val strokeW = 3.dp.toPx()
 
-                        // Soft outer border
                         drawRoundRect(
-                            color = DiseaseAccentGreen.copy(alpha = 0.18f),
+                            color = DiseaseAccentGreen.copy(alpha = 0.2f),
                             cornerRadius = CornerRadius(cornerRadiusPx),
                             style = Stroke(width = strokeW)
                         )
 
-                        // Four corner brackets, viewfinder style, pulsing
                         val c = DiseaseAccentGreen.copy(alpha = pulseAlpha)
                         val w = size.width
                         val h = size.height
                         val inset = strokeW / 2
 
-                        // top-left
                         drawLine(c, Offset(inset, inset + bracketLen), Offset(inset, inset), strokeWidth = strokeW)
                         drawLine(c, Offset(inset, inset), Offset(inset + bracketLen, inset), strokeWidth = strokeW)
-                        // top-right
                         drawLine(c, Offset(w - inset - bracketLen, inset), Offset(w - inset, inset), strokeWidth = strokeW)
                         drawLine(c, Offset(w - inset, inset), Offset(w - inset, inset + bracketLen), strokeWidth = strokeW)
-                        // bottom-left
                         drawLine(c, Offset(inset, h - inset - bracketLen), Offset(inset, h - inset), strokeWidth = strokeW)
                         drawLine(c, Offset(inset, h - inset), Offset(inset + bracketLen, h - inset), strokeWidth = strokeW)
-                        // bottom-right
                         drawLine(c, Offset(w - inset - bracketLen, h - inset), Offset(w - inset, h - inset), strokeWidth = strokeW)
                         drawLine(c, Offset(w - inset, h - inset - bracketLen), Offset(w - inset, h - inset), strokeWidth = strokeW)
 
-                        // Moving sweep line
                         val lineY = size.height * scanLinePosition
                         drawLine(
                             brush = Brush.horizontalGradient(
@@ -668,31 +823,33 @@ private fun DiseaseScanningAnimationScreen(
                 }
             }
 
-            Text(
-                text = messages[messageIndex],
-                color = Color.White.copy(alpha = pulseAlpha),
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Medium,
-                style = MaterialTheme.typography.bodyLarge
-            )
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    text = messages[messageIndex],
+                    fontFamily = HomeInterFont,
+                    color = Color.White,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.bodyLarge
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "Please wait while we analyze your plant",
+                    fontFamily = HomeInterFont,
+                    color = Color.White.copy(alpha = 0.6f),
+                    fontSize = 13.sp
+                )
+            }
 
-            Text(
-                text = "Please wait while we analyze your plant",
-                color = Color.White.copy(alpha = 0.55f),
-                fontSize = 13.sp,
-                style = MaterialTheme.typography.bodySmall
-            )
-
-            // Progress dots
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 messages.indices.forEach { index ->
                     val active = index == messageIndex
                     Box(
                         modifier = Modifier
                             .size(if (active) 8.dp else 6.dp)
-                            .clip(RoundedCornerShape(50))
+                            .clip(CircleShape)
                             .background(
-                                if (active) DiseaseAccentGreen else Color.White.copy(alpha = 0.2f)
+                                if (active) DiseaseAccentGreen else Color.White.copy(alpha = 0.25f)
                             )
                     )
                 }
