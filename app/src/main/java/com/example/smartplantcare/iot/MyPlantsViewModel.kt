@@ -36,6 +36,7 @@ data class MyPlantsUiState(
     val nearbyEspDevices: List<NearbyEspDevice> = emptyList(),
     val isConnectingToEsp: Boolean = false,
     val scanStatusMessage: String? = null,
+    val scanBlocker: EspScanBlocker = EspScanBlocker.NONE,
 
     // Step 2: 2.4 GHz Wi-Fi Picker, Password, Custom Box Name & Claim
     val connectedEspInfo: EspDeviceInfo? = null,
@@ -188,11 +189,46 @@ class MyPlantsViewModel(
 
     // ─── STEP 1: Nearby ESP32 Scan & Connect (2-Minute Active Radar Scan) ───────
 
+    private fun messageForBlocker(blocker: EspScanBlocker): String = when (blocker) {
+        EspScanBlocker.WIFI_DISABLED ->
+            "Phone Wi-Fi is turned OFF. Turn on Wi-Fi, then tap Start Scanning."
+        EspScanBlocker.LOCATION_PERMISSION_MISSING ->
+            "Precise Location permission is required by Android to detect nearby ESP32 Wi-Fi hotspots. Open App Permissions and allow Location (Precise), or connect manually in Wi-Fi Settings."
+        EspScanBlocker.LOCATION_SERVICE_DISABLED ->
+            "Phone Location (GPS) is turned OFF. Android requires Location Services ON to scan nearby ESP32 Wi-Fi hotspots. Turn on Location, then tap Start Scanning."
+        EspScanBlocker.NONE -> ""
+    }
+
+    fun reportScanBlocker(blocker: EspScanBlocker, customMessage: String? = null) {
+        espScanJob?.cancel()
+        espScanJob = null
+        _uiState.update {
+            it.copy(
+                isScanningEsp = false,
+                scanElapsedSeconds = 0,
+                scanTimedOutNoDevice = false,
+                scanBlocker = blocker,
+                scanStatusMessage = customMessage ?: messageForBlocker(blocker)
+            )
+        }
+    }
+
     fun startScanningNearbyEsp() {
         espScanJob?.cancel()
+
+        // Immediately verify Wi-Fi ON, Precise Location permission, and System Location (GPS) ON
+        val initialBlocker = provClient.checkScanBlocker()
+        if (initialBlocker != EspScanBlocker.NONE) {
+            reportScanBlocker(initialBlocker)
+            return
+        }
+
         espScanJob = viewModelScope.launch {
-            val maxScanDurationMs = 120_000L  // 2 minutes timeout
+            val maxScanDurationMs = 120_000L      // 2 minutes timeout
+            val activeScanIntervalMs = 30_000L    // Max 4 active startScan() calls / 2 min (Android throttle limit)
+            val cachePollIntervalMs = 3_000L      // Poll passive/OS Wi-Fi scan cache every 3s without wasting quota
             val startedAtMs = System.currentTimeMillis()
+            var lastActiveScanAtMs = 0L
 
             _uiState.update {
                 it.copy(
@@ -200,7 +236,8 @@ class MyPlantsViewModel(
                     scanElapsedSeconds = 0,
                     scanTimedOutNoDevice = false,
                     nearbyEspDevices = emptyList(),
-                    scanStatusMessage = null
+                    scanStatusMessage = null,
+                    scanBlocker = EspScanBlocker.NONE
                 )
             }
 
@@ -216,14 +253,37 @@ class MyPlantsViewModel(
 
             try {
                 while (System.currentTimeMillis() - startedAtMs < maxScanDurationMs) {
-                    val found = provClient.scanNearbyEspDevices()
-                    if (found.isNotEmpty()) {
+                    val now = System.currentTimeMillis()
+                    val shouldTriggerActive = (lastActiveScanAtMs == 0L) ||
+                        (now - lastActiveScanAtMs >= activeScanIntervalMs)
+
+                    val snapshot = provClient.scanNearbyEspDevicesDetailed(
+                        triggerActiveScan = shouldTriggerActive
+                    )
+                    if (shouldTriggerActive) {
+                        lastActiveScanAtMs = System.currentTimeMillis()
+                    }
+
+                    if (snapshot.blocker != EspScanBlocker.NONE) {
                         _uiState.update {
                             it.copy(
                                 isScanningEsp = false,
                                 scanTimedOutNoDevice = false,
-                                nearbyEspDevices = found,
-                                scanStatusMessage = null
+                                scanBlocker = snapshot.blocker,
+                                scanStatusMessage = messageForBlocker(snapshot.blocker)
+                            )
+                        }
+                        return@launch
+                    }
+
+                    if (snapshot.devices.isNotEmpty()) {
+                        _uiState.update {
+                            it.copy(
+                                isScanningEsp = false,
+                                scanTimedOutNoDevice = false,
+                                nearbyEspDevices = snapshot.devices,
+                                scanStatusMessage = null,
+                                scanBlocker = EspScanBlocker.NONE
                             )
                         }
                         return@launch
@@ -231,7 +291,7 @@ class MyPlantsViewModel(
 
                     val remainingMs = maxScanDurationMs - (System.currentTimeMillis() - startedAtMs)
                     if (remainingMs <= 0L) break
-                    delay(minOf(4000L, remainingMs))
+                    delay(minOf(cachePollIntervalMs, remainingMs))
                 }
 
                 // 2 minutes elapsed with zero active ESP32 found
@@ -241,6 +301,7 @@ class MyPlantsViewModel(
                         scanElapsedSeconds = 120,
                         scanTimedOutNoDevice = true,
                         nearbyEspDevices = emptyList(),
+                        scanBlocker = EspScanBlocker.NONE,
                         scanStatusMessage = "No active ESP32 nearby"
                     )
                 }
@@ -257,7 +318,8 @@ class MyPlantsViewModel(
             it.copy(
                 isScanningEsp = false,
                 scanElapsedSeconds = 0,
-                scanTimedOutNoDevice = false
+                scanTimedOutNoDevice = false,
+                scanBlocker = EspScanBlocker.NONE
             )
         }
     }

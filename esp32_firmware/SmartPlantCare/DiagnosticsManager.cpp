@@ -58,6 +58,10 @@ void DiagnosticsManager::printStatusReport(
                 provisioning.bootId(),
                 ProvisioningPairingManager::ownershipStateToString(provisioning.ownershipState()),
                 static_cast<unsigned long>(provisioning.ownershipEpoch()));
+  Serial.printf("SetupAP: %s (SSID=%s) | SavedWiFi: %s\n",
+                provisioning.isSetupApActive() ? "ACTIVE" : "INACTIVE",
+                provisioning.setupApSsid(),
+                provisioning.hasWifiCredentials() ? provisioning.wifiSsid() : "<none>");
   Serial.printf("Mode: %s | LoadsEnabled: %s | LCD(0x%02X): %s | Heap: %lu B (min %lu B) | MaxSafetyDelta: %lu ms\n",
                 (cfg.mode == DeviceMode::OUTDOOR) ? "OUTDOOR" : "INDOOR",
                 relays.isPhysicalLoadsEnabled() ? "YES" : "NO (BENCH_SAFE)",
@@ -252,7 +256,7 @@ void DiagnosticsManager::processCliLine(
   } else if (strcmp(cmd, "factoryreset") == 0) {
     provisioning.initiateResetPendingLifecycle(
         provisioning.ownershipEpoch() + 1, relays, irrigation, buzzer, events);
-    provisioning.finalizeLocalUnclaimAndEnterSetup(ioConfig, false);
+    provisioning.finalizeLocalUnclaimAndEnterSetup(ioConfig, true);
   } else {
     Serial.printf("[CLI] Unknown command '%s'. Type 'help'.\n", cmd);
   }

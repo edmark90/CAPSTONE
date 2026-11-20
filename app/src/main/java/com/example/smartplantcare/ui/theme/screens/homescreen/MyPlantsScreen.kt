@@ -25,6 +25,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.smartplantcare.iot.EspScanBlocker
 import com.example.smartplantcare.iot.MyPlantsStep
 import com.example.smartplantcare.iot.MyPlantsSubPage
 import com.example.smartplantcare.iot.MyPlantsViewModel
@@ -71,40 +72,54 @@ fun MyPlantsScreen(
         }
     }
 
+    // Android 12+ (targetSdk >= 31) requires ACCESS_COARSE_LOCATION to be requested
+    // together with ACCESS_FINE_LOCATION in the same runtime array; otherwise the OS
+    // ignores and auto-denies ACCESS_FINE_LOCATION, breaking WifiManager.scanResults.
     val requiredScanPermissions = remember {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             arrayOf(
                 Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION,
                 Manifest.permission.NEARBY_WIFI_DEVICES
             )
         } else {
-            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+            arrayOf(
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            )
         }
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { grants ->
-        val fineGranted = grants[Manifest.permission.ACCESS_FINE_LOCATION] == true
-        val nearbyGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            grants[Manifest.permission.NEARBY_WIFI_DEVICES] == true
-        } else {
-            true
-        }
-        if (fineGranted || nearbyGranted) {
+        val fineGranted = grants[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+        if (fineGranted) {
             onStartScanning()
             vm.startScanningNearbyEsp()
         } else {
-            // Still allow manual Wi-Fi Settings fallback even if user denies scan permission
-            vm.startScanningNearbyEsp()
+            vm.reportScanBlocker(EspScanBlocker.LOCATION_PERMISSION_MISSING)
         }
     }
 
     fun requestScanWithPermissions() {
-        val allGranted = requiredScanPermissions.all { perm ->
-            ContextCompat.checkSelfPermission(context, perm) == PackageManager.PERMISSION_GRANTED
+        val fineGranted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        val nearbyGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.NEARBY_WIFI_DEVICES
+            ) == PackageManager.PERMISSION_GRANTED
+        } else {
+            true
         }
-        if (allGranted) {
+        if (fineGranted && nearbyGranted) {
             onStartScanning()
             vm.startScanningNearbyEsp()
         } else {

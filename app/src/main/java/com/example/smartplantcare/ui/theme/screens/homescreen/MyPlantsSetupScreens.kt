@@ -1,6 +1,7 @@
 package com.example.smartplantcare.ui.theme.screens.homescreen
 
 import android.content.Intent
+import android.net.Uri
 import android.provider.Settings
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.LinearEasing
@@ -92,6 +93,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.example.smartplantcare.iot.EspScanBlocker
 import com.example.smartplantcare.iot.MyPlantsUiState
 import com.example.smartplantcare.iot.NearbyEspDevice
 import com.example.smartplantcare.iot.ScannedWifiNetwork
@@ -396,6 +398,44 @@ internal fun MyPlantsScanStepScreen(
                         )
                     }
                     Spacer(modifier = Modifier.height(10.dp))
+                    if (uiState.scanBlocker == EspScanBlocker.LOCATION_SERVICE_DISABLED ||
+                        uiState.scanBlocker == EspScanBlocker.LOCATION_PERMISSION_MISSING
+                    ) {
+                        Button(
+                            onClick = {
+                                runCatching {
+                                    val intent = if (uiState.scanBlocker == EspScanBlocker.LOCATION_SERVICE_DISABLED) {
+                                        Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)
+                                    } else {
+                                        Intent(
+                                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                            Uri.fromParts("package", context.packageName, null)
+                                        )
+                                    }
+                                    context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 8.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = HomeColors.ForestPrimary,
+                                contentColor = Color.White
+                            )
+                        ) {
+                            Text(
+                                text = if (uiState.scanBlocker == EspScanBlocker.LOCATION_SERVICE_DISABLED) {
+                                    "Turn On Location (GPS)"
+                                } else {
+                                    "Open App Permissions"
+                                },
+                                fontFamily = HomeInterFont,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)

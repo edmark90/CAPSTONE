@@ -42,6 +42,12 @@ void FirebaseClientManager::serviceNetworkAndTime(uint32_t nowMs, DiagnosticsMet
     return;
   }
 
+  // CRITICAL: Do not run STA reconnect/channel-hopping scans while the SPC-SETUP-* SoftAP
+  // is active, or the ESP32 2.4 GHz radio will disrupt SoftAP beacons and drop clients.
+  if (provisioning_->isSetupApActive()) {
+    return;
+  }
+
   if (WiFi.status() == WL_CONNECTED) {
     wifiAttemptActive_ = false;
     wifiBackoffMs_     = Config::WIFI_RECONNECT_MIN_MS;
@@ -406,7 +412,7 @@ void FirebaseClientManager::pollCloudControlAndWeather(
 
   if (provisioning_->isResetAckPendingToCloud()) {
     if (sendResetAckToBackend(nowMs)) {
-      provisioning_->finalizeLocalUnclaimAndEnterSetup(ioConfig, false);
+      provisioning_->finalizeLocalUnclaimAndEnterSetup(ioConfig, true);
     }
     return;
   }

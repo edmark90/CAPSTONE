@@ -101,6 +101,8 @@ class ProvisioningPairingManager {
   Preferences    prefs_;
   WebServer      setupServer_{80};
   bool           setupApActive_           = false;
+  bool           setupApDesired_          = false;
+  uint32_t       lastApRetryMs_           = 0;
   bool           routesRegistered_        = false;
   bool           pendingApShutdown_       = false;
   uint32_t       apShutdownAtMs_          = 0;

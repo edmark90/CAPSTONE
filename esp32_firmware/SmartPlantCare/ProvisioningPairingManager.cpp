@@ -68,20 +68,41 @@ void ProvisioningPairingManager::begin(RuntimeConfig& ioConfig) {
                 static_cast<unsigned long>(ownershipEpoch_),
                 hasWifiCredentials() ? "YES" : "NO");
 
-  if (!hasWifiCredentials() || ownershipState_ == OwnershipState::UNCLAIMED) {
+  if (!hasWifiCredentials() ||
+      ownershipState_ == OwnershipState::UNCLAIMED ||
+      ownershipState_ == OwnershipState::CLAIM_PENDING) {
     startOwnerSetupHotspot();
+  } else if (ownershipState_ == OwnershipState::OWNED) {
+    // Boot-time Wi-Fi join watchdog: if saved router is unreachable (e.g., new location or
+    // changed password), auto-open SPC-SETUP-* after 35s so the board is never invisible.
+    wifiVerifyPending_    = true;
+    wifiVerifyDeadlineMs_ = millis() + Config::WIFI_PROVISION_VERIFY_TIMEOUT_MS;
+    Serial.printf("[PROV] Device OWNED with saved Wi-Fi '%s'. Auto-setup fallback in %lu s if unreachable.\n",
+                  wifiSsid_,
+                  static_cast<unsigned long>(Config::WIFI_PROVISION_VERIFY_TIMEOUT_MS / 1000UL));
   }
 }
 
 void ProvisioningPairingManager::startOwnerSetupHotspot() {
+  setupApDesired_ = true;
   if (setupApActive_) {
     return;
   }
 
+  lastApRetryMs_ = millis();
+
+  // Disable ESP-IDF auto-persistence and stop any background STA join attempt so the
+  // single 2.4 GHz radio does not channel-hop and drop SoftAP beacons.
+  WiFi.persistent(false);
+  WiFi.disconnect(false, false);
+
   // IMPORTANT: Always use WIFI_AP_STA so GET /api/wifi-scan can call WiFi.scanNetworks()
   // while keeping the SPC-SETUP-* SoftAP alive for the Android app.
   WiFi.mode(WIFI_AP_STA);
-  bool ok = WiFi.softAP(setupApSsid_, Secrets::DEFAULT_PROV_POP);
+  delay(50);
+
+  // Channel 1, visible SSID (hidden = 0), max 4 simultaneous clients
+  bool ok = WiFi.softAP(setupApSsid_, Secrets::DEFAULT_PROV_POP, 1, 0, 4);
   if (ok) {
     setupApActive_ = true;
     if (routesRegistered_) {
@@ -94,10 +115,13 @@ void ProvisioningPairingManager::startOwnerSetupHotspot() {
     Serial.printf("       Setup URL    : http://%s  (/api/info, /api/wifi-scan, /api/provision)\n",
                   WiFi.softAPIP().toString().c_str());
     Serial.println(F("======================================================================"));
+  } else {
+    Serial.printf("[PROV] ERROR: WiFi.softAP('%s') failed! Will retry in 5s.\n", setupApSsid_);
   }
 }
 
 void ProvisioningPairingManager::stopOwnerSetupHotspot() {
+  setupApDesired_ = false;
   if (!setupApActive_) {
     return;
   }
@@ -318,6 +342,15 @@ void ProvisioningPairingManager::serviceProvisioningPortal(
     BuzzerManager& buzzer,
     EventNotificationManager& events,
     LcdManager& lcd) {
+  if (!setupApActive_ && setupApDesired_) {
+    if (nowMs - lastApRetryMs_ >= 5000UL) {
+      startOwnerSetupHotspot();
+    }
+    if (!setupApActive_) {
+      return;
+    }
+  }
+
   if (setupApActive_) {
     if (!routesRegistered_) {
       registerHttpRoutes(ioConfig, relays, irrigation, buzzer, events, lcd);
@@ -383,6 +416,7 @@ void ProvisioningPairingManager::saveFactoryIdentity(const char* deviceId,
                                                      const char* deviceAuthSecret) {
   if (deviceId && strlen(deviceId) > 0) {
     snprintf(deviceId_, sizeof(deviceId_), "%s", deviceId);
+    snprintf(setupApSsid_, sizeof(setupApSsid_), "SPC-SETUP-%s", deviceId_);
   }
   if (claimCode && strlen(claimCode) > 0) {
     snprintf(claimCode_, sizeof(claimCode_), "%s", claimCode);
