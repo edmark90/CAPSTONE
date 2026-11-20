@@ -48,21 +48,29 @@ void FirebaseClientManager::serviceNetworkAndTime(uint32_t nowMs, DiagnosticsMet
     return;
   }
 
-  if (WiFi.status() == WL_CONNECTED) {
+  if (WiFi.status() == WL_CONNECTED && WiFi.localIP()[0] != 0) {
     wifiAttemptActive_ = false;
     wifiBackoffMs_     = Config::WIFI_RECONNECT_MIN_MS;
     ioDiag.wifiRssiDbm = static_cast<int8_t>(WiFi.RSSI());
 
-    if (!ntpConfigured_) {
-      configTime(0, 0, "pool.ntp.org", "time.google.com");
-      ntpConfigured_ = true;
-      Serial.printf("[NET] Wi-Fi connected (IP=%s, RSSI=%d dBm). NTP sync started.\n",
+    if (wifiConnectedAtMs_ == 0) {
+      wifiConnectedAtMs_ = (nowMs == 0) ? 1UL : nowMs;
+      Serial.printf("[NET] Wi-Fi connected (IP=%s, RSSI=%d dBm). Settling network stack...\n",
                     WiFi.localIP().toString().c_str(),
                     static_cast<int>(ioDiag.wifiRssiDbm));
+    }
+
+    // Delay SNTP start by 2s after DHCP and use numeric NTP IPs (Google Time / NIST)
+    // to prevent LwIP udp_new_ip_type TCPIP core-lock assert on Arduino-ESP32 3.x.
+    if (!ntpConfigured_ && (nowMs - wifiConnectedAtMs_ >= 2000UL)) {
+      configTime(0, 0, "216.239.35.0", "129.6.15.28");
+      ntpConfigured_ = true;
+      Serial.println(F("[NET] NTP sync started."));
     }
     return;
   }
 
+  wifiConnectedAtMs_ = 0;
   ioDiag.wifiRssiDbm = -127;
   if (nowMs - lastWifiAttemptAtMs_ >= wifiBackoffMs_) {
     lastWifiAttemptAtMs_ = nowMs;
@@ -81,6 +89,10 @@ void FirebaseClientManager::serviceNetworkAndTime(uint32_t nowMs, DiagnosticsMet
 
 bool FirebaseClientManager::ensureValidAuth(uint32_t nowMs) {
   if (!isWifiConnected() || !provisioning_) {
+    return false;
+  }
+  // Wait 3.5s after Wi-Fi link-up so DHCP + SNTP settle cleanly before TLS/DNS calls
+  if (wifiConnectedAtMs_ == 0 || (nowMs - wifiConnectedAtMs_ < 3500UL)) {
     return false;
   }
   if (strncmp(Secrets::FIREBASE_RTDB_BASE_URL, "https://YOUR_", 13) == 0) {

@@ -87,6 +87,7 @@ class MyPlantsViewModel(
     private var liveDeviceJob: Job? = null
     private var espScanJob: Job? = null
     private var lastReportedCmdId: String? = null
+    private var pendingFirebaseClaimResult: ProvisionResult? = null
 
     fun bindUser(uid: String?, email: String, displayName: String, isGuest: Boolean) {
         if (isGuest || uid.isNullOrBlank()) {
@@ -376,6 +377,7 @@ class MyPlantsViewModel(
     }
 
     private fun enterWifiSetupStep(info: EspDeviceInfo) {
+        pendingFirebaseClaimResult = null
         _uiState.update {
             it.copy(
                 isConnectingToEsp = false,
@@ -440,6 +442,7 @@ class MyPlantsViewModel(
     }
 
     fun cancelWifiSetupAndReturnToScan() {
+        pendingFirebaseClaimResult = null
         provClient.disconnectFromEspHotspot()
         _uiState.update {
             it.copy(
@@ -483,41 +486,57 @@ class MyPlantsViewModel(
         val boxName = state.customBoxName.trim().ifEmpty { "SmartPlantCare Box" }
 
         viewModelScope.launch {
-            _uiState.update {
-                it.copy(
-                    isProvisioning = true,
-                    provisioningError = null,
-                    provisioningProgressMessage = "1/3 Sending Wi-Fi & \"$boxName\" to ESP32 NVS..."
-                )
-            }
-
-            val nextEpoch = (espInfo.ownershipEpoch.coerceAtLeast(0L)) + 1L
-            val provResult = provClient.sendProvisioningPayload(
-                wifiSsid = ssid,
-                wifiPassword = state.wifiPassword,
-                claimCode = claim,
-                displayName = boxName,
-                ownerUid = uid,
-                nextOwnershipEpoch = nextEpoch
-            )
-
-            if (!provResult.success) {
+            val cachedProv = pendingFirebaseClaimResult
+            val provResult = if (cachedProv != null && cachedProv.success) {
+                // Stage 1/3 already succeeded on ESP32 and closed SoftAP; retry Stage 3/3 in Firebase directly
                 _uiState.update {
                     it.copy(
-                        isProvisioning = false,
-                        provisioningProgressMessage = null,
-                        provisioningError = provResult.errorMessage
-                            ?: "ESP32 rejected provisioning. Check your Claim Code and Wi-Fi."
+                        isProvisioning = true,
+                        provisioningError = null,
+                        provisioningProgressMessage = "3/3 Retrying Firebase binding for \"$boxName\"..."
                     )
                 }
-                return@launch
-            }
+                provClient.disconnectFromEspHotspot()
+                cachedProv
+            } else {
+                _uiState.update {
+                    it.copy(
+                        isProvisioning = true,
+                        provisioningError = null,
+                        provisioningProgressMessage = "1/3 Sending Wi-Fi & \"$boxName\" to ESP32 NVS..."
+                    )
+                }
 
-            _uiState.update {
-                it.copy(provisioningProgressMessage = "2/3 ESP32 saved Wi-Fi! Reconnecting phone to internet...")
+                val nextEpoch = (espInfo.ownershipEpoch.coerceAtLeast(0L)) + 1L
+                val freshProv = provClient.sendProvisioningPayload(
+                    wifiSsid = ssid,
+                    wifiPassword = state.wifiPassword,
+                    claimCode = claim,
+                    displayName = boxName,
+                    ownerUid = uid,
+                    nextOwnershipEpoch = nextEpoch
+                )
+
+                if (!freshProv.success) {
+                    _uiState.update {
+                        it.copy(
+                            isProvisioning = false,
+                            provisioningProgressMessage = null,
+                            provisioningError = freshProv.errorMessage
+                                ?: "ESP32 rejected provisioning. Check your Claim Code and Wi-Fi."
+                        )
+                    }
+                    return@launch
+                }
+
+                pendingFirebaseClaimResult = freshProv
+                _uiState.update {
+                    it.copy(provisioningProgressMessage = "2/3 ESP32 saved Wi-Fi! Reconnecting phone to internet...")
+                }
+                provClient.disconnectFromEspHotspot()
+                delay(3500L)
+                freshProv
             }
-            provClient.disconnectFromEspHotspot()
-            delay(2800L)
 
             _uiState.update {
                 it.copy(provisioningProgressMessage = "3/3 Binding \"$boxName\" to your owner account in Firebase...")
@@ -525,8 +544,8 @@ class MyPlantsViewModel(
 
             var claimSuccess = false
             var lastError: String? = null
-            // Retry up to 3 times while phone transitions from ESP32 SoftAP back to Wi-Fi/Cellular
-            for (attempt in 1..3) {
+            // Retry up to 6 times (~18s total) while phone transitions from ESP32 SoftAP back to Wi-Fi/Cellular
+            for (attempt in 1..6) {
                 val claimRes = repository.completeDeviceClaim(
                     deviceId = provResult.deviceId.ifBlank { espInfo.deviceId },
                     ownerUid = uid,
@@ -540,7 +559,7 @@ class MyPlantsViewModel(
                     break
                 } else {
                     lastError = claimRes.exceptionOrNull()?.localizedMessage
-                    delay(2000L)
+                    delay(2500L)
                 }
             }
 
@@ -549,12 +568,13 @@ class MyPlantsViewModel(
                     it.copy(
                         isProvisioning = false,
                         provisioningProgressMessage = null,
-                        provisioningError = "ESP32 received Wi-Fi, but Firebase sync failed (${lastError ?: "No internet"}). Reconnect to internet and tap Retry."
+                        provisioningError = "ESP32 received Wi-Fi, but Firebase sync failed (${lastError ?: "No internet"}). Make sure phone internet is back, then tap Retry."
                     )
                 }
                 return@launch
             }
 
+            pendingFirebaseClaimResult = null
             val finalDeviceId = provResult.deviceId.ifBlank { espInfo.deviceId }
             _uiState.update {
                 it.copy(

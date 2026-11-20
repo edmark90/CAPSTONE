@@ -105,10 +105,17 @@ class IotFirebaseRepository {
                 "timezone" to "Asia/Manila"
             )
         )
-        deviceRef.child("meta").updateChildren(metaMap).await()
+
+        // Step 1: Mark CLAIM_PENDING first so RTDB rules permit updating acl/ownerUid
+        // even if this deviceId previously had a demo/seed or prior ownerUid in /acl.
+        deviceRef.child("meta").child("ownershipState").setValue("CLAIM_PENDING").await()
 
         val aclRef = deviceRef.child("acl")
         aclRef.child("ownerUid").setValue(ownerUid).await()
+
+        // Step 2: Commit full OWNED metadata now that acl/ownerUid belongs to this owner.
+        deviceRef.child("meta").updateChildren(metaMap).await()
+
         aclRef.child("members").child(ownerUid).setValue(
             mapOf(
                 "role" to DeviceRole.OWNER.slug,

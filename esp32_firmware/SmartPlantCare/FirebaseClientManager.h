@@ -108,6 +108,7 @@ class FirebaseClientManager {
 
   ProvisioningPairingManager* provisioning_          = nullptr;
   bool                        wifiAttemptActive_     = false;
+  uint32_t                    wifiConnectedAtMs_     = 0;
   uint32_t                    lastWifiAttemptAtMs_   = 0;
   uint32_t                    wifiBackoffMs_         = Config::WIFI_RECONNECT_MIN_MS;
   bool                        ntpConfigured_         = false;
