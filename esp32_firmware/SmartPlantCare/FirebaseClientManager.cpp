@@ -235,6 +235,9 @@ bool FirebaseClientManager::publishStatusAndTelemetry(
   st["activeValve"]             = cropZoneSlug(relays.activeValveZone());
   st["pumpState"]               = relays.isPumpOn() ? "ON" : "OFF";
   st["irrigationState"]         = irrigationStateString(irrigation.state());
+  st["activePumpElapsedSec"]    = irrigation.activePumpElapsedSec(nowMs);
+  st["activeTargetDurationSec"] = irrigation.activeTargetDurationSec();
+  st["lastAbortReason"]         = irrigation.lastAbortReason();
   st["physicalLoadsEnabled"]    = relays.isPhysicalLoadsEnabled();
   st["lcdAddress"]              = lcdAddr;
   st["freeHeap"]                = ioDiag.freeHeapBytes;
@@ -371,6 +374,20 @@ void FirebaseClientManager::flushPendingEventsAndReports(
   }
 }
 
+void FirebaseClientManager::pollPendingCommandsOnly(
+    uint32_t nowMs,
+    const RuntimeConfig& cfg,
+    IrrigationController& irrigation,
+    BuzzerManager& buzzer) {
+  if (!ensureValidAuth(nowMs) || !provisioning_) {
+    return;
+  }
+  if (provisioning_->ownershipState() != OwnershipState::OWNED) {
+    return;
+  }
+  syncPendingCommands(nowMs, cfg, irrigation, buzzer);
+}
+
 void FirebaseClientManager::pollCloudControlAndWeather(
     uint32_t nowMs,
     RuntimeConfig& ioConfig,
@@ -425,10 +442,37 @@ void FirebaseClientManager::syncMetaNode(
   const char* stateStr = doc["ownershipState"] | "UNCLAIMED";
   uint32_t    epoch    = doc["ownershipEpoch"] | 0;
   bool        resetReq = doc["resetRequired"] | false;
+  const char* cloudDispName = doc["displayName"] | "";
 
   if (!doc["location"]["lat"].isNull() && !doc["location"]["lon"].isNull()) {
     deviceLat_ = doc["location"]["lat"].as<float>();
     deviceLon_ = doc["location"]["lon"].as<float>();
+  }
+
+  // If Owner renamed the plant box from Android Settings while OWNED, update NVS displayName
+  if (strlen(cloudDispName) > 0 && strcmp(cloudDispName, provisioning_->displayName()) != 0 &&
+      strcmp(stateStr, "OWNED") == 0) {
+    provisioning_->saveDisplayName(cloudDispName);
+  }
+
+  // If the Owner just paired the ESP32 via the local Setup Hotspot, local epoch is newer than cloud:
+  // push the new OWNED state, epoch, and custom displayName up to Firebase /meta.
+  if (!resetReq &&
+      strcmp(stateStr, "RESET_PENDING") != 0 &&
+      provisioning_->ownershipState() == OwnershipState::OWNED &&
+      provisioning_->ownershipEpoch() > epoch) {
+    JsonDocument patchDoc;
+    patchDoc["ownershipState"] = "OWNED";
+    patchDoc["ownershipEpoch"] = provisioning_->ownershipEpoch();
+    patchDoc["displayName"]    = provisioning_->displayName();
+    patchDoc["resetRequired"]  = false;
+    patchDoc["claimedAt"]      = currentEpochMs();
+    String patchBody;
+    serializeJson(patchDoc, patchBody);
+    String patchResp;
+    httpRequestJson("PATCH", url, patchBody, patchResp);
+    lastSuccessfulSyncMs_ = nowMs;
+    return;
   }
 
   provisioning_->handleCloudMetaSnapshot(

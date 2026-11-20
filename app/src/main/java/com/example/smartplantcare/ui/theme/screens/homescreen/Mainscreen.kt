@@ -284,6 +284,8 @@ fun MainScreen(
                         MyPlantsScreen(
                             isAuthenticated = uiState.isAuthenticated,
                             isGuest = uiState.isGuest,
+                            userEmail = userProfile.email,
+                            userName = userProfile.name,
                             onNavigateToLogin = { onNavigateToLogin?.invoke() }
                         )
                     }

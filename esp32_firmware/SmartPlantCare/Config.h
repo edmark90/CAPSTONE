@@ -53,9 +53,11 @@ constexpr uint32_t INTERVAL_RESERVOIR_MS    = 2500;   // 2.5 s ultrasonic air-ga
 constexpr uint32_t INTERVAL_LDR_MS          = 5000;   // 5.0 s LDR ADC1 brightness sampling
 constexpr uint32_t INTERVAL_LCD_REFRESH_MS  = 750;    // 750 ms LCD row refresh
 constexpr uint32_t INTERVAL_LCD_PAGE_MS     = 3000;   // 3.0 s normal LCD page rotation
-constexpr uint32_t INTERVAL_TELEMETRY_MS    = 15000;  // 15.0 s Firebase telemetry snapshot
-constexpr uint32_t INTERVAL_CONFIG_POLL_MS  = 20000;  // 20.0 s Firebase config/weather/cmd sync
-constexpr uint32_t INTERVAL_DIAGNOSTICS_MS  = 60000;  // 60.0 s heap/uptime diagnostics log
+constexpr uint32_t INTERVAL_TELEMETRY_MS            = 15000;  // 15.0 s Firebase telemetry snapshot
+constexpr uint32_t INTERVAL_COMMAND_POLL_MS         = 2500;   // 2.5 s fast manual/emergency command poll
+constexpr uint32_t INTERVAL_CONFIG_POLL_MS          = 15000;  // 15.0 s Firebase meta/weather/config sync
+constexpr uint32_t INTERVAL_DIAGNOSTICS_MS          = 60000;  // 60.0 s heap/uptime diagnostics log
+constexpr uint32_t WIFI_PROVISION_VERIFY_TIMEOUT_MS = 35000;  // Re-open AP if Wi-Fi join fails
 
 // ─── Rain Sensor & Strict Weather AND-Condition Defaults ─────────────────────
 constexpr int      DEFAULT_RAIN_PROB_THRESHOLD_PCT = 60;      // CONFIRMED: >= 60%

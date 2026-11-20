@@ -43,7 +43,8 @@ class LcdManager {
               const ReservoirReading& reservoir,
               const RainGateStatus& rain,
               const WeatherSnapshot& weather,
-              const IrrigationController& irrigation);
+              const IrrigationController& irrigation,
+              const char* deviceDisplayName = "SMART PLANT CARE");
 
   // Trigger a temporary 5-second priority overlay (e.g. DEVICE PAIRED)
   void triggerTemporaryOverlay(const char* line0,
@@ -64,7 +65,8 @@ class LcdManager {
                          const RuntimeConfig& cfg,
                          bool wifiConnected,
                          bool firebaseSynced,
-                         const IrrigationController& irrigation) const;
+                         const IrrigationController& irrigation,
+                         const char* deviceDisplayName) const;
   void buildPageEnvironment(char lines[4][21], const EnvironmentReading& env) const;
   void buildPageSoil(char lines[4][21], const SoilZoneStatus soil[3]) const;
   void buildPageReservoir(char lines[4][21], const ReservoirReading& reservoir) const;

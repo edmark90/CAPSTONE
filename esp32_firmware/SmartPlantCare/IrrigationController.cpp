@@ -343,9 +343,11 @@ void IrrigationController::handleCommand(const CommandRequest& cmd,
     return;
   }
 
-  // Validate command expiration so delayed offline commands NEVER start watering on reconnect
+  // Validate command expiration so delayed offline commands NEVER start watering on reconnect.
+  // Only compare wall-clock (currentEpochMs > cmd.expiresAtMs) after NTP has synced (> 1.7e12 ms).
+  const bool ntpSynced = (currentEpochMs > 1700000000000ULL);
   if (cmd.expiresAtMs == 0 ||
-      (currentEpochMs > 0 && currentEpochMs > cmd.expiresAtMs) ||
+      (ntpSynced && currentEpochMs > cmd.expiresAtMs) ||
       (cmd.createdAtMs > 0 && (cmd.expiresAtMs - cmd.createdAtMs) > Config::MANUAL_CMD_MAX_TTL_MS)) {
     queueCommandReport(cmd.commandId, "REJECTED", "Command expired before execution");
     if (events_) {

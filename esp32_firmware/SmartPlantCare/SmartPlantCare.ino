@@ -70,6 +70,7 @@ uint32_t gLastReservoirMs   = 1200;  // Offset from DHT22 to spread loop work
 uint32_t gLastSoilMs        = 600;
 uint32_t gLastLdrMs         = 1800;
 uint32_t gLastTelemetryMs   = 0;
+uint32_t gLastCommandPollMs = 1500;
 uint32_t gLastCloudPollMs   = 3500;
 uint32_t gLastDiagnosticsMs = 0;
 
@@ -229,7 +230,16 @@ void loop() {
                 gReservoir.reading(),
                 gRainWeather.rainStatus(),
                 gRainWeather.weather(),
-                gIrrigation);
+                gIrrigation,
+                gProvisioning.displayName());
+  }
+
+  // ─── 10B. Fast Remote Manual/Emergency Command Poll (2.5 s) ────────────────
+  if (nowMs - gLastCommandPollMs >= Config::INTERVAL_COMMAND_POLL_MS) {
+    gLastCommandPollMs = nowMs;
+    gFirebase.pollPendingCommandsOnly(nowMs, gRuntimeConfig, gIrrigation, gBuzzer);
+    gFirebase.flushPendingEventsAndReports(
+        nowMs, gEvents, gIrrigation, gDiagnostics.metrics());
   }
 
   // ─── 11. Firebase Telemetry & Event Queue Sync (15 s or on state change) ───

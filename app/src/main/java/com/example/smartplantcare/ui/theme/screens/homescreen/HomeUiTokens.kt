@@ -41,6 +41,9 @@ object HomeColors {
     val WarningAmber = Color(0xFFD97706)
     val WarningBg = Color(0xFFFFFBEB)
 
+    val WaterBlue = Color(0xFF0284C7)
+    val WaterBg = Color(0xFFF0F9FF)
+
     val PlaceholderBg = Color(0xFFEFF3F0)
     val NavInactive = Color(0xFF94A39D)
 }

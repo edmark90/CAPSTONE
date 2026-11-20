@@ -17,7 +17,9 @@
         },
         "devices": {
           ".read": "auth != null && auth.uid === $uid",
-          ".write": "auth != null && auth.uid === $uid"
+          "$deviceId": {
+            ".write": "auth != null && (auth.uid === $uid || root.child('devices/' + $deviceId + '/acl/ownerUid').val() === auth.uid || root.child('devices/' + $deviceId + '/meta/ownerUid').val() === auth.uid)"
+          }
         },
         "notificationPreferences": {
           ".write": "auth != null && auth.uid === $uid && !root.child('deletingAccounts/' + $uid).exists()"
@@ -54,11 +56,23 @@
         ".read": true,
 
         "meta": {
-          ".write": "auth != null || data.child('ownershipState').val() === 'RESET_PENDING'"
+          ".write": "auth != null || data.child('ownershipState').val() === 'RESET_PENDING' || data.child('ownershipState').val() === 'UNCLAIMED'"
         },
 
         "acl": {
-          ".write": "auth != null && (!data.child('ownerUid').exists() || data.child('ownerUid').val() === auth.uid)"
+          "ownerUid": {
+            ".write": "auth != null && (!data.exists() || data.val() === auth.uid || root.child('devices/' + $deviceId + '/meta/ownershipState').val() !== 'OWNED')"
+          },
+          "members": {
+            "$memberUid": {
+              ".write": "auth != null && (root.child('devices/' + $deviceId + '/acl/ownerUid').val() === auth.uid || root.child('devices/' + $deviceId + '/meta/ownerUid').val() === auth.uid || (!root.child('devices/' + $deviceId + '/acl/ownerUid').exists() && $memberUid === auth.uid) || ($memberUid === auth.uid && (!newData.exists() || newData.child('inviteCode').exists())))"
+            }
+          },
+          "invitations": {
+            "$inviteCode": {
+              ".write": "auth != null && (root.child('devices/' + $deviceId + '/acl/ownerUid').val() === auth.uid || root.child('devices/' + $deviceId + '/meta/ownerUid').val() === auth.uid || (data.exists() && data.child('status').val() === 'PENDING' && newData.child('status').val() === 'ACCEPTED' && newData.child('acceptedByUid').val() === auth.uid))"
+            }
+          }
         },
 
         "status": {

@@ -90,7 +90,8 @@ void LcdManager::update(uint32_t nowMs,
                         const ReservoirReading& reservoir,
                         const RainGateStatus& rain,
                         const WeatherSnapshot& weather,
-                        const IrrigationController& irrigation) {
+                        const IrrigationController& irrigation,
+                        const char* deviceDisplayName) {
   if (!lcdReady_) return;
 
   char nextLines[4][21];
@@ -132,7 +133,7 @@ void LcdManager::update(uint32_t nowMs,
 
   switch (currentPage_) {
     case 0:
-      buildPageOverview(nextLines, cfg, wifiConnected, firebaseSynced, irrigation);
+      buildPageOverview(nextLines, cfg, wifiConnected, firebaseSynced, irrigation, deviceDisplayName);
       break;
     case 1:
       buildPageEnvironment(nextLines, env);
@@ -227,7 +228,8 @@ void LcdManager::buildPageOverview(char lines[4][21],
                                    const RuntimeConfig& cfg,
                                    bool wifiConnected,
                                    bool firebaseSynced,
-                                   const IrrigationController& irrigation) const {
+                                   const IrrigationController& irrigation,
+                                   const char* deviceDisplayName) const {
   char l1[21], l2[21], l3[21];
   snprintf(l1, sizeof(l1), "MODE: %s",
            cfg.mode == DeviceMode::OUTDOOR ? "OUTDOOR" : "INDOOR");
@@ -238,7 +240,10 @@ void LcdManager::buildPageOverview(char lines[4][21],
   snprintf(l3, sizeof(l3), "IRRIGATION: %s",
            irrigationStateString(irrigation.state()));
 
-  formatPaddedRow(lines[0], "SMART PLANT CARE");
+  const char* header = (deviceDisplayName && strlen(deviceDisplayName) > 0)
+                           ? deviceDisplayName
+                           : "SMART PLANT CARE";
+  formatPaddedRow(lines[0], header);
   formatPaddedRow(lines[1], l1);
   formatPaddedRow(lines[2], l2);
   formatPaddedRow(lines[3], l3);

@@ -1,7 +1,8 @@
 /**
  * @file ProvisioningPairingManager.cpp
- * @brief Implementation of NVS provisioning, Owner Wireless Setup Hotspot (SoftAP + HTTP API),
- *        pairing transitions, and RESET_PENDING lifecycle.
+ * @brief Implementation of NVS provisioning, Owner Wireless Setup Hotspot (WIFI_AP_STA +
+ *        2.4 GHz /api/wifi-scan + /api/info + /api/provision), custom box displayName,
+ *        35s wrong-password recovery watchdog, and RESET_PENDING lifecycle.
  */
 
 #include "ProvisioningPairingManager.h"
@@ -11,19 +12,29 @@
 #include <string.h>
 
 namespace {
-constexpr const char* NVS_NAMESPACE = "spc_v31";
-}
+constexpr const char* NVS_NAMESPACE        = "spc_v31";
+constexpr const char* DEFAULT_DISPLAY_NAME = "SmartPlantCare Box";
+
+struct WifiScanEntry {
+  char ssid[33];
+  int  rssi;
+  bool secure;
+};
+}  // namespace
 
 void ProvisioningPairingManager::begin(RuntimeConfig& ioConfig) {
   prefs_.begin(NVS_NAMESPACE, false);
 
   String devId  = prefs_.getString("deviceId", Secrets::DEFAULT_DEVICE_ID);
+  String disp   = prefs_.getString("dispName", DEFAULT_DISPLAY_NAME);
   String claim  = prefs_.getString("claimCode", Secrets::DEFAULT_FACTORY_CLAIM_CODE);
   String secret = prefs_.getString("devSecret", Secrets::DEFAULT_DEVICE_AUTH_SECRET);
   String ssid   = prefs_.getString("wifiSsid", Secrets::WIFI_FALLBACK_SSID);
   String pass   = prefs_.getString("wifiPass", Secrets::WIFI_FALLBACK_PASSWORD);
 
   snprintf(deviceId_, sizeof(deviceId_), "%s", devId.c_str());
+  snprintf(displayName_, sizeof(displayName_), "%s",
+           disp.length() > 0 ? disp.c_str() : DEFAULT_DISPLAY_NAME);
   snprintf(claimCode_, sizeof(claimCode_), "%s", claim.c_str());
   snprintf(deviceAuthSecret_, sizeof(deviceAuthSecret_), "%s", secret.c_str());
   snprintf(wifiSsid_, sizeof(wifiSsid_), "%s", ssid.c_str());
@@ -50,13 +61,13 @@ void ProvisioningPairingManager::begin(RuntimeConfig& ioConfig) {
 
   prefs_.end();
 
-  Serial.printf("[PROV] Loaded deviceId=%s state=%s epoch=%lu wifiConfigured=%s\n",
+  Serial.printf("[PROV] Loaded deviceId=%s name='%s' state=%s epoch=%lu wifiConfigured=%s\n",
                 deviceId_,
+                displayName_,
                 ownershipStateToString(ownershipState_),
                 static_cast<unsigned long>(ownershipEpoch_),
                 hasWifiCredentials() ? "YES" : "NO");
 
-  // If the board is UNCLAIMED or has no Wi-Fi credentials yet, open the Owner Setup Hotspot
   if (!hasWifiCredentials() || ownershipState_ == OwnershipState::UNCLAIMED) {
     startOwnerSetupHotspot();
   }
@@ -67,15 +78,20 @@ void ProvisioningPairingManager::startOwnerSetupHotspot() {
     return;
   }
 
-  WiFi.mode(hasWifiCredentials() ? WIFI_AP_STA : WIFI_AP);
+  // IMPORTANT: Always use WIFI_AP_STA so GET /api/wifi-scan can call WiFi.scanNetworks()
+  // while keeping the SPC-SETUP-* SoftAP alive for the Android app.
+  WiFi.mode(WIFI_AP_STA);
   bool ok = WiFi.softAP(setupApSsid_, Secrets::DEFAULT_PROV_POP);
   if (ok) {
     setupApActive_ = true;
+    if (routesRegistered_) {
+      setupServer_.begin();
+    }
     Serial.println(F("======================================================================"));
-    Serial.printf("[PROV] OWNER WI-FI SETUP HOTSPOT ACTIVE!\n");
+    Serial.printf("[PROV] OWNER WI-FI SETUP HOTSPOT ACTIVE (WIFI_AP_STA)!\n");
     Serial.printf("       Hotspot SSID : %s\n", setupApSsid_);
     Serial.printf("       Hotspot PIN  : %s\n", Secrets::DEFAULT_PROV_POP);
-    Serial.printf("       Setup URL    : http://%s  (or POST /api/provision from App)\n",
+    Serial.printf("       Setup URL    : http://%s  (/api/info, /api/wifi-scan, /api/provision)\n",
                   WiFi.softAPIP().toString().c_str());
     Serial.println(F("======================================================================"));
   }
@@ -110,16 +126,17 @@ void ProvisioningPairingManager::registerHttpRoutes(
     String html = F(
         "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"
         "<title>Smart Plant Care Setup</title>"
-        "<style>body{font-family:sans-serif;background:#f2f7f4;padding:20px;color:#1b3b2b}"
-        ".card{max-width:380px;margin:auto;background:#fff;padding:20px;border-radius:12px;"
-        "box-shadow:0 4px 12px rgba(0,0,0,0.08)}input,button{width:100%;padding:10px;margin:8px 0;"
-        "border-radius:8px;border:1px solid #ccc;box-sizing:border-box}button{background:#2e7d32;"
+        "<style>body{font-family:sans-serif;background:#f6f9f7;padding:20px;color:#111827}"
+        ".card{max-width:380px;margin:auto;background:#fff;padding:20px;border-radius:16px;"
+        "border:1px solid #e3ece6}input,button{width:100%;padding:10px;margin:8px 0;"
+        "border-radius:10px;border:1px solid #ccc;box-sizing:border-box}button{background:#1b4332;"
         "color:#fff;border:none;font-weight:bold;cursor:pointer}</style></head><body><div class='card'>"
         "<h2>Smart Plant Care</h2><p>Device ID: <b>");
     html += deviceId_;
     html += F(
         "</b></p><form method='POST' action='/provisionForm'>"
-        "<label>Home Wi-Fi Name (SSID)</label><input name='ssid' required placeholder='Enter Wi-Fi SSID'>"
+        "<label>Plant Box Name</label><input name='displayName' value='SmartPlantCare Box'>"
+        "<label>2.4 GHz Wi-Fi Name (SSID)</label><input name='ssid' required placeholder='Enter Wi-Fi SSID'>"
         "<label>Wi-Fi Password</label><input name='password' type='password' placeholder='Enter Wi-Fi Password'>"
         "<label>Device Claim Code</label><input name='claimCode' required placeholder='e.g. SPC-CLAIM-0001'>"
         "<button type='submit'>Save Wi-Fi & Pair Device</button></form></div></body></html>");
@@ -130,6 +147,8 @@ void ProvisioningPairingManager::registerHttpRoutes(
   setupServer_.on("/api/info", HTTP_GET, [this]() {
     JsonDocument doc;
     doc["deviceId"]         = deviceId_;
+    doc["displayName"]      = displayName_;
+    doc["setupApSsid"]      = setupApSsid_;
     doc["model"]            = Config::MODEL_NAME;
     doc["firmwareVersion"]  = Config::FIRMWARE_VERSION;
     doc["hardwareRevision"] = Config::HARDWARE_REVISION;
@@ -140,7 +159,74 @@ void ProvisioningPairingManager::registerHttpRoutes(
     setupServer_.send(200, "application/json", out);
   });
 
-  // 3. Android App JSON Provisioning Endpoint (POST /api/provision)
+  // 3. 2.4 GHz Nearby Wi-Fi Scanner for Android App Picker (GET /api/wifi-scan)
+  setupServer_.on("/api/wifi-scan", HTTP_GET, [this]() {
+    Serial.println(F("[PROV] Running 2.4 GHz Wi-Fi scan for Android setup picker..."));
+    int found = WiFi.scanNetworks(false, false);
+
+    constexpr int MAX_UNIQUE = 16;
+    WifiScanEntry entries[MAX_UNIQUE];
+    int uniqueCount = 0;
+
+    if (found > 0) {
+      for (int i = 0; i < found; ++i) {
+        String ssid = WiFi.SSID(i);
+        ssid.trim();
+        if (ssid.length() == 0 || ssid.startsWith("SPC-SETUP-")) {
+          continue;
+        }
+        int  rssi   = WiFi.RSSI(i);
+        bool secure = (WiFi.encryptionType(i) != WIFI_AUTH_OPEN);
+
+        int existingIdx = -1;
+        for (int j = 0; j < uniqueCount; ++j) {
+          if (strcmp(entries[j].ssid, ssid.c_str()) == 0) {
+            existingIdx = j;
+            break;
+          }
+        }
+        if (existingIdx >= 0) {
+          if (rssi > entries[existingIdx].rssi) {
+            entries[existingIdx].rssi   = rssi;
+            entries[existingIdx].secure = secure;
+          }
+        } else if (uniqueCount < MAX_UNIQUE) {
+          snprintf(entries[uniqueCount].ssid, sizeof(entries[uniqueCount].ssid), "%s", ssid.c_str());
+          entries[uniqueCount].rssi   = rssi;
+          entries[uniqueCount].secure = secure;
+          uniqueCount++;
+        }
+      }
+    }
+    WiFi.scanDelete();
+
+    // Sort descending by RSSI (strongest Wi-Fi first)
+    for (int i = 0; i < uniqueCount - 1; ++i) {
+      for (int j = i + 1; j < uniqueCount; ++j) {
+        if (entries[j].rssi > entries[i].rssi) {
+          WifiScanEntry tmp = entries[i];
+          entries[i]        = entries[j];
+          entries[j]        = tmp;
+        }
+      }
+    }
+
+    JsonDocument doc;
+    JsonArray arr = doc["networks"].to<JsonArray>();
+    for (int i = 0; i < uniqueCount; ++i) {
+      JsonObject net = arr.add<JsonObject>();
+      net["ssid"]    = entries[i].ssid;
+      net["rssi"]    = entries[i].rssi;
+      net["secure"]  = entries[i].secure;
+    }
+
+    String out;
+    serializeJson(doc, out);
+    setupServer_.send(200, "application/json", out);
+    Serial.printf("[PROV] Returned %d unique 2.4 GHz Wi-Fi networks.\n", uniqueCount);
+  });
+
+  // 4. Android App JSON Provisioning Endpoint (POST /api/provision)
   setupServer_.on("/api/provision", HTTP_POST, [this, &ioConfig, &relays, &irrigation, &buzzer, &events, &lcd]() {
     JsonDocument doc;
     if (deserializeJson(doc, setupServer_.arg("plain")) != DeserializationError::Ok) {
@@ -151,6 +237,7 @@ void ProvisioningPairingManager::registerHttpRoutes(
     const char* ssid      = doc["ssid"] | "";
     const char* pass      = doc["password"] | "";
     const char* claim     = doc["claimCode"] | "";
+    const char* boxName   = doc["displayName"] | "";
     uint32_t    nextEpoch = doc["ownershipEpoch"] | (ownershipEpoch_ + 1);
 
     if (strlen(ssid) == 0) {
@@ -162,29 +249,38 @@ void ProvisioningPairingManager::registerHttpRoutes(
       return;
     }
 
+    if (strlen(boxName) > 0) {
+      saveDisplayName(boxName);
+    }
     saveWifiCredentials(ssid, pass);
     handleCloudMetaSnapshot("OWNED", nextEpoch, false, ioConfig, relays, irrigation, buzzer, events, lcd);
 
     JsonDocument resp;
     resp["success"]        = true;
     resp["deviceId"]       = deviceId_;
+    resp["displayName"]    = displayName_;
     resp["ownershipState"] = "OWNED";
     resp["ownershipEpoch"] = ownershipEpoch_;
     String out;
     serializeJson(resp, out);
     setupServer_.send(200, "application/json", out);
 
-    pendingApShutdown_ = true;
-    apShutdownAtMs_    = millis() + 2000UL;
+    // Keep AP alive 2.5s so Android cleanly receives the 200 OK JSON before AP closes
+    pendingApShutdown_    = true;
+    apShutdownAtMs_       = millis() + 2500UL;
+    wifiVerifyPending_    = true;
+    wifiVerifyDeadlineMs_ = millis() + 2500UL + Config::WIFI_PROVISION_VERIFY_TIMEOUT_MS;
   });
 
-  // 4. Browser Form Submission Handler (POST /provisionForm)
+  // 5. Browser Form Submission Handler (POST /provisionForm)
   setupServer_.on("/provisionForm", HTTP_POST, [this, &ioConfig, &relays, &irrigation, &buzzer, &events, &lcd]() {
-    String ssid  = setupServer_.arg("ssid");
-    String pass  = setupServer_.arg("password");
-    String claim = setupServer_.arg("claimCode");
+    String ssid    = setupServer_.arg("ssid");
+    String pass    = setupServer_.arg("password");
+    String claim   = setupServer_.arg("claimCode");
+    String boxName = setupServer_.arg("displayName");
     ssid.trim();
     claim.trim();
+    boxName.trim();
 
     if (ssid.length() == 0 || claim != String(claimCode_)) {
       setupServer_.send(403, "text/html",
@@ -193,6 +289,9 @@ void ProvisioningPairingManager::registerHttpRoutes(
       return;
     }
 
+    if (boxName.length() > 0) {
+      saveDisplayName(boxName.c_str());
+    }
     saveWifiCredentials(ssid.c_str(), pass.c_str());
     handleCloudMetaSnapshot(
         "OWNED", ownershipEpoch_ + 1, false, ioConfig, relays, irrigation, buzzer, events, lcd);
@@ -202,8 +301,10 @@ void ProvisioningPairingManager::registerHttpRoutes(
                       "<h2>Wi-Fi Saved & Device Paired!</h2>"
                       "<p>ESP32 is now connecting to your Wi-Fi and syncing with Firebase.</p></body></html>");
 
-    pendingApShutdown_ = true;
-    apShutdownAtMs_    = millis() + 2000UL;
+    pendingApShutdown_    = true;
+    apShutdownAtMs_       = millis() + 2500UL;
+    wifiVerifyPending_    = true;
+    wifiVerifyDeadlineMs_ = millis() + 2500UL + Config::WIFI_PROVISION_VERIFY_TIMEOUT_MS;
   });
 
   setupServer_.begin();
@@ -217,19 +318,37 @@ void ProvisioningPairingManager::serviceProvisioningPortal(
     BuzzerManager& buzzer,
     EventNotificationManager& events,
     LcdManager& lcd) {
-  if (!setupApActive_) {
+  if (setupApActive_) {
+    if (!routesRegistered_) {
+      registerHttpRoutes(ioConfig, relays, irrigation, buzzer, events, lcd);
+    }
+
+    setupServer_.handleClient();
+
+    if (pendingApShutdown_ && static_cast<int32_t>(nowMs - apShutdownAtMs_) >= 0) {
+      stopOwnerSetupHotspot();
+      WiFi.begin(wifiSsid_, wifiPassword_);
+    }
     return;
   }
 
-  if (!routesRegistered_) {
-    registerHttpRoutes(ioConfig, relays, irrigation, buzzer, events, lcd);
-  }
-
-  setupServer_.handleClient();
-
-  if (pendingApShutdown_ && static_cast<int32_t>(nowMs - apShutdownAtMs_) >= 0) {
-    stopOwnerSetupHotspot();
-    WiFi.begin(wifiSsid_, wifiPassword_);
+  // Post-provisioning 35s Wi-Fi join watchdog:
+  // If user typed a wrong Wi-Fi password, automatically reopen SPC-SETUP-* so the board is never stuck.
+  if (wifiVerifyPending_) {
+    if (WiFi.status() == WL_CONNECTED) {
+      wifiVerifyPending_ = false;
+      Serial.println(F("[PROV] Wi-Fi join verified! Setup complete."));
+    } else if (static_cast<int32_t>(nowMs - wifiVerifyDeadlineMs_) >= 0) {
+      wifiVerifyPending_ = false;
+      Serial.println(F("[PROV] Wi-Fi join timed out (wrong password or 5G SSID?) — reopening Setup Hotspot!"));
+      lcd.triggerTemporaryOverlay(
+          "WIFI JOIN FAILED",
+          "CHECK PASSWORD",
+          "REOPENING SETUP",
+          setupApSsid_,
+          5000);
+      startOwnerSetupHotspot();
+    }
   }
 }
 
@@ -243,6 +362,20 @@ void ProvisioningPairingManager::saveWifiCredentials(const char* ssid, const cha
   prefs_.end();
 
   Serial.printf("[PROV] Owner Wi-Fi SSID '%s' saved to NVS.\n", wifiSsid_);
+}
+
+void ProvisioningPairingManager::saveDisplayName(const char* name) {
+  if (!name || strlen(name) == 0) {
+    snprintf(displayName_, sizeof(displayName_), "%s", DEFAULT_DISPLAY_NAME);
+  } else {
+    snprintf(displayName_, sizeof(displayName_), "%s", name);
+  }
+
+  prefs_.begin(NVS_NAMESPACE, false);
+  prefs_.putString("dispName", displayName_);
+  prefs_.end();
+
+  Serial.printf("[PROV] Plant Box Display Name updated to '%s'.\n", displayName_);
 }
 
 void ProvisioningPairingManager::saveFactoryIdentity(const char* deviceId,
@@ -331,12 +464,13 @@ void ProvisioningPairingManager::handleCloudMetaSnapshot(
     events.setIdentity(deviceId_, bootId_, ownershipEpoch_);
 
     if (newlyPaired) {
-      Serial.printf("[PROV] Device PAIRED / OWNED (epoch=%lu)!\n",
+      Serial.printf("[PROV] Device PAIRED / OWNED ('%s', epoch=%lu)!\n",
+                    displayName_,
                     static_cast<unsigned long>(ownershipEpoch_));
       buzzer.clearEventLatch(BuzzerEventId::PAIRING_SUCCESS);
       buzzer.triggerEventTransition(BuzzerEventId::PAIRING_SUCCESS);
       lcd.triggerTemporaryOverlay(
-          "SMART PLANT CARE",
+          displayName_,
           "DEVICE PAIRED",
           deviceId_,
           "CLOUD SYNC ACTIVE",
@@ -396,10 +530,13 @@ void ProvisioningPairingManager::finalizeLocalUnclaimAndEnterSetup(
   ownershipState_         = OwnershipState::UNCLAIMED;
   ownershipEpoch_         = pendingResetTargetEpoch_;
   resetAckPendingToCloud_ = false;
+  wifiVerifyPending_      = false;
+  snprintf(displayName_, sizeof(displayName_), "%s", DEFAULT_DISPLAY_NAME);
 
   prefs_.putUChar("ownState", static_cast<uint8_t>(OwnershipState::UNCLAIMED));
   prefs_.putULong("ownEpoch", ownershipEpoch_);
   prefs_.putBool("rstPending", false);
+  prefs_.putString("dispName", displayName_);
 
   if (wipeWifiCredentials && strlen(Secrets::WIFI_FALLBACK_SSID) == 0) {
     prefs_.putString("wifiSsid", "");
@@ -409,7 +546,6 @@ void ProvisioningPairingManager::finalizeLocalUnclaimAndEnterSetup(
   }
   prefs_.end();
 
-  // Re-open the Owner Setup Hotspot so a new owner can configure their Wi-Fi
   startOwnerSetupHotspot();
   Serial.println(F("[PROV] Local unclaim complete. Owner Setup Hotspot re-opened."));
 }

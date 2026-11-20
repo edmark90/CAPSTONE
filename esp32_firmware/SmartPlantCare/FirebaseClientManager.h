@@ -55,6 +55,12 @@ class FirebaseClientManager {
                                     IrrigationController& irrigation,
                                     DiagnosticsMetrics& ioDiag);
 
+  // Fast 2.5s poll for manual watering & emergency stop commands only
+  void pollPendingCommandsOnly(uint32_t nowMs,
+                               const RuntimeConfig& cfg,
+                               IrrigationController& irrigation,
+                               BuzzerManager& buzzer);
+
   // Poll /meta, /weather (with direct Open-Meteo Spark fallback), /config, and /commandRequests
   void pollCloudControlAndWeather(uint32_t nowMs,
                                   RuntimeConfig& ioConfig,
