@@ -47,7 +47,8 @@ void RainWeatherManager::updateWeatherSnapshot(bool valid,
                                                uint64_t fetchedAtEpochMs,
                                                uint64_t validUntilEpochMs,
                                                uint32_t nowMs,
-                                               const char* windowLabel) {
+                                               const char* windowLabel,
+                                               const char* locationName) {
   const bool plausibleProb = (probabilityPct >= 0 && probabilityPct <= 100);
   weather_.valid              = valid && plausibleProb;
   weather_.probabilityPct     = weather_.valid ? probabilityPct : -1;
@@ -58,6 +59,9 @@ void RainWeatherManager::updateWeatherSnapshot(bool valid,
 
   if (windowLabel && windowLabel[0] != '\0') {
     snprintf(weather_.windowLabel, sizeof(weather_.windowLabel), "%s", windowLabel);
+  }
+  if (locationName && locationName[0] != '\0') {
+    snprintf(weather_.locationName, sizeof(weather_.locationName), "%s", locationName);
   }
 }
 
@@ -85,24 +89,56 @@ bool RainWeatherManager::evaluateRainGate(uint32_t nowMs,
     }
     status_.forecastAdvisoryActive  = false;
     status_.weatherUnavailableFault = false;
+    status_.weatherMetBeforeWet     = false;
+    status_.accidentalWet           = false;
+    weatherMetBeforeWet_            = false;
+    accidentalWetLatched_           = false;
+    prevEvaluatedRawWet_            = status_.rawWet;
     lastEvaluatedMode_              = cfg.mode;
     return false;
   }
   lastEvaluatedMode_ = cfg.mode;
 
-  // ─── Exact Variables for the User's Mandatory AND-Condition ────────────────
+  // ─── Exact Variables for the Weather-First Strict AND-Condition ────────────
   const bool outdoorMode            = (cfg.mode == DeviceMode::OUTDOOR);
   const bool weatherDataValid       = weather_.valid;
   const bool weatherDataFresh       = weather_.fresh;
   const int  rainProbability        = weather_.probabilityPct;
   const bool rainSensorWetConfirmed = status_.wetConfirmed;
+  const bool weatherConditionMet    = outdoorMode &&
+                                      weatherDataValid &&
+                                      weatherDataFresh &&
+                                      (rainProbability >= cfg.rainThresholdPct);
+
+  // ─── Weather-First Sequence Tracker ────────────────────────────────────────
+  // Rule: Weather condition MUST be true FIRST (while sensor is dry) BEFORE
+  // the rain sensor gets wet. If the rain sensor got wet FIRST while weather
+  // did not meet the threshold, latch accidentalWet until the sensor dries out.
+  if (!status_.rawWet) {
+    accidentalWetLatched_       = false;
+    weatherMetBeforeWet_        = weatherConditionMet;
+    status_.accidentalWet       = false;
+    status_.weatherMetBeforeWet = weatherMetBeforeWet_;
+    wetOnlyStatusSent_          = false;
+  } else {
+    if (!prevEvaluatedRawWet_) {
+      // Exact transition DRY -> WET: was weather condition ALREADY true before getting wet?
+      accidentalWetLatched_ = !weatherMetBeforeWet_;
+    }
+    status_.accidentalWet       = accidentalWetLatched_;
+    status_.weatherMetBeforeWet = weatherMetBeforeWet_;
+  }
+  prevEvaluatedRawWet_ = status_.rawWet;
 
   // ─── 1. Separate Unavailable/Stale Weather Fault (NEVER fake rain!) ────────
   if (outdoorMode && (!weatherDataValid || !weatherDataFresh)) {
     status_.weatherUnavailableFault = true;
     status_.forecastAdvisoryActive  = false;
-    if (!weatherFaultSent_) {
-      weatherFaultSent_ = true;
+    const bool faultCooldownReady = (lastWeatherFaultEventMs_ == 0) ||
+                                    (uint32_t(nowMs - lastWeatherFaultEventMs_) >= 600000UL);
+    if (!weatherFaultSent_ && faultCooldownReady) {
+      weatherFaultSent_        = true;
+      lastWeatherFaultEventMs_ = (nowMs == 0) ? 1UL : nowMs;
       events.enqueueEvent("WEATHER_UNAVAILABLE",
                           EventSeverity::WARNING,
                           "Weather Data Unavailable",
@@ -113,13 +149,12 @@ bool RainWeatherManager::evaluateRainGate(uint32_t nowMs,
     weatherFaultSent_               = false;
   }
 
-  // ─── 2. PRESERVE USER'S EXACT AND-CONDITION FOR AUTOMATIC RAIN SUSPENSION ─
+  // ─── 2. WEATHER-FIRST STRICT AND-CONDITION FOR AUTOMATIC RAIN SUSPENSION ───
   const bool combinedRainTrigger =
-      outdoorMode
-      && weatherDataValid
-      && weatherDataFresh
-      && rainProbability >= cfg.rainThresholdPct
-      && rainSensorWetConfirmed;
+      weatherConditionMet
+      && rainSensorWetConfirmed
+      && weatherMetBeforeWet_
+      && !accidentalWetLatched_;
 
   bool newlySuspended = false;
 
@@ -133,17 +168,17 @@ bool RainWeatherManager::evaluateRainGate(uint32_t nowMs,
 
     char msg[112];
     snprintf(msg, sizeof(msg),
-             "Forecast %d%% and rain sensor confirmed wet. Pump stopped and valves closed.",
-             rainProbability);
+             "Weather (%d%% >= %d%%) met first and rain sensor wet. Raining - watering paused.",
+             rainProbability, cfg.rainThresholdPct);
     events.enqueueEvent("RAIN_SUSPENSION_STARTED",
                         EventSeverity::CRITICAL,
-                        "Automatic Irrigation Suspended",
+                        "Raining - Irrigation Paused",
                         msg,
                         nullptr,
                         static_cast<float>(rainProbability));
   }
 
-  // ─── 3. Latched Recovery Rule (Dry >= 120s AND Fresh Forecast < 60%) ───────
+  // ─── 3. Latched Recovery Rule (Dry >= 120s AND Fresh Forecast < threshold) ─
   if (status_.rainSuspensionLatched) {
     const bool canRecover =
         status_.dryRecovered
@@ -171,12 +206,14 @@ bool RainWeatherManager::evaluateRainGate(uint32_t nowMs,
     return newlySuspended;
   }
 
-  // ─── 4. Forecast >= 60% WITHOUT Confirmed Wet Sensor (Advisory Only, Silent)
-  if (outdoorMode && weatherDataValid && weatherDataFresh &&
-      rainProbability >= cfg.rainThresholdPct && !rainSensorWetConfirmed) {
+  // ─── 4. Forecast >= threshold WITHOUT Confirmed Wet Sensor (Advisory Only, Silent)
+  if (weatherConditionMet && !rainSensorWetConfirmed && !accidentalWetLatched_) {
     status_.forecastAdvisoryActive = true;
-    if (!forecastAdvisorySent_) {
+    const bool advCooldownReady = (lastAdvisoryEventMs_ == 0) ||
+                                  (uint32_t(nowMs - lastAdvisoryEventMs_) >= 600000UL);
+    if (!forecastAdvisorySent_ && advCooldownReady) {
       forecastAdvisorySent_ = true;
+      lastAdvisoryEventMs_  = (nowMs == 0) ? 1UL : nowMs;
       char msg[112];
       snprintf(msg, sizeof(msg),
                "Rain chance is %d%% in %s. Irrigation is NOT suspended yet; rain sensor is dry.",
@@ -193,18 +230,35 @@ bool RainWeatherManager::evaluateRainGate(uint32_t nowMs,
     forecastAdvisorySent_          = false;
   }
 
-  // ─── 5. Wet Sensor WITH Forecast < 60% (Live Status Only, Silent, No Suspend)
-  if (outdoorMode && rainSensorWetConfirmed &&
-      (!weatherDataValid || !weatherDataFresh || rainProbability < cfg.rainThresholdPct)) {
+  // ─── 5. Accidental Wet Notice (Sensor Wet FIRST or Forecast < threshold) ───
+  // Trigger after 3s continuous wet (filters tiny spikes) so user sees immediate
+  // notification explaining weather % was not met and it's treated as accidental wet.
+  const uint32_t accidentalWetDebounceMs = (cfg.wetConfirmMs < 3000UL) ? cfg.wetConfirmMs : 3000UL;
+  const bool sustainedWetForNotice       = status_.rawWet && (status_.wetDurationMs >= accidentalWetDebounceMs);
+  if (outdoorMode && sustainedWetForNotice && (accidentalWetLatched_ || !weatherConditionMet)) {
     if (!wetOnlyStatusSent_) {
       wetOnlyStatusSent_ = true;
+      char msg[112];
+      if (weatherDataValid && weatherDataFresh && rainProbability < cfg.rainThresholdPct) {
+        snprintf(msg, sizeof(msg),
+                 "Rain sensor wet, weather %d%% < %d%% threshold (not met). Accidentally wet - watering continues.",
+                 rainProbability, cfg.rainThresholdPct);
+      } else if (accidentalWetLatched_ && weatherDataValid && weatherDataFresh && rainProbability >= cfg.rainThresholdPct) {
+        snprintf(msg, sizeof(msg),
+                 "Rain sensor got wet before weather reached %d%%. Treated as accidental wet; dry sensor to reset.",
+                 cfg.rainThresholdPct);
+      } else {
+        snprintf(msg, sizeof(msg),
+                 "Rain sensor wet, weather unavailable (needs >=%d%% first). Treated as accidental wet.",
+                 cfg.rainThresholdPct);
+      }
       events.enqueueEvent("RAIN_SENSOR_WET",
                           EventSeverity::INFO,
-                          "Rain Sensor Wet",
-                          "Local rain sensor is wet while forecast is below 60%. Auto-irrigation not suspended by rain rule.");
+                          "Rain Sensor Wet (Accidental)",
+                          msg,
+                          nullptr,
+                          weatherDataValid ? static_cast<float>(rainProbability) : NAN);
     }
-  } else if (!status_.rawWet) {
-    wetOnlyStatusSent_ = false;
   }
 
   return newlySuspended;

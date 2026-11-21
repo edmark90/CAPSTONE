@@ -1,12 +1,40 @@
 #include "BuzzerManager.h"
 
 void BuzzerManager::begin(bool isPassive) {
-  isPassive_ = isPassive;
+  isPassive_  = isPassive;
+  activeHigh_ = (Config::BUZZER_ACTIVE_HIGH != 0);
   pinMode(Pins::BUZZER, OUTPUT);
   setHardwareOutput(false);
   for (uint8_t i = 0; i < static_cast<uint8_t>(BuzzerEventId::COUNT); ++i) {
     eventLatched_[i] = false;
   }
+  Serial.printf("[BUZZER] Initialized on GPIO%u (mode=%s)\n",
+                static_cast<unsigned int>(Pins::BUZZER),
+                isPassive_ ? "PASSIVE_PWM" : (activeHigh_ ? "ACTIVE_HIGH" : "ACTIVE_LOW"));
+}
+
+void BuzzerManager::configureDriverMode(bool isPassive, bool activeHigh) {
+  stopImmediately();
+  isPassive_  = isPassive;
+  activeHigh_ = activeHigh;
+  pinMode(Pins::BUZZER, OUTPUT);
+  setHardwareOutput(false);
+  Serial.printf("[BUZZER] Driver mode set on GPIO%u -> %s\n",
+                static_cast<unsigned int>(Pins::BUZZER),
+                isPassive_ ? "PASSIVE_PWM" : (activeHigh_ ? "ACTIVE_HIGH" : "ACTIVE_LOW"));
+}
+
+void BuzzerManager::playDiagnosticBeep() {
+  if (muted_) {
+    Serial.println(F("[BUZZER] Currently muted. Run 'unmute' first."));
+    return;
+  }
+  activePriority_   = BuzzerPriority::CRITICAL_PRIO;
+  activeOnMs_       = 220;
+  activeGapMs_      = 180;
+  remainingPulses_  = 1;  // 2 clear beeps total (1 now + 1 remaining)
+  phaseStartedAtMs_ = millis();
+  setHardwareOutput(true);
 }
 
 void BuzzerManager::triggerEventTransition(BuzzerEventId eventId) {
@@ -85,12 +113,22 @@ BuzzerManager::PatternSpec BuzzerManager::specForEvent(BuzzerEventId eventId) co
       return {1, Config::BEEP_BOOT_ON_MS, Config::BEEP_SHORT_GAP_MS, BuzzerPriority::LOW_PRIO};
 
     case BuzzerEventId::PAIRING_SUCCESS:
-      return {1, Config::BEEP_SHORT_ON_MS, Config::BEEP_SHORT_GAP_MS, BuzzerPriority::LOW_PRIO};
+      // Clear 1 confirmation beep (250ms) with MEDIUM_ALERT priority so it is never dropped
+      return {1, 250, Config::BEEP_SHORT_GAP_MS, BuzzerPriority::MEDIUM_ALERT};
+
+    case BuzzerEventId::WIFI_CONNECTED_SUCCESS:
+      // Clear 1 confirmation beep (220ms) whenever Wi-Fi connects successfully
+      return {1, 220, Config::BEEP_SHORT_GAP_MS, BuzzerPriority::MEDIUM_ALERT};
 
     case BuzzerEventId::TEMP_ALERT:
     case BuzzerEventId::HUMIDITY_ALERT:
     case BuzzerEventId::LIGHT_ALERT:
       return {1, Config::BEEP_SHORT_ON_MS, Config::BEEP_SHORT_GAP_MS, BuzzerPriority::ENV_ALERT};
+
+    case BuzzerEventId::IRRIGATION_START:
+    case BuzzerEventId::IRRIGATION_DONE:
+      // 1 short confirmation beep when watering starts and 1 short beep when watering finishes
+      return {1, Config::BEEP_SHORT_ON_MS, Config::BEEP_SHORT_GAP_MS, BuzzerPriority::MEDIUM_ALERT};
 
     case BuzzerEventId::CONFIRMED_RAIN_SUSPEND:
     case BuzzerEventId::RESERVOIR_LOW:
@@ -115,8 +153,8 @@ void BuzzerManager::setHardwareOutput(bool on) {
       digitalWrite(Pins::BUZZER, LOW);
     }
   } else {
-    const int activeLevel   = Config::BUZZER_ACTIVE_HIGH ? HIGH : LOW;
-    const int inactiveLevel = Config::BUZZER_ACTIVE_HIGH ? LOW : HIGH;
+    const int activeLevel   = activeHigh_ ? HIGH : LOW;
+    const int inactiveLevel = activeHigh_ ? LOW : HIGH;
     digitalWrite(Pins::BUZZER, on ? activeLevel : inactiveLevel);
   }
 }

@@ -27,6 +27,14 @@ class RelayController {
   void setPhysicalLoadsEnabled(bool enabled);
   bool isPhysicalLoadsEnabled() const { return physicalLoadsEnabled_; }
 
+  // Configure active-LOW (default for 4-ch optocoupled boards) vs active-HIGH relay trigger
+  void setActiveLow(bool activeLow);
+  bool isActiveLow() const { return activeLow_; }
+
+  // Bench diagnostics: test all 4 channels sequentially, or test 1 valve + pump pair together
+  void runSequentialPinTest(uint32_t holdMs = 1200);
+  void runZonePairTest(CropZoneId zone, uint32_t holdMs = 3000);
+
   // Open only the specified crop valve (closes any other valve first if different)
   bool openSingleValve(CropZoneId zone);
   void closeAllValves();

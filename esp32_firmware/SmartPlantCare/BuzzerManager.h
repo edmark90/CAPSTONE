@@ -14,7 +14,9 @@
  * - Reservoir low (<=20%): 2 short beeps (2 x 150ms)
  * - Reservoir critical/empty/invalid: 3 short beeps (3 x 150ms)
  * - Critical sensor or electrical/emergency fault: 3 short beeps (3 x 150ms)
- * - Normal sensor readings & normal irrigation progress: SILENT
+ * - Irrigation started (auto or manual): 1 short beep (150ms)
+ * - Irrigation completed / stopped: 1 short beep (150ms)
+ * - Normal sensor readings: SILENT
  */
 
 #include <Arduino.h>
@@ -25,14 +27,17 @@ enum class BuzzerEventId : uint8_t {
   NONE                     = 0,
   BOOT_READY_CHIRP         = 1,
   PAIRING_SUCCESS          = 2,
-  TEMP_ALERT               = 3,
-  HUMIDITY_ALERT           = 4,
-  LIGHT_ALERT              = 5,
-  CONFIRMED_RAIN_SUSPEND   = 6,
-  RESERVOIR_LOW            = 7,
-  RESERVOIR_CRITICAL_EMPTY = 8,
-  CRITICAL_SYSTEM_FAULT    = 9,
-  COUNT                    = 10
+  WIFI_CONNECTED_SUCCESS   = 3,
+  TEMP_ALERT               = 4,
+  HUMIDITY_ALERT           = 5,
+  LIGHT_ALERT              = 6,
+  CONFIRMED_RAIN_SUSPEND   = 7,
+  RESERVOIR_LOW            = 8,
+  RESERVOIR_CRITICAL_EMPTY = 9,
+  CRITICAL_SYSTEM_FAULT    = 10,
+  IRRIGATION_START         = 11,
+  IRRIGATION_DONE          = 12,
+  COUNT                    = 13
 };
 
 enum class BuzzerPriority : uint8_t {
@@ -57,6 +62,10 @@ class BuzzerManager {
   bool isMuted() const { return muted_; }
   void stopImmediately();
 
+  // Runtime mode helper & bench test beep (for Serial CLI 'testbuzzer' command)
+  void configureDriverMode(bool isPassive, bool activeHigh);
+  void playDiagnosticBeep();
+
  private:
   struct PatternSpec {
     uint8_t        pulses;
@@ -69,6 +78,7 @@ class BuzzerManager {
   void        setHardwareOutput(bool on);
 
   bool           isPassive_                        = Config::BUZZER_IS_PASSIVE;
+  bool           activeHigh_                       = (Config::BUZZER_ACTIVE_HIGH != 0);
   bool           muted_                            = false;
   bool           outputOn_                         = false;
   uint8_t        remainingPulses_                  = 0;

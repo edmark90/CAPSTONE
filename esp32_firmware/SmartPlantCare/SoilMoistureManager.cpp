@@ -52,13 +52,17 @@ void SoilMoistureManager::sampleSingleZone(uint8_t idx,
                              zcfg.stopThresholdPct > zcfg.startThresholdPct);
 
   if (!rawPlausible) {
+    validStreak_[idx] = 0;
     if (st.faultStreak < 250) ++st.faultStreak;
     if (st.faultStreak >= 3) {
       st.valid       = false;
       st.moisturePct = NAN;
       st.needsWater  = false;
-      if (!faultEventSent_[idx]) {
-        faultEventSent_[idx] = true;
+      const bool cooldownReady = (lastFaultEventMs_[idx] == 0) ||
+                                 (uint32_t(nowMs - lastFaultEventMs_[idx]) >= 600000UL);
+      if (!faultEventSent_[idx] && cooldownReady) {
+        faultEventSent_[idx]   = true;
+        lastFaultEventMs_[idx] = (nowMs == 0) ? 1UL : nowMs;
         char msg[112];
         snprintf(msg, sizeof(msg),
                  "%s soil sensor (ADC raw=%d) is disconnected or out of calibrated range. Auto-watering blocked for %s.",
@@ -93,7 +97,10 @@ void SoilMoistureManager::sampleSingleZone(uint8_t idx,
   st.valid       = true;
   st.faultStreak = 0;
   st.sampledAtMs = nowMs;
-  faultEventSent_[idx] = false;
+  if (validStreak_[idx] < 250) ++validStreak_[idx];
+  if (validStreak_[idx] >= 3) {
+    faultEventSent_[idx] = false;
+  }
 
   // Hysteresis evaluation:
   // - Needs water when moisture <= startThresholdPct

@@ -23,6 +23,7 @@ void EnvironmentalSensors::sampleDht22(uint32_t nowMs,
                          rawHum >= 1.0f && rawHum <= 100.0f;
 
   if (!plausible) {
+    dhtValidStreak_ = 0;
     if (reading_.dhtFailStreak < 250) ++reading_.dhtFailStreak;
     // Allow up to 2 transient missed reads before declaring sensor fault
     if (reading_.dhtFailStreak >= 3) {
@@ -33,8 +34,11 @@ void EnvironmentalSensors::sampleDht22(uint32_t nowMs,
       reading_.humidityBand  = EnvBand::INVALID;
       tempAbnormStartMs_     = 0;
       humAbnormStartMs_      = 0;
-      if (!dhtFaultNotified_) {
-        dhtFaultNotified_ = true;
+      const bool cooldownReady = (lastDhtFaultEventMs_ == 0) ||
+                                 (uint32_t(nowMs - lastDhtFaultEventMs_) >= 600000UL);
+      if (!dhtFaultNotified_ && cooldownReady) {
+        dhtFaultNotified_    = true;
+        lastDhtFaultEventMs_ = (nowMs == 0) ? 1UL : nowMs;
         events.enqueueEvent("DHT_SENSOR_FAULT",
                             EventSeverity::WARNING,
                             "DHT22 Sensor Error",
@@ -54,7 +58,10 @@ void EnvironmentalSensors::sampleDht22(uint32_t nowMs,
   }
 
   reading_.dhtFailStreak  = 0;
-  dhtFaultNotified_       = false;
+  if (dhtValidStreak_ < 250) ++dhtValidStreak_;
+  if (dhtValidStreak_ >= 3) {
+    dhtFaultNotified_ = false;
+  }
   reading_.dhtValid       = true;
   reading_.dhtSampledAtMs = nowMs;
   reading_.temperatureC   = rawTemp;
@@ -168,14 +175,18 @@ void EnvironmentalSensors::sampleLdr(uint32_t nowMs,
 
   if (raw < Config::LDR_ADC_MIN_PLAUSIBLE || raw > Config::LDR_ADC_MAX_PLAUSIBLE ||
       cfg.ldrBrightRaw == cfg.ldrDarkRaw) {
+    lightValidStreak_ = 0;
     if (reading_.lightFailStreak < 250) ++reading_.lightFailStreak;
     if (reading_.lightFailStreak >= 3) {
       reading_.lightValid    = false;
       reading_.brightnessPct = NAN;
       reading_.lightBand     = EnvBand::INVALID;
       lightAbnormStartMs_    = 0;
-      if (!lightFaultNotified_) {
-        lightFaultNotified_ = true;
+      const bool cooldownReady = (lastLightFaultEventMs_ == 0) ||
+                                 (uint32_t(nowMs - lastLightFaultEventMs_) >= 600000UL);
+      if (!lightFaultNotified_ && cooldownReady) {
+        lightFaultNotified_    = true;
+        lastLightFaultEventMs_ = (nowMs == 0) ? 1UL : nowMs;
         events.enqueueEvent("LIGHT_SENSOR_FAULT",
                             EventSeverity::WARNING,
                             "Light Sensor Fault",
@@ -186,7 +197,10 @@ void EnvironmentalSensors::sampleLdr(uint32_t nowMs,
   }
 
   reading_.lightFailStreak  = 0;
-  lightFaultNotified_       = false;
+  if (lightValidStreak_ < 250) ++lightValidStreak_;
+  if (lightValidStreak_ >= 3) {
+    lightFaultNotified_ = false;
+  }
   reading_.lightValid       = true;
   reading_.lightSampledAtMs = nowMs;
 

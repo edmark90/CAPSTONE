@@ -72,7 +72,9 @@ fun SettingsScreen(
     onSignOut: () -> Unit,
     onNavigateToLogin: (() -> Unit)? = null,
     onNavigateToSignUp: (() -> Unit)? = null,
-    settingsViewModel: SettingsViewModel? = null
+    settingsViewModel: SettingsViewModel? = null,
+    myPlantsUiState: com.example.smartplantcare.iot.MyPlantsUiState? = null,
+    onOpenMyPlants: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val vm = settingsViewModel ?: viewModel(
@@ -252,7 +254,10 @@ fun SettingsScreen(
                             enabled = !state.isLoading,
                             modifier = Modifier.weight(1f),
                             shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = PrimaryGreen)
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = PrimaryGreen,
+                                contentColor = Color.White
+                            )
                         ) {
                             if (state.isLoading) {
                                 CircularProgressIndicator(
@@ -353,7 +358,10 @@ fun SettingsScreen(
                             enabled = !state.isLoading,
                             modifier = Modifier.weight(1f),
                             shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = PrimaryGreen)
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = PrimaryGreen,
+                                contentColor = Color.White
+                            )
                         ) {
                             if (state.isLoading) {
                                 CircularProgressIndicator(
@@ -397,6 +405,10 @@ fun SettingsScreen(
         )
     }
 
+    if (state.showHardwareGuideDialog) {
+        HardwareGuideDialog(onDismiss = { vm.setShowHardwareGuideDialog(false) })
+    }
+
     // ─── Main Layout ───────────────────────────────────────────────────────────
     Scaffold(
         snackbarHost = {
@@ -418,7 +430,7 @@ fun SettingsScreen(
             HeaderSection()
 
             Column(
-                modifier = Modifier.padding(horizontal = 20.dp),
+                modifier = Modifier.padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 ProfileSection(
@@ -430,12 +442,22 @@ fun SettingsScreen(
                     onSignOutClick = { showSignOutDialog = true }
                 )
 
-                LanguageSection(
-                    currentLanguage = if (state.language == "fil")
-                        stringResource(R.string.filipino)
-                    else
-                        stringResource(R.string.english),
-                    onClick = { vm.showLanguageDialog() }
+                SmartPlantCareBoxSection(
+                    uiState = myPlantsUiState,
+                    onOpenMyPlants = onOpenMyPlants
+                )
+
+                UnitsAndPreferencesSection(
+                    tempUnit = state.temperatureUnit,
+                    moistureUnit = state.measurementUnit,
+                    onTempUnitChange = vm::setTemperatureUnit,
+                    onMoistureUnitChange = vm::setMeasurementUnit,
+                    onOpenGuide = { vm.setShowHardwareGuideDialog(true) }
+                )
+
+                StorageAndCacheSection(
+                    cacheSize = state.cacheSizeFormatted,
+                    onClearCache = { vm.clearAppCache() }
                 )
 
                 NotificationSection(
@@ -473,6 +495,14 @@ fun SettingsScreen(
                     onVibrationChange = { vm.setVibration(it) }
                 )
 
+                LanguageSection(
+                    currentLanguage = if (state.language == "fil")
+                        stringResource(R.string.filipino)
+                    else
+                        stringResource(R.string.english),
+                    onClick = { vm.showLanguageDialog() }
+                )
+
                 AboutSection(context = context)
 
                 Column(
@@ -508,7 +538,7 @@ fun HeaderSection() {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp)
+                .padding(horizontal = 16.dp)
                 .padding(top = 16.dp, bottom = 16.dp)
         ) {
             Row(
@@ -604,8 +634,10 @@ fun ProfileSection(
                                 Button(
                                     onClick = onSignInClick,
                                     shape = RoundedCornerShape(20.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor =
-                                        PrimaryGreen),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = PrimaryGreen,
+                                        contentColor = Color.White
+                                    ),
                                     modifier = Modifier.fillMaxWidth().height(36.dp)
                                 ) {
                                     Text(stringResource(R.string.sign_in), color = Color.White,
@@ -626,7 +658,10 @@ fun ProfileSection(
                             Button(
                                 onClick = onSignInClick,
                                 shape = RoundedCornerShape(20.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = PrimaryGreen),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = PrimaryGreen,
+                                    contentColor = Color.White
+                                ),
                                 contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
                                 modifier = Modifier.height(36.dp)
                             ) {
@@ -1169,7 +1204,10 @@ fun TimePickerDialog(
                         onClick = { onConfirm(get24Hour(), minute) },
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = PrimaryGreen)
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = PrimaryGreen,
+                            contentColor = Color.White
+                        )
                     ) {
                         Text(
                             stringResource(R.string.save),
@@ -1253,7 +1291,10 @@ fun PlantDialog(
                         onClick = onConfirm,
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = confirmColor)
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = confirmColor,
+                            contentColor = Color.White
+                        )
                     ) {
                         Text(confirmText, color = Color.White, fontWeight = FontWeight.SemiBold)
                     }
@@ -1595,4 +1636,361 @@ private fun formatTime(hour: Int, minute: Int): String {
         else -> hour
     }
     return String.format("%d:%02d %s", displayHour, minute, amPm)
+}
+
+// ─── SmartPlantCare Box Section ────────────────────────────────────────────────
+@Composable
+private fun SmartPlantCareBoxSection(
+    uiState: com.example.smartplantcare.iot.MyPlantsUiState?,
+    onOpenMyPlants: () -> Unit
+) {
+    val snapshot = uiState?.liveSnapshot
+    val isConnected = snapshot != null
+    val boxName = snapshot?.meta?.displayName?.ifBlank { "SmartPlantCare Box" } ?: "SmartPlantCare Box"
+    var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(
+        snapshot?.deviceId,
+        snapshot?.receivedAtClientMs,
+        snapshot?.status?.lastSeenAt,
+        snapshot?.telemetry?.updatedAt
+    ) {
+        nowMs = System.currentTimeMillis()
+        while (snapshot != null) {
+            kotlinx.coroutines.delay(5_000L)
+            nowMs = System.currentTimeMillis()
+        }
+    }
+    val isOnline = snapshot != null && com.example.smartplantcare.iot.IotDomainLogic.isDeviceOnlineFresh(
+        status = snapshot.status,
+        nowMs = nowMs,
+        receivedAtClientMs = snapshot.receivedAtClientMs,
+        telemetryUpdatedAt = snapshot.telemetry.updatedAt
+    )
+    val reservoirPctText = if (isOnline && snapshot?.telemetry?.reservoirValid == true && snapshot.telemetry.reservoirPct != null) {
+        "${snapshot.telemetry.reservoirPct.toInt()}%"
+    } else {
+        "--"
+    }
+
+    Column {
+        SectionTitle("SMARTPLANTCARE BOX")
+        Spacer(modifier = Modifier.height(8.dp))
+        SettingsCard {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(if (isConnected) SoftGreen else MutedIconBg),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Sensors,
+                            contentDescription = null,
+                            tint = if (isConnected) PrimaryGreen else TextMedium,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(14.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = if (isConnected) boxName else "No Box Paired",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = TextDark
+                            )
+                            if (isConnected) {
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .clip(CircleShape)
+                                        .background(if (isOnline) HomeColors.SuccessGreen else HomeColors.AlertRed)
+                                )
+                            }
+                        }
+                        Text(
+                            text = if (isConnected) {
+                                if (isOnline) "Online • Water $reservoirPctText"
+                                else "Offline • Sensors --"
+                            } else "Connect ESP32 for 3-zone automated care",
+                            fontSize = 12.sp,
+                            color = TextMedium
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                Button(
+                    onClick = onOpenMyPlants,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = PrimaryGreen,
+                        contentColor = Color.White
+                    )
+                ) {
+                    Text(
+                        text = if (isConnected) "Manage in My Plants" else "Pair / Connect Box",
+                        color = Color.White,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 14.sp
+                    )
+                }
+            }
+        }
+    }
+}
+
+// ─── Units & Hardware Preferences Section ──────────────────────────────────────
+@Composable
+private fun UnitsAndPreferencesSection(
+    tempUnit: String,
+    moistureUnit: String,
+    onTempUnitChange: (String) -> Unit,
+    onMoistureUnitChange: (String) -> Unit,
+    onOpenGuide: () -> Unit
+) {
+    Column {
+        SectionTitle("PREFERENCES & HARDWARE")
+        Spacer(modifier = Modifier.height(8.dp))
+        SettingsCard {
+            // Temperature Unit Row
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(SoftGreen),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Thermostat,
+                        contentDescription = null,
+                        tint = PrimaryGreen,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(14.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Temperature Unit", fontSize = 15.sp, color = TextDark)
+                    Text("Display weather and sensor temp", fontSize = 12.sp, color = TextMedium)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    AmPmButton(label = "°C", selected = tempUnit == "C", onClick = { onTempUnitChange("C") })
+                    AmPmButton(label = "°F", selected = tempUnit == "F", onClick = { onTempUnitChange("F") })
+                }
+            }
+
+            HorizontalDivider(color = DividerLine, thickness = 1.dp)
+
+            // Measurement Depth Row
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(SoftGreen),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Straighten,
+                        contentDescription = null,
+                        tint = PrimaryGreen,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(14.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Depth Units", fontSize = 15.sp, color = TextDark)
+                    Text("Tank depth and soil height", fontSize = 12.sp, color = TextMedium)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    AmPmButton(label = "Inches", selected = moistureUnit == "in", onClick = { onMoistureUnitChange("in") })
+                    AmPmButton(label = "cm", selected = moistureUnit == "cm", onClick = { onMoistureUnitChange("cm") })
+                }
+            }
+
+            HorizontalDivider(color = DividerLine, thickness = 1.dp)
+
+            // Hardware Guide Row
+            SettingsMenuItem(
+                icon = Icons.Outlined.MenuBook,
+                title = "Hardware & Sensors Guide",
+                subtitle = "How soil, ultrasonic, rain & relays operate",
+                showArrow = true,
+                onClick = onOpenGuide
+            )
+        }
+    }
+}
+
+// ─── Storage & Cache Section ──────────────────────────────────────────────────
+@Composable
+private fun StorageAndCacheSection(
+    cacheSize: String,
+    onClearCache: () -> Unit
+) {
+    Column {
+        SectionTitle("STORAGE & DATA")
+        Spacer(modifier = Modifier.height(8.dp))
+        SettingsCard {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(SoftGreen),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.CleaningServices,
+                        contentDescription = null,
+                        tint = PrimaryGreen,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(14.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("App Image & Temp Cache", fontSize = 15.sp, color = TextDark)
+                    Text("Current size: $cacheSize", fontSize = 12.sp, color = TextMedium)
+                }
+                Button(
+                    onClick = onClearCache,
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = PrimaryGreen,
+                        contentColor = Color.White
+                    ),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier.height(34.dp)
+                ) {
+                    Text("Clear", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
+
+// ─── Hardware Guide Dialog ────────────────────────────────────────────────────
+@Composable
+private fun HardwareGuideDialog(onDismiss: () -> Unit) {
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = SurfaceWhite,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 16.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(22.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(CircleShape)
+                            .background(SoftGreen),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Memory,
+                            contentDescription = null,
+                            tint = PrimaryGreen,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = "Hardware & Sensors Guide",
+                            fontFamily = InterFont,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = TextDark
+                        )
+                        Text(
+                            text = "SmartPlantCare ESP32 Architecture",
+                            fontSize = 12.sp,
+                            color = TextMedium
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+
+                GuideItem(
+                    title = "🌱 3-Zone Soil Moisture Sensors",
+                    desc = "Capacitive analog sensors in Tomato (GPIO 34), Chili (GPIO 35), and Eggplant (GPIO 32). In Auto mode, irrigation automatically triggers when moisture falls below the dry threshold and stops when target % is reached."
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                GuideItem(
+                    title = "💧 Ultrasonic Water Tank Level (HC-SR04)",
+                    desc = "Measures reservoir depth calibrated for a standard 7-inch (17.8 cm) tank. Real-time water percentage is tracked, and low-water safety locks prevent the 12V pump from dry-running when level falls below 20%."
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                GuideItem(
+                    title = "🌧️ Rain & Weather Safety Gate",
+                    desc = "The physical digital rain sensor (GPIO 39) combined with GPS open-meteo hourly forecasts halts irrigation during rainfall, protecting plant root systems from over-saturation."
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                GuideItem(
+                    title = "⚡ Dual 4-Channel Relay Actuation",
+                    desc = "Irrigation energizes the 12V submersible power pump and the selected plant zone's 12V solenoid valve simultaneously, delivering water exclusively to the designated plant."
+                )
+
+                Spacer(modifier = Modifier.height(20.dp))
+                Button(
+                    onClick = onDismiss,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = PrimaryGreen,
+                        contentColor = Color.White
+                    )
+                ) {
+                    Text("Got It", color = Color.White, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GuideItem(title: String, desc: String) {
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = HomeColors.PageBg,
+        border = BorderStroke(1.dp, CardBorder),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text(text = title, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = TextDark)
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(text = desc, fontSize = 12.sp, color = TextMedium, lineHeight = 17.sp)
+        }
+    }
 }

@@ -3,6 +3,10 @@ package com.example.smartplantcare.iot
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.smartplantcare.data.NotificationHistory
+import com.example.smartplantcare.data.NotificationHistoryRepository
+import com.example.smartplantcare.notification.NotificationHelper
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -62,7 +66,11 @@ data class MyPlantsUiState(
         "eggplant" to 4
     ),
     val pendingCommandId: String? = null,
+    val pendingWaterCrop: String? = null,
     val isSubmittingAction: Boolean = false,
+    val isRefreshingWeather: Boolean = false,
+    val isSyncingDevice: Boolean = false,
+    val shouldPromptOwnerLocation: Boolean = false,
 
     // Page 4: Share My Plant
     val latestGeneratedInvite: ShareInvite? = null,
@@ -74,8 +82,22 @@ data class MyPlantsUiState(
 class MyPlantsViewModel(
     appContext: Context,
     private val repository: IotFirebaseRepository = IotFirebaseRepository(),
-    private val provClient: Esp32ProvisioningClient = Esp32ProvisioningClient(appContext.applicationContext)
+    private val provClient: Esp32ProvisioningClient = Esp32ProvisioningClient(appContext.applicationContext),
+    private val weatherClient: WifiWeatherLocationClient = WifiWeatherLocationClient()
 ) : ViewModel() {
+
+    private val appCtx: Context = appContext.applicationContext
+    private val notifHistoryRepo: NotificationHistoryRepository by lazy {
+        NotificationHistoryRepository(appCtx)
+    }
+    private val seenEventsPrefs by lazy {
+        appCtx.getSharedPreferences("spc_iot_seen_events", Context.MODE_PRIVATE)
+    }
+    private val notifLock = Any()
+    private val seededDevices = mutableSetOf<String>()
+    private val seenEventIdsByDevice = mutableMapOf<String, LinkedHashSet<String>>()
+    private val lastNotifiedAtByKey = mutableMapOf<String, Long>()
+    private val ownerLocationPromptedDevices = mutableSetOf<String>()
 
     private val _uiState = MutableStateFlow(MyPlantsUiState())
     val uiState: StateFlow<MyPlantsUiState> = _uiState.asStateFlow()
@@ -85,14 +107,19 @@ class MyPlantsViewModel(
     private var boundName: String = ""
     private var userDevicesJob: Job? = null
     private var liveDeviceJob: Job? = null
+    private var liveWatchdogJob: Job? = null
     private var espScanJob: Job? = null
     private var lastReportedCmdId: String? = null
+    private var lastAutoWeatherSyncDeviceId: String? = null
+    private var lastReconciledEpochKey: String? = null
+    private var lastRealtimeDeliveryAtMs: Long = 0L
     private var pendingFirebaseClaimResult: ProvisionResult? = null
 
     fun bindUser(uid: String?, email: String, displayName: String, isGuest: Boolean) {
         if (isGuest || uid.isNullOrBlank()) {
             userDevicesJob?.cancel()
             liveDeviceJob?.cancel()
+            liveWatchdogJob?.cancel()
             boundUid = null
             _uiState.update {
                 MyPlantsUiState(
@@ -143,47 +170,301 @@ class MyPlantsViewModel(
 
                 if (chosen != null) {
                     observeLiveDevice(chosen.deviceId)
+                    startLiveSyncWatchdog(chosen.deviceId)
                 } else {
                     liveDeviceJob?.cancel()
+                    liveWatchdogJob?.cancel()
                 }
             }
         }
     }
 
-    private fun observeLiveDevice(deviceId: String) {
-        if (liveDeviceJob?.isActive == true && _uiState.value.liveSnapshot?.deviceId == deviceId) {
+    private fun applyLiveSnapshot(deviceId: String, snapshot: LiveDeviceSnapshot?, fromRealtime: Boolean) {
+        if (fromRealtime) {
+            lastRealtimeDeliveryAtMs = System.currentTimeMillis()
+        }
+        _uiState.update { st ->
+            var nextSnackbar = st.snackbarMessage
+            var nextPendingCmd = st.pendingCommandId
+            var nextPendingCrop = st.pendingWaterCrop
+            val trackedId = st.pendingCommandId
+            if (trackedId != null && snapshot != null) {
+                val res = snapshot.commandResults[trackedId]
+                if (res != null && lastReportedCmdId != "${trackedId}_${res.state}") {
+                    lastReportedCmdId = "${trackedId}_${res.state}"
+                    nextSnackbar = "${res.state}: ${res.reason}"
+                    if (res.state in setOf("DONE", "REJECTED", "ABORTED")) {
+                        nextPendingCmd = null
+                        nextPendingCrop = null
+                    }
+                }
+            }
+            if (snapshot != null && (snapshot.status.isActivelyIrrigating || snapshot.status.isInSoakSettle)) {
+                nextPendingCrop = null
+            }
+
+            // Keep role synchronized with /acl/members
+            val uid = boundUid
+            val aclRole = snapshot?.members?.firstOrNull { it.uid == uid }?.role
+                ?: st.activeRole
+
+            st.copy(
+                liveSnapshot = snapshot,
+                activeRole = aclRole,
+                pendingCommandId = nextPendingCmd,
+                pendingWaterCrop = nextPendingCrop,
+                snackbarMessage = nextSnackbar
+            )
+        }
+
+        // If ESP32 status.ownershipEpoch differs from /meta/ownershipEpoch while OWNED,
+        // automatically reconcile /meta/ownershipEpoch using the authenticated Owner session
+        // so ESP32 /events writes (401 rule validation) and manual commands immediately align!
+        if (snapshot != null &&
+            snapshot.meta.ownershipState.equals("OWNED", ignoreCase = true) &&
+            snapshot.status.ownershipEpoch > 0L &&
+            snapshot.meta.ownershipEpoch != snapshot.status.ownershipEpoch &&
+            _uiState.value.activeRole == DeviceRole.OWNER
+        ) {
+            val key = "${deviceId}_${snapshot.status.ownershipEpoch}"
+            if (lastReconciledEpochKey != key) {
+                lastReconciledEpochKey = key
+                val ownerUid = boundUid.orEmpty()
+                viewModelScope.launch {
+                    repository.reconcileMetaOwnershipEpoch(
+                        deviceId = deviceId,
+                        espOwnershipEpoch = snapshot.status.ownershipEpoch,
+                        ownerUid = ownerUid
+                    )
+                }
+            }
+        }
+
+        // Weather & Box Location sync:
+        // - OWNER ONLY: use the Owner's mobile GPS to set accurate box coordinates in /meta/location.
+        // - Shared users (OPERATOR / VIEWER): NEVER request mobile GPS permission; always fetch
+        //   Open-Meteo using the Owner's already-saved box coordinates.
+        if (snapshot != null && lastAutoWeatherSyncDeviceId != deviceId) {
+            val effectiveRole = _uiState.value.activeRole
+            val isOwner = IotDomainLogic.canRequestDeviceLocationPermission(effectiveRole)
+            val hasOwnerGps = snapshot.meta.locationSource.equals("owner_gps", ignoreCase = true)
+            val w = snapshot.weather
+            val now = System.currentTimeMillis()
+            val isWeatherMissingOrStale = !w.valid ||
+                w.rainProbabilityPct < 0 ||
+                w.locationName.isBlank() ||
+                (w.fetchedAt > 1_700_000_000_000L && (now - w.fetchedAt) > 900_000L)
+
+            lastAutoWeatherSyncDeviceId = deviceId
+
+            if (isOwner && !hasOwnerGps) {
+                if (weatherClient.hasLocationPermission(appCtx)) {
+                    refreshWeatherWithOwnerGps(silent = true)
+                } else if (ownerLocationPromptedDevices.add(deviceId)) {
+                    _uiState.update { it.copy(shouldPromptOwnerLocation = true) }
+                }
+            } else if (isWeatherMissingOrStale) {
+                refreshWeatherForSavedBoxLocation(silent = true)
+            }
+        }
+
+        // Dispatch deduplicated Android system notifications & NotificationHistory entries
+        // for new ESP32 state-transition events (per V3.1 Specification Section 14.2)
+        if (snapshot != null) {
+            dispatchNewDeviceEventNotifications(snapshot)
+        }
+    }
+
+    /**
+     * Implements V3.1 Guide Section 14.2 Notification Trigger Table with anti-loop protection:
+     * - Synchronized in-memory + ordered persisted seen-ID cache (never randomly evicts recent IDs).
+     * - Drops historical/stale events (>2 min old) so syncing or rebooting never replays old faults.
+     * - Enforces per-(deviceId, eventType, crop) cooldowns (60 min for sensor faults, 15 min for
+     *   advisories, 5 min for critical safety alerts) and stable per-category notification IDs.
+     */
+    private fun dispatchNewDeviceEventNotifications(snapshot: LiveDeviceSnapshot) {
+        val events = snapshot.events
+        if (events.isEmpty()) {
+            synchronized(notifLock) { seededDevices.add(snapshot.deviceId) }
+            return
+        }
+
+        val nowMs = System.currentTimeMillis()
+        val newAlertsToPost = mutableListOf<DeviceEvent>()
+
+        synchronized(notifLock) {
+            val seenKey = "seen_ordered_${snapshot.deviceId}"
+            val seenIds = seenEventIdsByDevice.getOrPut(snapshot.deviceId) {
+                val raw = seenEventsPrefs.getString(seenKey, "").orEmpty()
+                val restored = LinkedHashSet<String>()
+                if (raw.isNotBlank()) {
+                    raw.split('\n').forEach { id -> if (id.isNotBlank()) restored.add(id) }
+                }
+                // Migrate any legacy StringSet IDs once
+                seenEventsPrefs.getStringSet("seen_ids_${snapshot.deviceId}", emptySet())
+                    ?.forEach { id -> if (id.isNotBlank()) restored.add(id) }
+                restored
+            }
+
+            // Seed historical events on first observation in this session so launch/sync never replays old alerts
+            val isFirstSeed = snapshot.deviceId !in seededDevices
+            seededDevices.add(snapshot.deviceId)
+
+            var prefsDirty = false
+            val cooldownUpdates = mutableMapOf<String, Long>()
+
+            // Process chronologically (oldest -> newest)
+            val orderedEvents = events.sortedBy { it.createdAt }
+            for (ev in orderedEvents) {
+                if (ev.eventId.isBlank()) continue
+                val alreadySeen = ev.eventId in seenIds
+                if (!alreadySeen) {
+                    seenIds.add(ev.eventId)
+                    prefsDirty = true
+                }
+
+                // On first seed when local cache was empty, never pop notifications for events > 60s old
+                if (isFirstSeed && alreadySeen) continue
+
+                val cooldownKey = IotDomainLogic.eventCooldownKey(snapshot.deviceId, ev.type, ev.crop)
+                val cooldownPrefKey = "cd_$cooldownKey"
+                val lastNotifiedMs = lastNotifiedAtByKey[cooldownKey]
+                    ?: seenEventsPrefs.getLong(cooldownPrefKey, 0L).takeIf { it > 0L }?.also {
+                        lastNotifiedAtByKey[cooldownKey] = it
+                    }
+
+                val shouldNotify = IotDomainLogic.shouldDispatchDeviceEventNotification(
+                    event = ev,
+                    nowMs = nowMs,
+                    isAlreadySeen = alreadySeen,
+                    lastNotifiedSameTypeMs = lastNotifiedMs
+                )
+                if (shouldNotify) {
+                    lastNotifiedAtByKey[cooldownKey] = nowMs
+                    cooldownUpdates[cooldownPrefKey] = nowMs
+                    newAlertsToPost.add(ev)
+                }
+            }
+
+            if (prefsDirty || cooldownUpdates.isNotEmpty()) {
+                // Trim deterministically from the oldest head (LinkedHashSet preserves insertion order!)
+                while (seenIds.size > 200) {
+                    val oldest = seenIds.firstOrNull() ?: break
+                    seenIds.remove(oldest)
+                }
+                val editor = seenEventsPrefs.edit()
+                if (prefsDirty) {
+                    editor.putString(seenKey, seenIds.joinToString("\n"))
+                }
+                cooldownUpdates.forEach { (k, ts) -> editor.putLong(k, ts) }
+                editor.apply()
+            }
+        }
+
+        if (newAlertsToPost.isEmpty()) return
+
+        val boxName = snapshot.meta.displayName.ifBlank { "SmartPlantCare Box" }
+        for (ev in newAlertsToPost.takeLast(3)) {
+            val isCrit = ev.severity.equals("critical", ignoreCase = true) ||
+                ev.type.uppercase() in setOf(
+                    "RAIN_SUSPENSION_STARTED",
+                    "RESERVOIR_CRITICAL",
+                    "RESERVOIR_EMPTY",
+                    "RESERVOIR_SENSOR_FAULT",
+                    "EMERGENCY_STOP",
+                    "POWER_OR_RELAY_FAULT",
+                    "IRRIGATION_ABORTED"
+                )
+            val notifId = IotDomainLogic.stableNotificationId(snapshot.deviceId, ev.type, ev.crop)
+            NotificationHelper.showIotDeviceAlert(
+                context = appCtx,
+                notificationId = notifId,
+                title = ev.title,
+                message = ev.message,
+                boxName = boxName,
+                isCritical = isCrit
+            )
+            viewModelScope.launch(Dispatchers.IO) {
+                notifHistoryRepo.saveNotification(
+                    NotificationHistory(
+                        id = "iot_${ev.eventId}",
+                        plantId = snapshot.deviceId,
+                        plantName = boxName,
+                        plantImageUrl = "",
+                        day = 1,
+                        title = ev.title,
+                        message = ev.message,
+                        timestamp = if (ev.createdAt >= 1_700_000_000_000L) ev.createdAt else System.currentTimeMillis(),
+                        isRead = false,
+                        isCompleted = false
+                    )
+                )
+            }
+        }
+    }
+
+    private fun isNewerSnapshot(candidate: LiveDeviceSnapshot, current: LiveDeviceSnapshot?): Boolean {
+        if (current == null) return true
+        return candidate.status.lastSeenAt != current.status.lastSeenAt ||
+            candidate.telemetry.updatedAt != current.telemetry.updatedAt ||
+            candidate.status.bootId != current.status.bootId ||
+            candidate.status.irrigationState != current.status.irrigationState ||
+            candidate.status.pumpState != current.status.pumpState ||
+            candidate.status.physicalLoadsEnabled != current.status.physicalLoadsEnabled ||
+            candidate.status.rainSuspensionActive != current.status.rainSuspensionActive ||
+            candidate.telemetry.rainRawWet != current.telemetry.rainRawWet ||
+            candidate.telemetry.rainWetConfirmed != current.telemetry.rainWetConfirmed ||
+            candidate.telemetry.rainAccidentalWet != current.telemetry.rainAccidentalWet ||
+            candidate.config != current.config ||
+            candidate.weather.fetchedAt != current.weather.fetchedAt
+    }
+
+    /**
+     * Background safety-net watchdog: if Firebase SDK's WebSocket silently stalls (e.g. after
+     * SoftAP->Wi-Fi switching or ESP32 power-cycling), polls Firebase directly via no-cache HTTPS REST
+     * every 6s (when offline/stale) or 10s (when healthy). Whenever newer ESP32 data is found on the
+     * server, it updates the Dashboard immediately AND resets the Firebase WebSocket stream!
+     */
+    private fun startLiveSyncWatchdog(deviceId: String) {
+        liveWatchdogJob?.cancel()
+        liveWatchdogJob = viewModelScope.launch {
+            // Immediate direct REST check 1.2s after entering dashboard so stale cache never sticks
+            delay(1200L)
+            while (true) {
+                val st = _uiState.value
+                val currentSnap = st.liveSnapshot
+                val now = System.currentTimeMillis()
+                val currentStale = currentSnap == null || !IotDomainLogic.isDeviceOnlineFresh(
+                    status = currentSnap.status,
+                    nowMs = now,
+                    receivedAtClientMs = currentSnap.receivedAtClientMs,
+                    telemetryUpdatedAt = currentSnap.telemetry.updatedAt
+                )
+                if (st.step == MyPlantsStep.LIVE_DASHBOARD && st.activeDeviceId == deviceId && !st.isSyncingDevice) {
+                    val realtimeSilent = (now - lastRealtimeDeliveryAtMs) >= 10_000L
+                    if (realtimeSilent || currentStale) {
+                        val restSnap = repository.fetchDeviceSnapshotViaRest(deviceId).getOrNull()
+                        if (restSnap != null && isNewerSnapshot(restSnap, _uiState.value.liveSnapshot)) {
+                            applyLiveSnapshot(deviceId, restSnap, fromRealtime = false)
+                            // WebSocket missed a real server update — reset socket so live streaming recovers!
+                            repository.reconnectRealtimeSocket()
+                            observeLiveDevice(deviceId, forceRestart = true)
+                        }
+                    }
+                }
+                delay(if (currentStale) 6_000L else 10_000L)
+            }
+        }
+    }
+
+    private fun observeLiveDevice(deviceId: String, forceRestart: Boolean = false) {
+        if (!forceRestart && liveDeviceJob?.isActive == true && _uiState.value.liveSnapshot?.deviceId == deviceId) {
             return
         }
         liveDeviceJob?.cancel()
         liveDeviceJob = viewModelScope.launch {
             repository.observeDevice(deviceId).collect { snapshot ->
-                _uiState.update { st ->
-                    var nextSnackbar = st.snackbarMessage
-                    var nextPendingCmd = st.pendingCommandId
-                    val trackedId = st.pendingCommandId
-                    if (trackedId != null && snapshot != null) {
-                        val res = snapshot.commandResults[trackedId]
-                        if (res != null && lastReportedCmdId != "${trackedId}_${res.state}") {
-                            lastReportedCmdId = "${trackedId}_${res.state}"
-                            nextSnackbar = "${res.state}: ${res.reason}"
-                            if (res.state in setOf("DONE", "REJECTED", "ABORTED")) {
-                                nextPendingCmd = null
-                            }
-                        }
-                    }
-
-                    // Keep role synchronized with /acl/members
-                    val uid = boundUid
-                    val aclRole = snapshot?.members?.firstOrNull { it.uid == uid }?.role
-                        ?: st.activeRole
-
-                    st.copy(
-                        liveSnapshot = snapshot,
-                        activeRole = aclRole,
-                        pendingCommandId = nextPendingCmd,
-                        snackbarMessage = nextSnackbar
-                    )
-                }
+                applyLiveSnapshot(deviceId, snapshot, fromRealtime = true)
             }
         }
     }
@@ -426,11 +707,11 @@ class MyPlantsViewModel(
     }
 
     fun updateManualWifiSsid(ssid: String) {
-        _uiState.update { it.copy(selectedWifiSsid = ssid, provisioningError = null) }
+        _uiState.update { it.copy(selectedWifiSsid = ssid.replace("\r", "").replace("\n", ""), provisioningError = null) }
     }
 
     fun updateWifiPassword(password: String) {
-        _uiState.update { it.copy(wifiPassword = password, provisioningError = null) }
+        _uiState.update { it.copy(wifiPassword = IotDomainLogic.sanitizeWifiPassword(password), provisioningError = null) }
     }
 
     fun updateCustomBoxName(name: String) {
@@ -473,9 +754,19 @@ class MyPlantsViewModel(
             _uiState.update { it.copy(provisioningError = "Lost connection to ESP32. Reconnect and try again.") }
             return
         }
-        val ssid = state.selectedWifiSsid.trim()
+        val ssid = IotDomainLogic.sanitizeWifiSsid(state.selectedWifiSsid)
         if (ssid.isEmpty()) {
             _uiState.update { it.copy(provisioningError = "Please select or enter a 2.4 GHz Wi-Fi network.") }
+            return
+        }
+        val selectedNet = state.scannedWifiNetworks.firstOrNull { it.ssid == ssid }
+        val cleanPassword = IotDomainLogic.sanitizeWifiPassword(state.wifiPassword)
+        if (selectedNet?.secure == true && cleanPassword.isEmpty()) {
+            _uiState.update { it.copy(provisioningError = "Please enter the Wi-Fi password for \"$ssid\".") }
+            return
+        }
+        if (cleanPassword.isNotEmpty() && cleanPassword.length < 8) {
+            _uiState.update { it.copy(provisioningError = "WPA/WPA2 Wi-Fi passwords must be at least 8 characters (currently ${cleanPassword.length}).") }
             return
         }
         val claim = state.claimCode.trim()
@@ -503,39 +794,79 @@ class MyPlantsViewModel(
                     it.copy(
                         isProvisioning = true,
                         provisioningError = null,
-                        provisioningProgressMessage = "1/3 Sending Wi-Fi & \"$boxName\" to ESP32 NVS..."
+                        provisioningProgressMessage = "1/3 Sending Wi-Fi & testing password on ESP32..."
                     )
                 }
 
+                val provAttemptStartedAtMs = System.currentTimeMillis()
                 val nextEpoch = (espInfo.ownershipEpoch.coerceAtLeast(0L)) + 1L
                 val freshProv = provClient.sendProvisioningPayload(
                     wifiSsid = ssid,
-                    wifiPassword = state.wifiPassword,
+                    wifiPassword = cleanPassword,
                     claimCode = claim,
                     displayName = boxName,
                     ownerUid = uid,
-                    nextOwnershipEpoch = nextEpoch
+                    nextOwnershipEpoch = nextEpoch,
+                    onStatusUpdate = { statusMsg ->
+                        _uiState.update { it.copy(provisioningProgressMessage = "1/3 $statusMsg") }
+                    }
                 )
 
-                if (!freshProv.success) {
+                val verifiedProv = if (freshProv.success) {
+                    freshProv
+                } else if (freshProv.contactLostAfterAccept) {
+                    // ESP32 accepted credentials and may have verified via pure-STA fallback (closing SoftAP).
+                    // Release SoftAP so phone regains internet, then check if ESP32 checked in online on Firebase!
+                    _uiState.update {
+                        it.copy(provisioningProgressMessage = "2/3 Checking if ESP32 came online via router...")
+                    }
+                    provClient.disconnectFromEspHotspot()
+                    delay(3000L)
+                    val targetDeviceId = freshProv.deviceId.ifBlank { espInfo.deviceId }
+                    var verifiedInCloud = false
+                    for (probe in 1..6) {
+                        if (repository.isDeviceProvisionedOnline(
+                                deviceId = targetDeviceId,
+                                expectedEpoch = nextEpoch,
+                                minEpochTimestampMs = provAttemptStartedAtMs - 15_000L
+                            )
+                        ) {
+                            verifiedInCloud = true
+                            break
+                        }
+                        delay(2500L)
+                    }
+                    if (verifiedInCloud) {
+                        freshProv.copy(success = true, errorMessage = null)
+                    } else {
+                        freshProv
+                    }
+                } else {
+                    freshProv
+                }
+
+                if (!verifiedProv.success) {
+                    // WRONG PASSWORD OR CLAIM CODE: Keep user on Step 2 (DO NOT go to Dashboard!)
+                    // Keep ESP32 hotspot connected when SoftAP stayed up so user can retry immediately.
+                    pendingFirebaseClaimResult = null
                     _uiState.update {
                         it.copy(
                             isProvisioning = false,
                             provisioningProgressMessage = null,
-                            provisioningError = freshProv.errorMessage
-                                ?: "ESP32 rejected provisioning. Check your Claim Code and Wi-Fi."
+                            provisioningError = verifiedProv.errorMessage
+                                ?: "Invalid Wi-Fi password or Claim Code. Please check and try again."
                         )
                     }
                     return@launch
                 }
 
-                pendingFirebaseClaimResult = freshProv
+                pendingFirebaseClaimResult = verifiedProv
                 _uiState.update {
-                    it.copy(provisioningProgressMessage = "2/3 ESP32 saved Wi-Fi! Reconnecting phone to internet...")
+                    it.copy(provisioningProgressMessage = "2/3 Wi-Fi password verified! ESP32 connected — reconnecting phone to internet...")
                 }
                 provClient.disconnectFromEspHotspot()
-                delay(3500L)
-                freshProv
+                delay(3000L)
+                verifiedProv
             }
 
             _uiState.update {
@@ -590,7 +921,8 @@ class MyPlantsViewModel(
                     snackbarMessage = "Device Paired! \"$boxName\" is now linked to your account."
                 )
             }
-            observeLiveDevice(finalDeviceId)
+            observeLiveDevice(finalDeviceId, forceRestart = true)
+            startLiveSyncWatchdog(finalDeviceId)
         }
     }
 
@@ -606,6 +938,7 @@ class MyPlantsViewModel(
             )
         }
         observeLiveDevice(link.deviceId)
+        startLiveSyncWatchdog(link.deviceId)
     }
 
     fun openAddAnotherDeviceFlow() {
@@ -650,8 +983,212 @@ class MyPlantsViewModel(
         }
         viewModelScope.launch {
             repository.setDeviceMode(deviceId, mode)
-                .onSuccess { showSnackbar("Mode switched to $mode.") }
+                .onSuccess { showSnackbar("Environment set to $mode.") }
                 .onFailure { showSnackbar("Failed to switch mode: ${it.localizedMessage}") }
+        }
+    }
+
+    fun switchAutoIrrigation(enabled: Boolean) {
+        val st = _uiState.value
+        val deviceId = st.activeDeviceId ?: return
+        if (!st.activeRole.canControl) {
+            showSnackbar("Viewer accounts have read-only access.")
+            return
+        }
+        viewModelScope.launch {
+            repository.setAutoIrrigationEnabled(deviceId, enabled)
+                .onSuccess {
+                    showSnackbar(
+                        if (enabled) "Automatic Irrigation enabled."
+                        else "Switched to Manual Irrigation mode."
+                    )
+                }
+                .onFailure { showSnackbar("Failed to update irrigation mode: ${it.localizedMessage}") }
+        }
+    }
+
+    fun enablePhysicalRelayLoads() {
+        val st = _uiState.value
+        val deviceId = st.activeDeviceId ?: return
+        if (!st.activeRole.canControl) {
+            showSnackbar("Viewer accounts have read-only access.")
+            return
+        }
+        viewModelScope.launch {
+            repository.setPhysicalLoadsEnabled(deviceId, true)
+                .onSuccess { showSnackbar("Physical relays ENABLED! ESP32 will energize valves & pump.") }
+                .onFailure { showSnackbar("Failed to enable relays: ${it.localizedMessage}") }
+        }
+    }
+
+    /**
+     * Tears down any stale Firebase RTDB WebSocket, fetches the latest server state directly
+     * via no-cache HTTPS REST (bypassing local SDK cache), and restarts the live stream.
+     * Automatically called on app resume and available as a 1-tap Sync button on the Hero Card.
+     */
+    fun resyncLiveDevice(silent: Boolean = false) {
+        val st = _uiState.value
+        val deviceId = st.activeDeviceId ?: return
+        if (st.step != MyPlantsStep.LIVE_DASHBOARD) return
+        if (st.isSyncingDevice) return
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isSyncingDevice = true) }
+            // Ensure no lingering ESP32 SoftAP network binding blocks normal internet traffic
+            provClient.disconnectFromEspHotspot()
+            val refreshRes = repository.forceRefreshDevice(deviceId)
+            // Re-attach live listener AFTER socket reset so real-time updates resume cleanly
+            observeLiveDevice(deviceId, forceRestart = true)
+            startLiveSyncWatchdog(deviceId)
+
+            refreshRes
+                .onSuccess { fresh ->
+                    _uiState.update { it.copy(isSyncingDevice = false) }
+                    if (fresh != null) {
+                        applyLiveSnapshot(deviceId, fresh, fromRealtime = false)
+                    }
+                    if (!silent) {
+                        val now = System.currentTimeMillis()
+                        val isFresh = fresh != null && IotDomainLogic.isDeviceOnlineFresh(
+                            status = fresh.status,
+                            nowMs = now,
+                            receivedAtClientMs = fresh.receivedAtClientMs,
+                            telemetryUpdatedAt = fresh.telemetry.updatedAt
+                        )
+                        val latestHeartbeat = if (fresh != null) {
+                            maxOf(fresh.status.lastSeenAt, fresh.telemetry.updatedAt)
+                        } else 0L
+                        val msg = when {
+                            isFresh -> {
+                                val ipSuffix = fresh?.status?.ipAddress?.takeIf { it.isNotBlank() }
+                                    ?.let { " ($it)" } ?: ""
+                                "Synced live data from ESP32!$ipSuffix"
+                            }
+                            fresh != null && latestHeartbeat >= 1_700_000_000_000L -> {
+                                val ageMin = ((now - latestHeartbeat) / 60_000L).coerceAtLeast(1L)
+                                val ageText = if (ageMin < 60L) "${ageMin}m ago" else "${ageMin / 60L}h ago"
+                                "Cloud OK, but ESP32 last sent data $ageText — re-upload updated ESP32 sketch & re-pair once if SPC-SETUP is open."
+                            }
+                            else -> "Cloud connected — waiting for ESP32 Wi-Fi heartbeat..."
+                        }
+                        showSnackbar(msg)
+                    }
+                }
+                .onFailure { err ->
+                    _uiState.update { it.copy(isSyncingDevice = false) }
+                    if (!silent) {
+                        showSnackbar("Sync failed: ${err.localizedMessage ?: "Check phone internet"}")
+                    }
+                }
+        }
+    }
+
+    fun consumeOwnerLocationPrompt() {
+        _uiState.update { it.copy(shouldPromptOwnerLocation = false) }
+    }
+
+    fun onOwnerLocationPermissionResult(granted: Boolean) {
+        _uiState.update { it.copy(shouldPromptOwnerLocation = false) }
+        val st = _uiState.value
+        if (!IotDomainLogic.canRequestDeviceLocationPermission(st.activeRole)) {
+            return
+        }
+        if (granted) {
+            refreshWeatherWithOwnerGps(silent = false)
+        } else {
+            showSnackbar("Location permission skipped. Tap Rain Guard refresh anytime to set exact GPS.")
+            refreshWeatherForSavedBoxLocation(silent = true)
+        }
+    }
+
+    /**
+     * OWNER-ONLY: Reads the Owner's mobile GPS coordinates + city name, writes them to
+     * `/devices/{deviceId}/meta/location` (so ESP32 & all shared users use the exact box location),
+     * and updates the live Open-Meteo 3-hour rain forecast.
+     */
+    fun refreshWeatherWithOwnerGps(silent: Boolean = false) {
+        val st = _uiState.value
+        val deviceId = st.activeDeviceId ?: return
+        if (!IotDomainLogic.canRequestDeviceLocationPermission(st.activeRole)) {
+            refreshWeatherForSavedBoxLocation(silent = silent)
+            return
+        }
+        if (st.isRefreshingWeather) return
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isRefreshingWeather = true) }
+            weatherClient.fetchOwnerMobileGpsAndRainForecast(appCtx)
+                .onSuccess { weatherSnap ->
+                    repository.updateOwnerLocationAndWeather(deviceId, weatherSnap)
+                    _uiState.update { it.copy(isRefreshingWeather = false) }
+                    if (!silent) {
+                        showSnackbar("Box GPS saved (${weatherSnap.locationName}): ${weatherSnap.rainProbabilityPct}% rain chance")
+                    }
+                }
+                .onFailure { err ->
+                    _uiState.update { it.copy(isRefreshingWeather = false) }
+                    if (!silent) {
+                        showSnackbar("GPS weather update failed: ${err.localizedMessage ?: "Turn on phone Location"}")
+                    }
+                    // Fallback to refreshing weather for existing saved coordinates without overwriting them
+                    refreshWeatherForSavedBoxLocation(silent = true)
+                }
+        }
+    }
+
+    /**
+     * Refreshes Open-Meteo 3-hour rain probability using the Owner's already-saved box coordinates.
+     * NEVER requests phone GPS permission or mutates `/meta/location` — safe for shared users.
+     */
+    fun refreshWeatherForSavedBoxLocation(silent: Boolean = false) {
+        val st = _uiState.value
+        val deviceId = st.activeDeviceId ?: return
+        val snapshot = st.liveSnapshot ?: return
+        if (st.isRefreshingWeather) return
+
+        val lat = snapshot.meta.lat
+        val lon = snapshot.meta.lon
+        val savedName = snapshot.meta.locationName.ifBlank { snapshot.weather.locationName }
+        val savedSource = snapshot.meta.locationSource.ifBlank { "owner_gps" }
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isRefreshingWeather = true) }
+            weatherClient.fetchRainForecastForCoordinates(lat, lon, savedName, savedSource)
+                .onSuccess { weatherSnap ->
+                    if (st.activeRole.canControl) {
+                        repository.updateWeatherForecastOnly(deviceId, weatherSnap)
+                    } else {
+                        // Viewer fallback: update local display without writing to RTDB
+                        _uiState.update { cur ->
+                            val live = cur.liveSnapshot ?: return@update cur
+                            val now = System.currentTimeMillis()
+                            cur.copy(
+                                liveSnapshot = live.copy(
+                                    weather = live.weather.copy(
+                                        provider = weatherSnap.provider,
+                                        valid = true,
+                                        rainProbabilityPct = weatherSnap.rainProbabilityPct,
+                                        locationName = weatherSnap.locationName,
+                                        lat = weatherSnap.lat,
+                                        lon = weatherSnap.lon,
+                                        fetchedAt = now,
+                                        validUntil = now + 3_600_000L
+                                    )
+                                )
+                            )
+                        }
+                    }
+                    _uiState.update { it.copy(isRefreshingWeather = false) }
+                    if (!silent) {
+                        showSnackbar("Weather synced (${weatherSnap.locationName}): ${weatherSnap.rainProbabilityPct}% rain chance")
+                    }
+                }
+                .onFailure { err ->
+                    _uiState.update { it.copy(isRefreshingWeather = false) }
+                    if (!silent) {
+                        showSnackbar("Weather refresh failed: ${err.localizedMessage ?: "No internet"}")
+                    }
+                }
         }
     }
 
@@ -666,14 +1203,19 @@ class MyPlantsViewModel(
         }
         val seconds = st.selectedPulseSecByCrop[cropSlug] ?: 4
         val durationMs = seconds * 1000L
+        val effectiveEpoch = if (snapshot.status.ownershipEpoch > 0L) {
+            snapshot.status.ownershipEpoch
+        } else {
+            snapshot.meta.ownershipEpoch
+        }
 
         viewModelScope.launch {
-            _uiState.update { it.copy(isSubmittingAction = true) }
+            _uiState.update { it.copy(isSubmittingAction = true, pendingWaterCrop = cropSlug) }
             repository.sendCommand(
                 deviceId = snapshot.deviceId,
                 type = "WATER_CROP",
                 requestedByUid = uid,
-                ownershipEpoch = snapshot.meta.ownershipEpoch,
+                ownershipEpoch = effectiveEpoch,
                 cropSlug = cropSlug,
                 durationMs = durationMs
             ).onSuccess { cmdId ->
@@ -681,13 +1223,22 @@ class MyPlantsViewModel(
                     it.copy(
                         isSubmittingAction = false,
                         pendingCommandId = cmdId,
+                        pendingWaterCrop = cropSlug,
                         snackbarMessage = "Sent ${seconds}s watering command for ${cropSlug.uppercase()}..."
                     )
+                }
+                // Clear optimistic starting badge after 8s if ESP32 didn't pick it up
+                launch {
+                    delay(8000L)
+                    _uiState.update { cur ->
+                        if (cur.pendingCommandId == cmdId) cur.copy(pendingWaterCrop = null) else cur
+                    }
                 }
             }.onFailure { err ->
                 _uiState.update {
                     it.copy(
                         isSubmittingAction = false,
+                        pendingWaterCrop = null,
                         snackbarMessage = "Command failed: ${err.localizedMessage}"
                     )
                 }
@@ -700,13 +1251,18 @@ class MyPlantsViewModel(
         val uid = boundUid ?: return
         val snapshot = st.liveSnapshot ?: return
         if (!st.activeRole.canControl) return
+        val effectiveEpoch = if (snapshot.status.ownershipEpoch > 0L) {
+            snapshot.status.ownershipEpoch
+        } else {
+            snapshot.meta.ownershipEpoch
+        }
 
         viewModelScope.launch {
             repository.sendCommand(
                 deviceId = snapshot.deviceId,
                 type = "STOP_WATERING",
                 requestedByUid = uid,
-                ownershipEpoch = snapshot.meta.ownershipEpoch
+                ownershipEpoch = effectiveEpoch
             ).onSuccess { cmdId ->
                 _uiState.update {
                     it.copy(
@@ -723,13 +1279,18 @@ class MyPlantsViewModel(
         val uid = boundUid ?: return
         val snapshot = st.liveSnapshot ?: return
         if (!st.activeRole.canControl) return
+        val effectiveEpoch = if (snapshot.status.ownershipEpoch > 0L) {
+            snapshot.status.ownershipEpoch
+        } else {
+            snapshot.meta.ownershipEpoch
+        }
 
         viewModelScope.launch {
             repository.sendCommand(
                 deviceId = snapshot.deviceId,
                 type = "CLEAR_EMERGENCY",
                 requestedByUid = uid,
-                ownershipEpoch = snapshot.meta.ownershipEpoch
+                ownershipEpoch = effectiveEpoch
             ).onSuccess { cmdId ->
                 _uiState.update {
                     it.copy(pendingCommandId = cmdId, snackbarMessage = "Clear Fault command sent.")
@@ -743,13 +1304,18 @@ class MyPlantsViewModel(
         val uid = boundUid ?: return
         val snapshot = st.liveSnapshot ?: return
         if (!st.activeRole.canControl) return
+        val effectiveEpoch = if (snapshot.status.ownershipEpoch > 0L) {
+            snapshot.status.ownershipEpoch
+        } else {
+            snapshot.meta.ownershipEpoch
+        }
 
         viewModelScope.launch {
             repository.sendCommand(
                 deviceId = snapshot.deviceId,
                 type = "MUTE_BUZZER",
                 requestedByUid = uid,
-                ownershipEpoch = snapshot.meta.ownershipEpoch
+                ownershipEpoch = effectiveEpoch
             ).onSuccess { showSnackbar("Mute buzzer command sent.") }
         }
     }
@@ -814,6 +1380,7 @@ class MyPlantsViewModel(
                     )
                 }
                 observeLiveDevice(joinedDeviceId)
+                startLiveSyncWatchdog(joinedDeviceId)
                 onSuccessDismiss()
             }.onFailure { err ->
                 _uiState.update {
@@ -928,6 +1495,7 @@ class MyPlantsViewModel(
 
     override fun onCleared() {
         espScanJob?.cancel()
+        liveWatchdogJob?.cancel()
         provClient.disconnectFromEspHotspot()
         super.onCleared()
     }

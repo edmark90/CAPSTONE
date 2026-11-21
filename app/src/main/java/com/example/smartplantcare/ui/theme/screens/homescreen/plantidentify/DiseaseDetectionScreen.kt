@@ -238,7 +238,10 @@ fun DiseaseCameraScreen(onImageReady: (File) -> Unit, onBack: () -> Unit) {
                         }
                         context.startActivity(intent)
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = HomeColors.ForestPrimary)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = HomeColors.ForestPrimary,
+                        contentColor = Color.White
+                    )
                 ) {
                     Text("Open Settings", color = Color.White)
                 }

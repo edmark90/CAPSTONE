@@ -354,7 +354,8 @@ void LcdManager::buildPageWeatherRain(char lines[4][21],
 
   snprintf(l1, sizeof(l1), "WINDOW: %s", weather.windowLabel);
 
-  const char* rainStr = (rain.sensorState == RainSensorState::WET_CONFIRMED)   ? "WET"
+  const char* rainStr = (rain.rawWet && rain.accidentalWet)                    ? "WET(ACC)"
+                      : (rain.sensorState == RainSensorState::WET_CONFIRMED)   ? "WET"
                       : (rain.sensorState == RainSensorState::WET_UNCONFIRMED) ? "WET?"
                       : (rain.sensorState == RainSensorState::DRY)             ? "DRY"
                                                                                : "ERR";

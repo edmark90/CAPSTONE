@@ -3,6 +3,13 @@
     ".read": false,
     ".write": false,
 
+    "sharedInvites": {
+      ".read": "auth != null",
+      "$inviteCode": {
+        ".write": "auth != null"
+      }
+    },
+
     "users": {
       "$uid": {
         ".read": "auth != null && auth.uid === $uid",
@@ -52,6 +59,7 @@
     },
 
     "devices": {
+      ".read": "auth != null",
       "$deviceId": {
         ".read": true,
 

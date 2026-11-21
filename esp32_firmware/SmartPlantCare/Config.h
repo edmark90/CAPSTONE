@@ -20,17 +20,22 @@ constexpr const char* FIRMWARE_VERSION  = "3.1.0-i2c";
 constexpr const char* HARDWARE_REVISION = "ESP32-WROOM32-V3.1-I2C";
 constexpr const char* MODEL_NAME        = "SmartPlantCare-3Zone";
 
-// ─── CRITICAL BENCH SAFETY GATE ──────────────────────────────────────────────
-// Keep false for initial upload/sensor testing so relays stay locked in safe-OFF.
-// Change to true ONLY after verifying relay COM/NO contacts and active polarity!
-constexpr bool ENABLE_PHYSICAL_LOAD_OUTPUTS = false;
+// ─── PHYSICAL RELAY OUTPUT GATE ─────────────────────────────────────────────
+// Enabled by default so manual & automatic irrigation energize the 4-channel relay board.
+// Can still be toggled OFF anytime in App Device Settings or via Serial CLI `disableloads`.
+constexpr bool ENABLE_PHYSICAL_LOAD_OUTPUTS = true;
 
 // ─── Hardware Electrical Polarity (VERIFY ON BENCH BEFORE ENABLING LOADS) ────
 // Most 4-channel optocoupled 5V relay boards are active-LOW (IN = LOW energizes coil).
 constexpr bool RELAY_ACTIVE_LOW        = true;
 // Many LM393 rain comparator modules pull DO LOW when the sensing plate is wet.
 constexpr bool RAIN_WET_IS_LOW         = true;
-// Set true if using a passive piezo buzzer (uses LEDC tone); false for active DC buzzer.
+// ─── Buzzer Configuration (GPIO18 ONLY — DO NOT wire buzzer directly to V5!) ─
+// 2-pin ACTIVE buzzer (+ -> GPIO18, - -> GND)            : BUZZER_IS_PASSIVE = false, BUZZER_ACTIVE_HIGH = 1
+// 2-pin PASSIVE buzzer (+ -> GPIO18, - -> GND)           : BUZZER_IS_PASSIVE = true,  BUZZER_ACTIVE_HIGH = 1
+// 3-pin ACTIVE-LOW module (VCC -> 3V3, GND -> GND, I/O -> GPIO18) : BUZZER_IS_PASSIVE = false, BUZZER_ACTIVE_HIGH = 0
+// 3-pin PASSIVE module (VCC -> 3V3, GND -> GND, I/O -> GPIO18)    : BUZZER_IS_PASSIVE = true,  BUZZER_ACTIVE_HIGH = 1
+// TIP: Type 'testbuzzer' / 'testbuzzer passive' / 'testbuzzer activelow' in Serial Monitor (115200) to test!
 constexpr bool BUZZER_IS_PASSIVE       = false;
 constexpr int  BUZZER_ACTIVE_HIGH      = 1;
 constexpr uint32_t BUZZER_PASSIVE_FREQ = 2400;  // Hz when BUZZER_IS_PASSIVE == true
@@ -98,7 +103,7 @@ constexpr float    DEFAULT_EGGPLANT_START_PCT        = 38.0f;
 constexpr float    DEFAULT_EGGPLANT_STOP_PCT         = 58.0f;
 
 // ─── Irrigation Valve, Pump, Pulse & Cooldown Timings ────────────────────────
-constexpr uint32_t VALVE_OPEN_SETTLE_MS              = 400;    // Valve ON -> wait 400ms -> Pump ON
+constexpr uint32_t VALVE_OPEN_SETTLE_MS              = 150;    // Valve ON -> brief 150ms lead -> Pump ON (opens together safely)
 constexpr uint32_t PUMP_STOP_SETTLE_MS               = 250;    // Pump OFF -> wait 250ms -> Valve OFF
 constexpr uint32_t DEFAULT_WATER_PULSE_MS            = 4000;   // 4 s supervised pulse per cycle
 constexpr uint32_t DEFAULT_MAX_ZONE_PUMP_ON_MS       = 15000;  // 15 s hard max runtime per session
@@ -135,13 +140,13 @@ constexpr uint32_t ENV_ALERT_CONFIRM_MS              = 30000;  // 30 s sustained
 // ─── Buzzer Pattern Timings ──────────────────────────────────────────────────
 constexpr uint16_t BEEP_SHORT_ON_MS                  = 150;
 constexpr uint16_t BEEP_SHORT_GAP_MS                 = 200;
-constexpr uint16_t BEEP_BOOT_ON_MS                   = 100;
+constexpr uint16_t BEEP_BOOT_ON_MS                   = 150;
 
 // ─── Bounded Queues & Network Backoff ────────────────────────────────────────
 constexpr size_t   EVENT_QUEUE_CAPACITY              = 16;
 constexpr size_t   PROCESSED_CMD_RING_SIZE           = 12;
 constexpr uint32_t WIFI_RECONNECT_MIN_MS             = 5000;
 constexpr uint32_t WIFI_RECONNECT_MAX_MS             = 60000;
-constexpr uint32_t HTTP_TIMEOUT_MS                   = 4500;
+constexpr uint32_t HTTP_TIMEOUT_MS                   = 9000;
 
 }  // namespace Config

@@ -167,13 +167,14 @@ struct ReservoirReading {
 };
 
 struct WeatherSnapshot {
-  bool     valid             = false;
-  bool     fresh             = false;
-  int      probabilityPct    = -1;
-  uint64_t fetchedAtEpochMs  = 0;
-  uint64_t validUntilEpochMs = 0;
+  bool     valid              = false;
+  bool     fresh              = false;
+  int      probabilityPct     = -1;
+  uint64_t fetchedAtEpochMs   = 0;
+  uint64_t validUntilEpochMs  = 0;
   uint32_t receivedAtUptimeMs = 0;
-  char     windowLabel[24]   = "NEXT 3 H";
+  char     windowLabel[24]    = "NEXT 3 H";
+  char     locationName[48]   = "";
 };
 
 struct RainGateStatus {
@@ -184,6 +185,8 @@ struct RainGateStatus {
   uint32_t        dryDurationMs           = 0;
   bool            wetConfirmed            = false;
   bool            dryRecovered            = true;
+  bool            weatherMetBeforeWet     = false;
+  bool            accidentalWet           = false;
   bool            rainSuspensionLatched   = false;
   bool            forecastAdvisoryActive  = false;
   bool            weatherUnavailableFault = false;
@@ -191,6 +194,7 @@ struct RainGateStatus {
 
 struct RuntimeConfig {
   DeviceMode     mode                    = DeviceMode::OUTDOOR;
+  bool           autoIrrigationEnabled   = true;   // true = Automatic, false = Manual Only
   int            rainThresholdPct        = Config::DEFAULT_RAIN_PROB_THRESHOLD_PCT;
   uint32_t       wetConfirmMs            = Config::DEFAULT_RAIN_WET_CONFIRM_MS;
   uint32_t       dryRecoverMs            = Config::DEFAULT_RAIN_DRY_RECOVER_MS;

@@ -49,12 +49,12 @@ private val LightColorScheme = lightColorScheme(
 
 // ─── Dark Color Scheme (optional, future-ready) ───────────────────────────────
 private val DarkColorScheme = darkColorScheme(
-    primary            = AccentGreen,
-    onPrimary          = DarkGreen,
+    primary            = DarkGreen,
+    onPrimary          = White,
     primaryContainer   = MediumGreen,
     onPrimaryContainer = SoftGreen,
     secondary          = LightGreen,
-    onSecondary        = DarkGreen,
+    onSecondary        = White,
     background         = Color(0xFF0D1B13),
     onBackground       = White,
     surface            = Color(0xFF12261A),
@@ -64,7 +64,7 @@ private val DarkColorScheme = darkColorScheme(
 // ─── App Theme ────────────────────────────────────────────────────────────────
 @Composable
 fun SmartPlantCareTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    darkTheme: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme

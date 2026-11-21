@@ -23,6 +23,7 @@ bool ReservoirManager::sampleAndEvaluate(uint32_t nowMs,
                         gapIn <= Config::DEFAULT_RESERVOIR_MAX_VALID_IN;
 
   if (!calValid || !gapValid) {
+    validStreak_ = 0;
     if (reading_.failStreak < 250) ++reading_.failStreak;
     // Immediately block pump on invalid distance; emit fault alert after 3 failed cycles
     criticalLockout_ = true;
@@ -32,8 +33,11 @@ bool ReservoirManager::sampleAndEvaluate(uint32_t nowMs,
       reading_.waterLevelPct = NAN;
       reading_.state         = ReservoirLevelState::SENSOR_FAULT;
 
-      if (lastNotifiedState_ != ReservoirLevelState::SENSOR_FAULT) {
+      const bool cooldownReady = (lastFaultEventMs_ == 0) ||
+                                 (uint32_t(nowMs - lastFaultEventMs_) >= 600000UL);
+      if (lastNotifiedState_ != ReservoirLevelState::SENSOR_FAULT && cooldownReady) {
         lastNotifiedState_ = ReservoirLevelState::SENSOR_FAULT;
+        lastFaultEventMs_  = (nowMs == 0) ? 1UL : nowMs;
         buzzer.triggerEventTransition(BuzzerEventId::RESERVOIR_CRITICAL_EMPTY);
         events.enqueueEvent("RESERVOIR_SENSOR_FAULT",
                             EventSeverity::CRITICAL,
@@ -45,6 +49,7 @@ bool ReservoirManager::sampleAndEvaluate(uint32_t nowMs,
   }
 
   reading_.failStreak    = 0;
+  if (validStreak_ < 250) ++validStreak_;
   reading_.valid         = true;
   reading_.sampledAtMs   = nowMs;
   reading_.airGapInches  = gapIn;
@@ -141,7 +146,9 @@ bool ReservoirManager::sampleAndEvaluate(uint32_t nowMs,
 
   lowSinceMs_        = 0;
   reading_.state     = ReservoirLevelState::NORMAL;
-  lastNotifiedState_ = ReservoirLevelState::NORMAL;
+  if (validStreak_ >= 3 || lastNotifiedState_ != ReservoirLevelState::SENSOR_FAULT) {
+    lastNotifiedState_ = ReservoirLevelState::NORMAL;
+  }
   buzzer.clearEventLatch(BuzzerEventId::RESERVOIR_LOW);
   buzzer.clearEventLatch(BuzzerEventId::RESERVOIR_CRITICAL_EMPTY);
   return false;

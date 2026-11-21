@@ -5,12 +5,15 @@
  */
 
 #include "FirebaseClientManager.h"
+#include <esp_wifi.h>
+#include <math.h>
 #include <time.h>
 
 namespace {
 constexpr uint32_t ID_TOKEN_REFRESH_INTERVAL_MS   = 3000000UL;  // Refresh at 50 min
 constexpr uint32_t AUTH_RETRY_BACKOFF_MS          = 15000UL;
 constexpr uint32_t DIRECT_WEATHER_FETCH_PERIOD_MS = 900000UL;   // Every 15 min on Spark Plan
+constexpr uint32_t DIRECT_WEATHER_RETRY_MS        = 30000UL;    // Retry failed weather fetch after 30s
 }
 
 void FirebaseClientManager::begin(ProvisioningPairingManager* provisioning) {
@@ -37,27 +40,41 @@ String FirebaseClientManager::buildRtdbUrl(const String& path) const {
   return url;
 }
 
-void FirebaseClientManager::serviceNetworkAndTime(uint32_t nowMs, DiagnosticsMetrics& ioDiag) {
+void FirebaseClientManager::serviceNetworkAndTime(uint32_t nowMs,
+                                                  DiagnosticsMetrics& ioDiag,
+                                                  BuzzerManager& buzzer) {
   if (!provisioning_ || !provisioning_->hasWifiCredentials()) {
     return;
   }
 
   // CRITICAL: Do not run STA reconnect/channel-hopping scans while the SPC-SETUP-* SoftAP
-  // is active, or the ESP32 2.4 GHz radio will disrupt SoftAP beacons and drop clients.
-  if (provisioning_->isSetupApActive()) {
+  // or live Wi-Fi password verification test is active.
+  if (provisioning_->isSetupApActive() || provisioning_->isWifiTestInProgress()) {
     return;
   }
 
   if (WiFi.status() == WL_CONNECTED && WiFi.localIP()[0] != 0) {
-    wifiAttemptActive_ = false;
-    wifiBackoffMs_     = Config::WIFI_RECONNECT_MIN_MS;
-    ioDiag.wifiRssiDbm = static_cast<int8_t>(WiFi.RSSI());
+    wifiAttemptActive_     = false;
+    wifiConnectAttemptNum_ = 0;
+    wifiDhcpWaitStartMs_   = 0;
+    wifiBackoffMs_         = 12000UL;
+    ioDiag.wifiRssiDbm     = static_cast<int8_t>(WiFi.RSSI());
 
     if (wifiConnectedAtMs_ == 0) {
       wifiConnectedAtMs_ = (nowMs == 0) ? 1UL : nowMs;
-      Serial.printf("[NET] Wi-Fi connected (IP=%s, RSSI=%d dBm). Settling network stack...\n",
+      WiFi.setTxPower(WIFI_POWER_19_5dBm);
+      WiFi.setAutoReconnect(true);
+      Serial.printf("[NET] Wi-Fi connected (IP=%s, ch=%ld, RSSI=%d dBm). Settling network stack...\n",
                     WiFi.localIP().toString().c_str(),
+                    static_cast<long>(WiFi.channel()),
                     static_cast<int>(ioDiag.wifiRssiDbm));
+      // Sound confirmation beep on GPIO18 when ESP32 connects to Wi-Fi (avoid double-beep right after setup)
+      const uint32_t pairedAt = provisioning_->lastPairedAtMs();
+      const bool justBeepedForPairing = (pairedAt > 0) && (uint32_t(nowMs - pairedAt) < 12000UL);
+      if (!justBeepedForPairing) {
+        buzzer.clearEventLatch(BuzzerEventId::WIFI_CONNECTED_SUCCESS);
+        buzzer.triggerEventTransition(BuzzerEventId::WIFI_CONNECTED_SUCCESS);
+      }
     }
 
     // Delay SNTP start by 2s after DHCP and use numeric NTP IPs (Google Time / NIST)
@@ -70,20 +87,139 @@ void FirebaseClientManager::serviceNetworkAndTime(uint32_t nowMs, DiagnosticsMet
     return;
   }
 
+  // If STA already associated with the router and is only waiting for DHCP IP, give DHCP up to 12s
+  // instead of interrupting the handshake mid-lease!
+  if (WiFi.status() == WL_CONNECTED && WiFi.localIP()[0] == 0) {
+    if (wifiDhcpWaitStartMs_ == 0) {
+      wifiDhcpWaitStartMs_ = (nowMs == 0) ? 1UL : nowMs;
+      Serial.println(F("[NET] Wi-Fi associated — waiting for router DHCP IP..."));
+    }
+    if (uint32_t(nowMs - wifiDhcpWaitStartMs_) < 12000UL) {
+      return;
+    }
+    Serial.println(F("[NET] DHCP wait timed out (12s); retrying Wi-Fi connection..."));
+    wifiDhcpWaitStartMs_ = 0;
+  } else {
+    wifiDhcpWaitStartMs_ = 0;
+  }
+
   wifiConnectedAtMs_ = 0;
   ioDiag.wifiRssiDbm = -127;
-  if (nowMs - lastWifiAttemptAtMs_ >= wifiBackoffMs_) {
-    lastWifiAttemptAtMs_ = nowMs;
+  // Connect IMMEDIATELY on boot (lastWifiAttemptAtMs_ == 0), then retry every 12s..20s
+  // using alternating standard & compatibility profiles so post-reboot reconnect ALWAYS succeeds!
+  if (lastWifiAttemptAtMs_ == 0 || (nowMs - lastWifiAttemptAtMs_ >= wifiBackoffMs_)) {
+    lastWifiAttemptAtMs_ = (nowMs == 0) ? 1UL : nowMs;
     wifiAttemptActive_   = true;
     ioDiag.wifiReconnectCount++;
 
-    Serial.printf("[NET] Connecting to Wi-Fi SSID '%s' (backoff=%lu ms)...\n",
-                  provisioning_->wifiSsid(),
-                  static_cast<unsigned long>(wifiBackoffMs_));
-    WiFi.disconnect(false, false);
-    WiFi.begin(provisioning_->wifiSsid(), provisioning_->wifiPassword());
+    const uint8_t profileIdx = wifiConnectAttemptNum_ % 3;
+    wifiConnectAttemptNum_++;
 
-    wifiBackoffMs_ = min(wifiBackoffMs_ * 2UL, Config::WIFI_RECONNECT_MAX_MS);
+    Serial.printf("[NET] Connecting to Wi-Fi SSID '%s' (attempt #%u, profile=%u, nextRetry=%lu ms)...\n",
+                  provisioning_->wifiSsid(),
+                  static_cast<unsigned int>(wifiConnectAttemptNum_),
+                  static_cast<unsigned int>(profileIdx),
+                  static_cast<unsigned long>(wifiBackoffMs_));
+
+    const char* ssidStr = provisioning_->wifiSsid();
+    const char* passStr = provisioning_->wifiPassword();
+    const bool  hasPass = (passStr && strlen(passStr) > 0);
+
+    WiFi.persistent(false);
+    WiFi.setAutoReconnect(false);
+    if (WiFi.getMode() != WIFI_STA) {
+      WiFi.mode(WIFI_STA);
+      delay(100);
+    }
+    esp_wifi_disconnect();
+    delay(120);
+
+    wifi_country_t country;
+    memset(&country, 0, sizeof(country));
+    country.cc[0]  = 'P';
+    country.cc[1]  = 'H';
+    country.schan  = 1;
+    country.nchan  = 13;
+    country.policy = WIFI_COUNTRY_POLICY_AUTO;
+    esp_wifi_set_country(&country);
+
+    WiFi.setSleep(false);
+    const wifi_auth_mode_t minAuth = hasPass ? WIFI_AUTH_WEP : WIFI_AUTH_OPEN;
+    WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
+    WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
+    WiFi.setMinSecurity(minAuth);
+
+    if (profileIdx == 0) {
+      // Profile 0 (Immediate on boot): Direct native 2-arg WiFi.begin(ssid, pass)
+      // — identical to the post-provisioning station connect that works on First Connect!
+      WiFi.setTxPower(WIFI_POWER_19_5dBm);
+      if (hasPass) {
+        WiFi.begin(ssidStr, passStr);
+      } else {
+        WiFi.begin(ssidStr);
+      }
+    } else if (profileIdx == 1) {
+      // Profile 1 (12s fallback): Explicit compatibility wifi_config_t (PMF=off, HT20, 15dBm)
+      esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW_HT20);
+      WiFi.setTxPower(WIFI_POWER_15dBm);
+      const char* passArg = hasPass ? passStr : static_cast<const char*>(nullptr);
+      WiFi.begin(ssidStr, passArg, static_cast<int32_t>(0), static_cast<const uint8_t*>(nullptr), false);
+
+      wifi_config_t conf;
+      memset(&conf, 0, sizeof(conf));
+      if (esp_wifi_get_config(WIFI_IF_STA, &conf) == ESP_OK) {
+        conf.sta.scan_method        = WIFI_ALL_CHANNEL_SCAN;
+        conf.sta.sort_method        = WIFI_CONNECT_AP_BY_SIGNAL;
+        conf.sta.channel            = 0;
+        conf.sta.bssid_set          = 0;
+        conf.sta.threshold.rssi     = -127;
+        conf.sta.threshold.authmode = minAuth;
+        conf.sta.pmf_cfg.capable    = false;
+        conf.sta.pmf_cfg.required   = false;
+        esp_err_t setErr = esp_wifi_set_config(WIFI_IF_STA, &conf);
+        if (setErr == ESP_ERR_WIFI_STATE) {
+          esp_wifi_disconnect();
+          delay(200);
+          esp_wifi_set_config(WIFI_IF_STA, &conf);
+        }
+      }
+      wl_status_t ret = WiFi.begin();
+      if (ret == WL_CONNECT_FAILED) {
+        esp_wifi_connect();
+      }
+    } else {
+      // Profile 2 (24s fallback): Active 2.4 GHz scan for target SSID -> direct BSSID + channel lock!
+      WiFi.setTxPower(WIFI_POWER_17dBm);
+      int32_t targetCh = 0;
+      uint8_t targetBssid[6] = {0};
+      bool    foundTarget = false;
+      int     n = WiFi.scanNetworks(false, false);
+      int     bestRssi = -1000;
+      for (int i = 0; i < n; ++i) {
+        if (WiFi.SSID(i) == ssidStr && WiFi.RSSI(i) > bestRssi) {
+          bestRssi = WiFi.RSSI(i);
+          targetCh = WiFi.channel(i);
+          const uint8_t* b = WiFi.BSSID(i);
+          if (b) {
+            memcpy(targetBssid, b, 6);
+            foundTarget = true;
+          }
+        }
+      }
+      WiFi.scanDelete();
+      if (foundTarget && targetCh >= 1 && targetCh <= 13) {
+        Serial.printf("[NET] Profile 2 locking onto '%s' ch=%ld rssi=%d dBm\n",
+                      ssidStr, static_cast<long>(targetCh), bestRssi);
+        WiFi.begin(ssidStr, hasPass ? passStr : nullptr, targetCh, targetBssid, true);
+      } else if (hasPass) {
+        WiFi.begin(ssidStr, passStr);
+      } else {
+        WiFi.begin(ssidStr);
+      }
+    }
+
+    // Keep retries steady (12s -> 15s) so ESP32 recovers fast after router/power cycle
+    wifiBackoffMs_ = (wifiBackoffMs_ < 15000UL) ? 12000UL : 15000UL;
   }
 }
 
@@ -234,23 +370,28 @@ bool FirebaseClientManager::publishStatusAndTelemetry(
     return false;
   }
 
-  uint64_t epochMs = currentEpochMs();
   JsonDocument root;
 
+  // Use Firebase server timestamp {".sv":"timestamp"} so lastSeenAt & updatedAt are ALWAYS
+  // exact UTC Unix epoch ms immediately after reboot — even before NTP finishes syncing!
   JsonObject st = root["status"].to<JsonObject>();
   st["online"]                  = true;
-  st["lastSeenAt"]              = epochMs;
+  st["lastSeenAt"][".sv"]       = "timestamp";
   st["bootId"]                  = provisioning_->bootId();
   st["firmwareVersion"]         = Config::FIRMWARE_VERSION;
   st["ipAddress"]               = WiFi.localIP().toString();
   st["wifiRssi"]                = static_cast<int>(ioDiag.wifiRssiDbm);
   st["mode"]                    = (cfg.mode == DeviceMode::OUTDOOR) ? "OUTDOOR" : "INDOOR";
+  st["autoIrrigationEnabled"]   = cfg.autoIrrigationEnabled;
   st["rainSuspensionActive"]    = rain.rainSuspensionLatched;
   st["weatherAdvisoryActive"]   = rain.forecastAdvisoryActive;
   st["weatherUnavailableFault"] = rain.weatherUnavailableFault;
   st["emergencyStop"]           = irrigation.isEmergencyStopped();
   st["faultLockout"]            = irrigation.isFaultLocked();
-  st["activeValve"]             = cropZoneSlug(relays.activeValveZone());
+  const CropZoneId reportedZone = (relays.activeValveZone() != CropZoneId::NONE)
+                                      ? relays.activeValveZone()
+                                      : irrigation.activeZone();
+  st["activeValve"]             = cropZoneSlug(reportedZone);
   st["pumpState"]               = relays.isPumpOn() ? "ON" : "OFF";
   st["irrigationState"]         = irrigationStateString(irrigation.state());
   st["activePumpElapsedSec"]    = irrigation.activePumpElapsedSec(nowMs);
@@ -262,8 +403,8 @@ bool FirebaseClientManager::publishStatusAndTelemetry(
   st["ownershipEpoch"]          = provisioning_->ownershipEpoch();
 
   JsonObject tel = root["telemetry"].to<JsonObject>();
-  tel["updatedAt"]     = epochMs;
-  tel["dhtValid"]      = env.dhtValid;
+  tel["updatedAt"][".sv"] = "timestamp";
+  tel["dhtValid"]         = env.dhtValid;
   if (env.dhtValid) {
     tel["temperatureC"] = serialized(String(env.temperatureC, 1));
     tel["humidityPct"]  = serialized(String(env.humidityRh, 1));
@@ -283,9 +424,10 @@ bool FirebaseClientManager::publishStatusAndTelemetry(
   }
   tel["lightBand"]     = envBandShort(env.lightBand);
 
-  tel["rainRawWet"]       = rain.rawWet;
-  tel["rainWetConfirmed"] = rain.wetConfirmed;
-  tel["rainValid"]        = rain.sensorValid;
+  tel["rainRawWet"]        = rain.rawWet;
+  tel["rainWetConfirmed"]  = rain.wetConfirmed;
+  tel["rainAccidentalWet"] = rain.accidentalWet;
+  tel["rainValid"]         = rain.sensorValid;
 
   tel["reservoirValid"] = reservoir.valid;
   tel["reservoirState"] = reservoirStateString(reservoir.state);
@@ -319,6 +461,12 @@ bool FirebaseClientManager::publishStatusAndTelemetry(
   if (httpRequestJson("PATCH", url, body, resp)) {
     lastSuccessfulSyncMs_ = nowMs;
     ioDiag.firebaseSyncSuccessCnt++;
+    if (!firstTelemetryPublished_) {
+      firstTelemetryPublished_ = true;
+      Serial.printf("[SYNC] Live status & telemetry synced to Firebase (bootId=%s, epoch=%lu)!\n",
+                    provisioning_->bootId(),
+                    static_cast<unsigned long>(provisioning_->ownershipEpoch()));
+    }
     return true;
   }
 
@@ -341,11 +489,11 @@ void FirebaseClientManager::flushPendingEventsAndReports(
   CommandExecutionReport report;
   if (irrigation.popPendingCommandReport(report) && report.hasReport) {
     JsonDocument doc;
-    doc["commandId"]      = report.commandId;
-    doc["state"]          = report.state;
-    doc["reason"]         = report.reason;
-    doc["updatedAt"]      = currentEpochMs();
-    doc["ownershipEpoch"] = provisioning_->ownershipEpoch();
+    doc["commandId"]        = report.commandId;
+    doc["state"]            = report.state;
+    doc["reason"]           = report.reason;
+    doc["updatedAt"][".sv"] = "timestamp";
+    doc["ownershipEpoch"]   = provisioning_->ownershipEpoch();
 
     String body;
     serializeJson(doc, body);
@@ -362,15 +510,16 @@ void FirebaseClientManager::flushPendingEventsAndReports(
     }
 
     JsonDocument evDoc;
-    evDoc["eventId"]        = ev.eventId;
-    evDoc["type"]           = ev.type;
-    evDoc["severity"]       = severityToString(ev.severity);
-    evDoc["title"]          = ev.title;
-    evDoc["message"]        = ev.message;
-    evDoc["crop"]           = strlen(ev.crop) > 0 ? ev.crop : nullptr;
-    evDoc["dedupeKey"]      = ev.dedupeKey;
-    evDoc["createdAt"]      = currentEpochMs();
-    evDoc["ownershipEpoch"] = ev.ownershipEpoch;
+    evDoc["eventId"]          = ev.eventId;
+    evDoc["type"]             = ev.type;
+    evDoc["severity"]         = severityToString(ev.severity);
+    evDoc["title"]            = ev.title;
+    evDoc["message"]          = ev.message;
+    evDoc["crop"]             = strlen(ev.crop) > 0 ? ev.crop : nullptr;
+    evDoc["dedupeKey"]        = ev.dedupeKey;
+    evDoc["createdAt"][".sv"] = "timestamp";
+    // Always use current live ownershipEpoch so events queued during early boot match /meta!
+    evDoc["ownershipEpoch"]   = provisioning_->ownershipEpoch();
     if (!isnan(ev.primaryValue)) {
       evDoc["value"] = serialized(String(ev.primaryValue, 1));
     }
@@ -387,6 +536,8 @@ void FirebaseClientManager::flushPendingEventsAndReports(
       ioDiag.firebaseSyncSuccessCnt++;
     } else {
       ioDiag.firebaseSyncFailCnt++;
+      // Drop unaccepted/duplicate event so it never blocks the queue or loops 401 forever
+      events.popOldestPending();
       break;
     }
   }
@@ -453,7 +604,23 @@ void FirebaseClientManager::syncMetaNode(
   }
 
   JsonDocument doc;
-  if (deserializeJson(doc, resp) != DeserializationError::Ok || doc.isNull()) {
+  const bool metaMissing = (deserializeJson(doc, resp) != DeserializationError::Ok || doc.isNull());
+  if (metaMissing) {
+    if (provisioning_->ownershipState() == OwnershipState::OWNED) {
+      JsonDocument patchDoc;
+      patchDoc["deviceId"]       = provisioning_->deviceId();
+      patchDoc["ownershipState"] = "OWNED";
+      patchDoc["ownershipEpoch"] = provisioning_->ownershipEpoch();
+      patchDoc["displayName"]    = provisioning_->displayName();
+      patchDoc["resetRequired"]  = false;
+      patchDoc["claimedAt"]      = currentEpochMs();
+      String patchBody;
+      serializeJson(patchDoc, patchBody);
+      String patchResp;
+      if (httpRequestJson("PATCH", url, patchBody, patchResp)) {
+        lastSuccessfulSyncMs_ = nowMs;
+      }
+    }
     return;
   }
 
@@ -463,8 +630,28 @@ void FirebaseClientManager::syncMetaNode(
   const char* cloudDispName = doc["displayName"] | "";
 
   if (!doc["location"]["lat"].isNull() && !doc["location"]["lon"].isNull()) {
-    deviceLat_ = doc["location"]["lat"].as<float>();
-    deviceLon_ = doc["location"]["lon"].as<float>();
+    const float newLat = doc["location"]["lat"].as<float>();
+    const float newLon = doc["location"]["lon"].as<float>();
+    const char* cloudLocName = doc["location"]["name"] | "";
+    const bool validCoords = (fabsf(newLat) > 0.0001f || fabsf(newLon) > 0.0001f);
+    if (validCoords) {
+      const bool coordsChanged = !ownerLocationLoaded_ ||
+                                 fabsf(newLat - deviceLat_) > 0.0005f ||
+                                 fabsf(newLon - deviceLon_) > 0.0005f;
+      deviceLat_           = newLat;
+      deviceLon_           = newLon;
+      ownerLocationLoaded_ = true;
+      if (strlen(cloudLocName) > 0) {
+        snprintf(deviceLocationName_, sizeof(deviceLocationName_), "%s", cloudLocName);
+      }
+      if (coordsChanged) {
+        // Force immediate weather refresh for the Owner's updated mobile GPS location
+        lastDirectWeatherAtMs_ = 0;
+        Serial.printf("[WEATHER] Adopted Owner GPS location: '%s' (lat=%.4f, lon=%.4f)\n",
+                      deviceLocationName_[0] ? deviceLocationName_ : "Box GPS",
+                      deviceLat_, deviceLon_);
+      }
+    }
   }
 
   // If Owner renamed the plant box from Android Settings while OWNED, update NVS displayName
@@ -473,15 +660,38 @@ void FirebaseClientManager::syncMetaNode(
     provisioning_->saveDisplayName(cloudDispName);
   }
 
-  // If the Owner just paired the ESP32 via the local Setup Hotspot, local epoch is newer than cloud:
-  // push the new OWNED state, epoch, and custom displayName up to Firebase /meta.
-  if (!resetReq &&
-      strcmp(stateStr, "RESET_PENDING") != 0 &&
-      provisioning_->ownershipState() == OwnershipState::OWNED &&
-      provisioning_->ownershipEpoch() > epoch) {
+  // IMPORTANT (Firebase RTDB Rules Compatibility):
+  // Once /meta/ownershipState in Firebase is "OWNED", database.rules.json ONLY permits authenticated
+  // Android user writes (`auth != null`) to /meta AND requires /events to match /meta/ownershipEpoch!
+  // Therefore, when cloud /meta is "OWNED" (and !resetReq), ALWAYS adopt cloud `epoch` locally
+  // without attempting an unauthenticated PATCH on /meta.json (which would return 401 Permission denied).
+  if (!resetReq && strcmp(stateStr, "OWNED") == 0) {
+    const uint32_t adoptEpoch = (epoch > 0) ? epoch : provisioning_->ownershipEpoch();
+    provisioning_->handleCloudMetaSnapshot(
+        "OWNED", adoptEpoch, false, ioConfig, relays, irrigation, buzzer, events, lcd);
+    lastSuccessfulSyncMs_ = nowMs;
+    return;
+  }
+
+  // If the Owner just paired the ESP32 via the local Setup Hotspot (within 60s grace window)
+  // while cloud /meta is still UNCLAIMED or RESET_PENDING (where unauthenticated /meta write IS allowed),
+  // push the new OWNED state, epoch, and custom displayName up to Firebase /meta!
+  const uint32_t pairedAt = provisioning_->lastPairedAtMs();
+  const bool justPairedLocally =
+      (pairedAt > 0) && (uint32_t(nowMs - pairedAt) < 60000UL);
+
+  if (provisioning_->ownershipState() == OwnershipState::OWNED &&
+      justPairedLocally &&
+      (strcmp(stateStr, "UNCLAIMED") == 0 || strcmp(stateStr, "RESET_PENDING") == 0)) {
+    const uint32_t targetEpoch =
+        (epoch >= provisioning_->ownershipEpoch()) ? (epoch + 1UL) : provisioning_->ownershipEpoch();
+    if (targetEpoch != provisioning_->ownershipEpoch()) {
+      provisioning_->handleCloudMetaSnapshot(
+          "OWNED", targetEpoch, false, ioConfig, relays, irrigation, buzzer, events, lcd);
+    }
     JsonDocument patchDoc;
     patchDoc["ownershipState"] = "OWNED";
-    patchDoc["ownershipEpoch"] = provisioning_->ownershipEpoch();
+    patchDoc["ownershipEpoch"] = targetEpoch;
     patchDoc["displayName"]    = provisioning_->displayName();
     patchDoc["resetRequired"]  = false;
     patchDoc["claimedAt"]      = currentEpochMs();
@@ -499,6 +709,9 @@ void FirebaseClientManager::syncMetaNode(
 }
 
 void FirebaseClientManager::syncWeatherNode(uint32_t nowMs, RainWeatherManager& rainWeather) {
+  // Weather coordinates come strictly from the Owner's mobile GPS saved in /meta/location
+  // (never from ESP32 Wi-Fi IP geolocation).
+  // 1. Check RTDB /weather cache (written by Owner's app, ESP32, or Cloud Function)
   String url = buildRtdbUrl("/devices/" + String(provisioning_->deviceId()) + "/weather.json");
   String resp;
   bool needDirectFetch = false;
@@ -511,17 +724,41 @@ void FirebaseClientManager::syncWeatherNode(uint32_t nowMs, RainWeatherManager& 
       uint64_t    fetchedAt  = doc["fetchedAt"] | 0ULL;
       uint64_t    validUntil = doc["validUntil"] | 0ULL;
       const char* winLabel   = doc["windowLabel"] | "NEXT 3 H";
+      const char* locName    = doc["locationName"] | "";
+      const float wLat       = doc["lat"] | 0.0f;
+      const float wLon       = doc["lon"] | 0.0f;
+
+      if (!ownerLocationLoaded_ && (fabsf(wLat) > 0.0001f || fabsf(wLon) > 0.0001f)) {
+        deviceLat_           = wLat;
+        deviceLon_           = wLon;
+        ownerLocationLoaded_ = true;
+      }
+      if (strlen(locName) > 0 && deviceLocationName_[0] == '\0') {
+        snprintf(deviceLocationName_, sizeof(deviceLocationName_), "%s", locName);
+      }
 
       uint64_t nowEpoch = currentEpochMs();
-      if (validUntil > 0 && nowEpoch > 1700000000000ULL && nowEpoch > validUntil) {
+      if (validUntil == 0 ||
+          (nowEpoch > 1700000000000ULL && validUntil > 1700000000000ULL && nowEpoch > validUntil)) {
         valid = false;
         needDirectFetch = true;
       }
+
       if (!valid || probPct < 0) {
         needDirectFetch = true;
       } else {
-        rainWeather.updateWeatherSnapshot(valid, probPct, fetchedAt, validUntil, nowMs, winLabel);
-        return;
+        // Only refresh uptime timestamp when RTDB actually contains a NEWER snapshot (avoid masking stale data!)
+        if (fetchedAt != lastCloudWeatherFetched_ || !rainWeather.weather().valid) {
+          lastCloudWeatherFetched_ = fetchedAt;
+          rainWeather.updateWeatherSnapshot(
+              valid, probPct, fetchedAt, validUntil, nowMs, winLabel,
+              strlen(locName) > 0 ? locName : deviceLocationName_);
+        }
+        // Still schedule periodic 15-min direct Open-Meteo refresh using Owner's exact coordinates
+        if (lastDirectWeatherAtMs_ == 0 ||
+            uint32_t(nowMs - lastDirectWeatherAtMs_) >= DIRECT_WEATHER_FETCH_PERIOD_MS) {
+          needDirectFetch = true;
+        }
       }
     } else {
       needDirectFetch = true;
@@ -530,11 +767,16 @@ void FirebaseClientManager::syncWeatherNode(uint32_t nowMs, RainWeatherManager& 
     needDirectFetch = true;
   }
 
-  // On Free Spark Plan (no scheduled Cloud Function), ESP32 fetches Open-Meteo directly every 15m
-  if (needDirectFetch &&
-      (lastDirectWeatherAtMs_ == 0 || (nowMs - lastDirectWeatherAtMs_ >= DIRECT_WEATHER_FETCH_PERIOD_MS))) {
-    lastDirectWeatherAtMs_ = nowMs;
-    fetchOpenMeteoDirectAndCache(nowMs, rainWeather);
+  // 2. Fetch live 3-hour rain probability directly from Open-Meteo using Owner's saved GPS coordinates
+  const bool retryReady = (lastDirectWeatherRetryMs_ == 0) ||
+                          (uint32_t(nowMs - lastDirectWeatherRetryMs_) >= DIRECT_WEATHER_RETRY_MS);
+  const bool periodicDue = (lastDirectWeatherAtMs_ == 0) ||
+                           (uint32_t(nowMs - lastDirectWeatherAtMs_) >= DIRECT_WEATHER_FETCH_PERIOD_MS);
+  if (needDirectFetch && retryReady && (periodicDue || !rainWeather.weather().valid)) {
+    lastDirectWeatherRetryMs_ = nowMs;
+    if (fetchOpenMeteoDirectAndCache(nowMs, rainWeather)) {
+      lastDirectWeatherAtMs_ = nowMs;
+    }
   }
 }
 
@@ -546,7 +788,7 @@ bool FirebaseClientManager::fetchOpenMeteoDirectAndCache(uint32_t nowMs,
 
   String omResp;
   if (!httpRequestJson("GET", omUrl, "", omResp)) {
-    Serial.println(F("[WEATHER] Direct Open-Meteo fetch failed."));
+    Serial.println(F("[WEATHER] Direct Open-Meteo fetch failed (will retry in 30s)."));
     return false;
   }
 
@@ -570,17 +812,23 @@ bool FirebaseClientManager::fetchOpenMeteoDirectAndCache(uint32_t nowMs,
 
   uint64_t nowEpoch   = currentEpochMs();
   uint64_t validUntil = nowEpoch + Config::DEFAULT_WEATHER_MAX_AGE_MS;
+  const char* locStr  = (deviceLocationName_[0] != '\0') ? deviceLocationName_ : "Manila, PH";
 
-  rainWeather.updateWeatherSnapshot(true, maxProb, nowEpoch, validUntil, nowMs, "NEXT 3 H");
-  Serial.printf("[WEATHER] Direct Open-Meteo 3h max rainProbabilityPct=%d%%\n", maxProb);
+  lastCloudWeatherFetched_ = nowEpoch;
+  rainWeather.updateWeatherSnapshot(true, maxProb, nowEpoch, validUntil, nowMs, "NEXT 3 H", locStr);
+  Serial.printf("[WEATHER] Open-Meteo (%s, %.4f, %.4f): 3h max rainProbabilityPct=%d%%\n",
+                locStr, deviceLat_, deviceLon_, maxProb);
 
-  // Cache snapshot back to RTDB /devices/{deviceId}/weather so Android app sees it too
+  // Cache snapshot + Wi-Fi location back to RTDB /devices/{deviceId}/weather so Android Dashboard shows it
   JsonDocument cacheDoc;
   cacheDoc["provider"]           = "open-meteo-esp32";
   cacheDoc["valid"]              = true;
   cacheDoc["rainProbabilityPct"] = maxProb;
   cacheDoc["windowHours"]        = 3;
   cacheDoc["windowLabel"]        = "NEXT 3 H";
+  cacheDoc["locationName"]       = locStr;
+  cacheDoc["lat"]                = serialized(String(deviceLat_, 4));
+  cacheDoc["lon"]                = serialized(String(deviceLon_, 4));
   cacheDoc["fetchedAt"]          = nowEpoch;
   cacheDoc["validUntil"]         = validUntil;
 
@@ -608,6 +856,7 @@ void FirebaseClientManager::syncConfigNode(RuntimeConfig& ioConfig,
 
   const char* modeStr = doc["mode"] | "OUTDOOR";
   ioConfig.mode = (strcmp(modeStr, "INDOOR") == 0) ? DeviceMode::INDOOR : DeviceMode::OUTDOOR;
+  ioConfig.autoIrrigationEnabled = doc["autoIrrigationEnabled"] | ioConfig.autoIrrigationEnabled;
   ioConfig.rainThresholdPct     = doc["rainThresholdPct"] | ioConfig.rainThresholdPct;
   ioConfig.wetConfirmMs         = doc["wetConfirmMs"] | ioConfig.wetConfirmMs;
   ioConfig.dryRecoverMs         = doc["dryRecoverMs"] | ioConfig.dryRecoverMs;
@@ -622,9 +871,13 @@ void FirebaseClientManager::syncConfigNode(RuntimeConfig& ioConfig,
   ioConfig.buzzerMuted          = doc["buzzerMuted"] | ioConfig.buzzerMuted;
   buzzer.setMuted(ioConfig.buzzerMuted);
 
-  if (!doc["physicalLoadsEnabled"].isNull()) {
-    ioConfig.physicalLoadsEnabled = doc["physicalLoadsEnabled"].as<bool>();
-    relays.setPhysicalLoadsEnabled(ioConfig.physicalLoadsEnabled);
+  // Always keep physical 4-channel relay outputs ENABLED so an older cloud /config
+  // with "physicalLoadsEnabled": false never silently turns off valves & pump.
+  ioConfig.physicalLoadsEnabled = true;
+  relays.setPhysicalLoadsEnabled(true);
+  if (!doc["physicalLoadsEnabled"].isNull() && !doc["physicalLoadsEnabled"].as<bool>()) {
+    String fixResp;
+    httpRequestJson("PATCH", url, "{\"physicalLoadsEnabled\":true}", fixResp);
   }
 
   JsonObject crops = doc["crops"];
@@ -754,13 +1007,22 @@ bool FirebaseClientManager::httpRequestJson(const char* method,
     return false;
   }
 
-  WiFiClientSecure client;
-  client.setInsecure();
-  client.setTimeout(Config::HTTP_TIMEOUT_MS / 1000 + 1);
-
-  HTTPClient http;
+  const bool isHttps = url.startsWith("https://");
+  WiFiClient       plainClient;
+  WiFiClientSecure secureClient;
+  HTTPClient       http;
   http.setTimeout(Config::HTTP_TIMEOUT_MS);
-  if (!http.begin(client, url)) {
+
+  bool began = false;
+  if (isHttps) {
+    secureClient.setInsecure();
+    secureClient.setTimeout(Config::HTTP_TIMEOUT_MS / 1000 + 1);
+    began = http.begin(secureClient, url);
+  } else {
+    plainClient.setTimeout(Config::HTTP_TIMEOUT_MS / 1000 + 1);
+    began = http.begin(plainClient, url);
+  }
+  if (!began) {
     return false;
   }
 
@@ -782,9 +1044,19 @@ bool FirebaseClientManager::httpRequestJson(const char* method,
     return true;
   }
 
-  if (statusCode == 401 || statusCode == 403) {
-    idTokenValid_ = false;
+  if (isHttps && (statusCode == 401 || statusCode == 403)) {
+    idTokenValid_        = false;
+    idToken_             = "";
+    lastAuthAttemptAtMs_ = 0;
   }
+  String errSnippet = (statusCode > 0) ? http.getString() : String();
+  if (errSnippet.length() > 100) {
+    errSnippet = errSnippet.substring(0, 100);
+  }
+  errSnippet.replace("\n", " ");
+  errSnippet.replace("\r", " ");
+  Serial.printf("[HTTP] %s failed (code=%d) for %s %s\n",
+                method, statusCode, url.c_str(), errSnippet.c_str());
   http.end();
   return false;
 }

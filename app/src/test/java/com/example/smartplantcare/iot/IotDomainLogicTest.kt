@@ -42,6 +42,12 @@ class IotDomainLogicTest {
     }
 
     @Test
+    fun sanitizeWifiInputs_preservesSpacesInPasswordAndStripsQuotesAndNewlines() {
+        assertEquals("PLDT_Home_2.4G", IotDomainLogic.sanitizeWifiSsid(" \"PLDT_Home_2.4G\"\n"))
+        assertEquals("My Pass 123!", IotDomainLogic.sanitizeWifiPassword("My Pass 123!\r\n"))
+    }
+
+    @Test
     fun clampPulseDurationMs_enforcesHardSafetyBounds() {
         assertEquals(1000L, IotDomainLogic.clampPulseDurationMs(200L))
         assertEquals(4000L, IotDomainLogic.clampPulseDurationMs(4000L))
@@ -75,33 +81,156 @@ class IotDomainLogicTest {
         // Blocked for Viewer
         assertNotNull(IotDomainLogic.manualWaterLockReason(DeviceRole.VIEWER, safeSnapshot, "tomato"))
 
-        // Blocked when Reservoir is CRITICAL or UNKNOWN
+        // Manual button bypasses automatic reservoir/rain/zone logic (direct control from app)
         val critRes = safeSnapshot.copy(
             telemetry = safeSnapshot.telemetry.copy(reservoirState = "CRITICAL", reservoirPct = 8f)
         )
-        assertNotNull(IotDomainLogic.manualWaterLockReason(DeviceRole.OWNER, critRes, "tomato"))
+        assertNull(IotDomainLogic.manualWaterLockReason(DeviceRole.OWNER, critRes, "tomato"))
 
         val unknownRes = safeSnapshot.copy(
             telemetry = safeSnapshot.telemetry.copy(reservoirValid = false, reservoirState = "SENSOR_ERROR")
         )
-        assertNotNull(IotDomainLogic.manualWaterLockReason(DeviceRole.OWNER, unknownRes, "tomato"))
+        assertNull(IotDomainLogic.manualWaterLockReason(DeviceRole.OWNER, unknownRes, "tomato"))
 
-        // Blocked when Outdoor Rain Suspension is latched
         val rainPaused = safeSnapshot.copy(
             status = safeSnapshot.status.copy(mode = "OUTDOOR", rainSuspensionActive = true)
         )
-        assertNotNull(IotDomainLogic.manualWaterLockReason(DeviceRole.OWNER, rainPaused, "eggplant"))
+        assertNull(IotDomainLogic.manualWaterLockReason(DeviceRole.OWNER, rainPaused, "eggplant"))
 
-        // Allowed in Indoor Mode even if rainSuspensionActive flag was stale
-        val indoorMode = rainPaused.copy(
-            status = rainPaused.status.copy(mode = "INDOOR")
+        // Still blocked during Emergency Stop or Fault Lockout
+        val estopSnapshot = safeSnapshot.copy(
+            status = safeSnapshot.status.copy(emergencyStop = true)
         )
-        assertNull(IotDomainLogic.manualWaterLockReason(DeviceRole.OWNER, indoorMode, "eggplant"))
+        assertNotNull(IotDomainLogic.manualWaterLockReason(DeviceRole.OWNER, estopSnapshot, "tomato"))
 
-        // Blocked when another valve is currently open (1 valve at a time rule)
+        // Still blocked when another valve is currently open (1 valve at a time rule)
         val chiliWatering = safeSnapshot.copy(
             status = safeSnapshot.status.copy(irrigationState = "WATERING", activeValve = "chili")
         )
         assertNotNull(IotDomainLogic.manualWaterLockReason(DeviceRole.OWNER, chiliWatering, "tomato"))
+    }
+
+    @Test
+    fun isDeviceOnlineFresh_handlesServerEpochAndPreNtpBootUptime() {
+        val now = 1_795_100_000_000L
+        val freshRealEpoch = DeviceStatus(online = true, lastSeenAt = now - 15_000L)
+        assertEquals(true, IotDomainLogic.isDeviceOnlineFresh(freshRealEpoch, now, now))
+
+        val staleRealEpoch = DeviceStatus(online = true, lastSeenAt = now - 60_000L)
+        assertEquals(false, IotDomainLogic.isDeviceOnlineFresh(staleRealEpoch, now, now))
+
+        val offlineFlag = DeviceStatus(online = false, lastSeenAt = now - 5_000L)
+        assertEquals(false, IotDomainLogic.isDeviceOnlineFresh(offlineFlag, now, now))
+
+        // ESP32 rebooted and published millis()=15000 before NTP synced: must NOT falsely report Offline!
+        val preNtpReboot = DeviceStatus(online = true, lastSeenAt = 15_000L)
+        assertEquals(true, IotDomainLogic.isDeviceOnlineFresh(preNtpReboot, now, now - 5_000L))
+    }
+
+    @Test
+    fun canRequestDeviceLocationPermission_strictlyOwnerOnly() {
+        assertEquals(true, IotDomainLogic.canRequestDeviceLocationPermission(DeviceRole.OWNER))
+        assertEquals(false, IotDomainLogic.canRequestDeviceLocationPermission(DeviceRole.OPERATOR))
+        assertEquals(false, IotDomainLogic.canRequestDeviceLocationPermission(DeviceRole.VIEWER))
+    }
+
+    @Test
+    fun shouldDispatchDeviceEventNotification_preventsSensorFaultLoopAndStaleReplay() {
+        val now = 1_795_100_000_000L
+        val freshSoilFault = DeviceEvent(
+            eventId = "spc-unit-0001_boot2_1",
+            type = "SOIL_SENSOR_FAULT",
+            severity = "warning",
+            title = "Soil Sensor Fault",
+            message = "Tomato sensor disconnected",
+            crop = "tomato",
+            createdAt = now - 5_000L
+        )
+
+        // First fresh fault passes
+        assertEquals(
+            true,
+            IotDomainLogic.shouldDispatchDeviceEventNotification(
+                event = freshSoilFault,
+                nowMs = now,
+                isAlreadySeen = false,
+                lastNotifiedSameTypeMs = null
+            )
+        )
+
+        // Same fault within 60-min sensor fault cooldown is suppressed even with a brand-new eventId!
+        assertEquals(
+            false,
+            IotDomainLogic.shouldDispatchDeviceEventNotification(
+                event = freshSoilFault.copy(eventId = "spc-unit-0001_boot3_1"),
+                nowMs = now,
+                isAlreadySeen = false,
+                lastNotifiedSameTypeMs = now - 10 * 60_000L
+            )
+        )
+
+        // Allowed again after 60-min cooldown expires
+        assertEquals(
+            true,
+            IotDomainLogic.shouldDispatchDeviceEventNotification(
+                event = freshSoilFault.copy(eventId = "spc-unit-0001_boot4_1"),
+                nowMs = now,
+                isAlreadySeen = false,
+                lastNotifiedSameTypeMs = now - 61 * 60_000L
+            )
+        )
+
+        // Historical event older than 2 minutes is NEVER replayed on sync
+        assertEquals(
+            false,
+            IotDomainLogic.shouldDispatchDeviceEventNotification(
+                event = freshSoilFault.copy(createdAt = now - 180_000L),
+                nowMs = now,
+                isAlreadySeen = false,
+                lastNotifiedSameTypeMs = null
+            )
+        )
+
+        // Stable notification ID matches across different eventIds for the same (device, type, crop)
+        assertEquals(
+            IotDomainLogic.stableNotificationId("spc-unit-0001", "SOIL_SENSOR_FAULT", "tomato"),
+            IotDomainLogic.stableNotificationId("spc-unit-0001", "SOIL_SENSOR_FAULT", "tomato")
+        )
+    }
+
+    @Test
+    fun shouldDispatchDeviceEventNotification_allowsAccidentalRainSensorWetNotification() {
+        val now = 1_795_100_000_000L
+        val accidentalWetEvent = DeviceEvent(
+            eventId = "spc-unit-0001_boot2_9",
+            type = "RAIN_SENSOR_WET",
+            severity = "info",
+            title = "Rain Sensor Wet (Accidental)",
+            message = "Rain sensor wet, but weather (20%) did not meet 60% threshold. Accidentally wet — watering continues.",
+            crop = null,
+            createdAt = now - 3_000L
+        )
+
+        // Accidental wet event MUST dispatch a notification (never silently dropped)
+        assertEquals(
+            true,
+            IotDomainLogic.shouldDispatchDeviceEventNotification(
+                event = accidentalWetEvent,
+                nowMs = now,
+                isAlreadySeen = false,
+                lastNotifiedSameTypeMs = null
+            )
+        )
+
+        // Suppressed during 1-minute cooldown so it never spams
+        assertEquals(
+            false,
+            IotDomainLogic.shouldDispatchDeviceEventNotification(
+                event = accidentalWetEvent.copy(eventId = "spc-unit-0001_boot2_10"),
+                nowMs = now,
+                isAlreadySeen = false,
+                lastNotifiedSameTypeMs = now - 20_000L
+            )
+        )
     }
 }

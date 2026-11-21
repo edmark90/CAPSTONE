@@ -100,7 +100,10 @@ fun DiseaseResultScreen(
                 Button(
                     onClick = onCaptureAnother,
                     shape = RoundedCornerShape(16.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = HomeColors.ForestPrimary),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = HomeColors.ForestPrimary,
+                        contentColor = Color.White
+                    ),
                     modifier = Modifier
                         .fillMaxWidth()
                         .navigationBarsPadding()

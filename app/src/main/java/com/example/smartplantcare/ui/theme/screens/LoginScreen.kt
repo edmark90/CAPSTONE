@@ -349,7 +349,10 @@ fun LoginScreen(
                                 spotColor   = DarkGreen.copy(alpha = 0.4f)
                             ),
                         shape     = RoundedCornerShape(28.dp),
-                        colors    = ButtonDefaults.buttonColors(containerColor = DarkGreen),
+                        colors    = ButtonDefaults.buttonColors(
+                            containerColor = DarkGreen,
+                            contentColor = Color.White
+                        ),
                         elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp)
                     ) {
                         AnimatedContent(

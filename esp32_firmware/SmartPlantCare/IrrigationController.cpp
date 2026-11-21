@@ -57,18 +57,20 @@ void IrrigationController::serviceSafetyInterlocks(uint32_t nowMs,
 
   if (!isActivelyWatering) return;
 
-  // 4. Reservoir safety check during active watering
-  if (reservoir_ && !reservoir_->isPumpAllowed()) {
-    abortActiveCycle(nowMs, "IRRIGATION_ABORTED", "Reservoir critical, empty, or sensor fault");
-    return;
-  }
+  // 4. Reservoir & Outdoor Rain safety checks apply to AUTOMATIC irrigation.
+  // Manual app button runs directly without automatic sensor/weather logic blocks!
+  if (!activeRunIsManual_) {
+    if (reservoir_ && !reservoir_->isPumpAllowed()) {
+      abortActiveCycle(nowMs, "IRRIGATION_ABORTED", "Reservoir critical, empty, or sensor fault");
+      return;
+    }
 
-  // 5. Outdoor confirmed rain suspension check during active watering
-  if (cfg.mode == DeviceMode::OUTDOOR && rainWeather_ &&
-      rainWeather_->rainStatus().rainSuspensionLatched) {
-    abortActiveCycle(nowMs, "IRRIGATION_ABORTED", "Confirmed rain suspension triggered");
-    state_ = IrrigationState::SUSPENDED_RAIN;
-    return;
+    if (cfg.mode == DeviceMode::OUTDOOR && rainWeather_ &&
+        rainWeather_->rainStatus().rainSuspensionLatched) {
+      abortActiveCycle(nowMs, "IRRIGATION_ABORTED", "Confirmed rain suspension triggered");
+      state_ = IrrigationState::SUSPENDED_RAIN;
+      return;
+    }
   }
 
   // 6. Hard maximum pump runtime guard
@@ -140,6 +142,11 @@ void IrrigationController::advanceStateMachine(uint32_t nowMs,
         break;
       }
 
+      // If user switched dashboard to Manual Irrigation mode, skip unattended automatic starts
+      if (!cfg.autoIrrigationEnabled) {
+        break;
+      }
+
       char rejectReason[64] = {0};
       if (!isGlobalSafetyOk(cfg, ownershipState, false, rejectReason, sizeof(rejectReason))) {
         break;
@@ -202,6 +209,11 @@ void IrrigationController::advanceStateMachine(uint32_t nowMs,
       state_            = IrrigationState::PUMP_WATERING;
       stateEnteredAtMs_ = nowMs;
 
+      if (buzzer_) {
+        buzzer_->clearEventLatch(BuzzerEventId::IRRIGATION_START);
+        buzzer_->triggerEventTransition(BuzzerEventId::IRRIGATION_START);
+      }
+
       if (activeRunIsManual_ && activeCommandId_[0] != '\0') {
         queueCommandReport(activeCommandId_, "RUNNING", "Watering in progress");
       }
@@ -254,6 +266,11 @@ void IrrigationController::advanceStateMachine(uint32_t nowMs,
     case IrrigationState::CLOSING_VALVE: {
       // STEP 5: Valve closed -> record completion & enter soak-settle period
       soil_->recordZoneWatered(activeZone_, nowMs);
+
+      if (buzzer_) {
+        buzzer_->clearEventLatch(BuzzerEventId::IRRIGATION_DONE);
+        buzzer_->triggerEventTransition(BuzzerEventId::IRRIGATION_DONE);
+      }
 
       if (activeRunIsManual_ && activeCommandId_[0] != '\0') {
         queueCommandReport(activeCommandId_, "DONE", "Manual watering pulse completed");
@@ -311,10 +328,10 @@ void IrrigationController::handleCommand(const CommandRequest& cmd,
   }
   recordCommandProcessed(cmd.commandId);
 
-  // Verify ownership epoch matches
-  if (ownershipState != OwnershipState::OWNED ||
-      cmd.ownershipEpoch != currentOwnershipEpoch) {
-    queueCommandReport(cmd.commandId, "REJECTED", "Ownership epoch mismatch or device unclaimed");
+  // Verify device is claimed/OWNED (do not reject valid owner/operator commands over NVS vs /meta epoch drift)
+  (void)currentOwnershipEpoch;
+  if (ownershipState != OwnershipState::OWNED) {
+    queueCommandReport(cmd.commandId, "REJECTED", "Device is not claimed by an active owner");
     return;
   }
 
@@ -324,6 +341,10 @@ void IrrigationController::handleCommand(const CommandRequest& cmd,
         state_ == IrrigationState::PUMP_WATERING ||
         state_ == IrrigationState::QUEUED) {
       abortActiveCycle(nowMs, "IRRIGATION_ABORTED", "Stopped by user command");
+      if (buzzer_) {
+        buzzer_->clearEventLatch(BuzzerEventId::IRRIGATION_DONE);
+        buzzer_->triggerEventTransition(BuzzerEventId::IRRIGATION_DONE);
+      }
     } else if (relays_) {
       relays_->emergencyAllOff();
     }
@@ -367,9 +388,10 @@ void IrrigationController::handleCommand(const CommandRequest& cmd,
     return;
   }
 
-  // Reject if another zone is currently running
+  // Reject only if another watering cycle is actively running (manual button still works even if auto is in SUSPENDED_RAIN!)
   if (state_ != IrrigationState::IDLE_MONITORING &&
-      state_ != IrrigationState::SOAK_SETTLE) {
+      state_ != IrrigationState::SOAK_SETTLE &&
+      state_ != IrrigationState::SUSPENDED_RAIN) {
     queueCommandReport(cmd.commandId, "REJECTED", "BUSY: Another irrigation cycle is active");
     if (events_) {
       events_->enqueueEvent("MANUAL_COMMAND_REJECTED",
@@ -510,6 +532,10 @@ bool IrrigationController::isGlobalSafetyOk(const RuntimeConfig& cfg,
     snprintf(outRejectReason, reasonLen, "Emergency stop or fault lockout is active");
     return false;
   }
+  // Manual button commands from the app bypass automatic reservoir, rain, and weather gates!
+  if (isManualRequest) {
+    return true;
+  }
   if (!reservoir_ || !reservoir_->isPumpAllowed()) {
     snprintf(outRejectReason, reasonLen, "Reservoir level critical, empty, or sensor invalid");
     return false;
@@ -519,7 +545,7 @@ bool IrrigationController::isGlobalSafetyOk(const RuntimeConfig& cfg,
       snprintf(outRejectReason, reasonLen, "Rain suspension latch is active");
       return false;
     }
-    if (!isManualRequest && !rainWeather_->isAutoWateringAllowedByWeather(cfg)) {
+    if (!rainWeather_->isAutoWateringAllowedByWeather(cfg)) {
       snprintf(outRejectReason, reasonLen, "Outdoor weather forecast unavailable or stale");
       return false;
     }
@@ -538,7 +564,11 @@ bool IrrigationController::isZoneEligibleForAuto(CropZoneId zone,
 
   if (!zcfg.enabled) return false;
   if (!zst.valid || !isfinite(zst.moisturePct)) return false;
-  if (!zst.needsWater || zst.moisturePct > zcfg.startThresholdPct) return false;
+  // Hysteresis rule:
+  // - SoilMoistureManager latches needsWater=true when moisturePct <= startThresholdPct
+  // - SoilMoistureManager clears needsWater=false when moisturePct >= stopThresholdPct
+  // Keep pulsing across soak/cooldown cycles until moisture reaches stopThresholdPct!
+  if (!zst.needsWater || zst.moisturePct >= zcfg.stopThresholdPct) return false;
 
   // Enforce per-zone cooldown between watering pulses
   if (zst.lastWateredAtMs != 0 &&

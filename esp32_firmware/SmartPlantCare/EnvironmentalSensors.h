@@ -36,14 +36,18 @@ class EnvironmentalSensors {
   DHT                dht_;
   EnvironmentReading reading_;
 
-  uint32_t tempAbnormStartMs_  = 0;
-  EnvBand  pendingTempBand_    = EnvBand::NORMAL;
-  bool     dhtFaultNotified_   = false;
+  uint32_t tempAbnormStartMs_     = 0;
+  EnvBand  pendingTempBand_       = EnvBand::NORMAL;
+  bool     dhtFaultNotified_      = false;
+  uint8_t  dhtValidStreak_        = 0;
+  uint32_t lastDhtFaultEventMs_   = 0;
 
-  uint32_t humAbnormStartMs_   = 0;
-  EnvBand  pendingHumBand_     = EnvBand::NORMAL;
+  uint32_t humAbnormStartMs_      = 0;
+  EnvBand  pendingHumBand_        = EnvBand::NORMAL;
 
-  uint32_t lightAbnormStartMs_ = 0;
-  EnvBand  pendingLightBand_   = EnvBand::NORMAL;
-  bool     lightFaultNotified_ = false;
+  uint32_t lightAbnormStartMs_    = 0;
+  EnvBand  pendingLightBand_      = EnvBand::NORMAL;
+  bool     lightFaultNotified_    = false;
+  uint8_t  lightValidStreak_      = 0;
+  uint32_t lastLightFaultEventMs_ = 0;
 };

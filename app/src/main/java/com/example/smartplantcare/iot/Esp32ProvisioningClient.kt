@@ -285,6 +285,13 @@ class Esp32ProvisioningClient(private val appContext: Context) {
                             if (cont.isActive) cont.resume(network)
                         }
 
+                        override fun onLost(network: Network) {
+                            Log.w(TAG, "ESP32 SoftAP network temporarily lost: $ssid")
+                            if (boundNetwork == network) {
+                                boundNetwork = null
+                            }
+                        }
+
                         override fun onUnavailable() {
                             Log.w(TAG, "User cancelled or ESP32 SoftAP unavailable: $ssid")
                             if (cont.isActive) cont.resume(null)
@@ -394,7 +401,9 @@ class Esp32ProvisioningClient(private val appContext: Context) {
 
     /**
      * Sends the Owner's selected 2.4 GHz Wi-Fi SSID, password, physical Claim Code, and
-     * custom Plant Box Name to the ESP32 (`POST http://192.168.4.1/api/provision`).
+     * custom Plant Box Name to the ESP32 (`POST http://192.168.4.1/api/provision`), then
+     * POLLS `GET http://192.168.4.1/api/provision-status` until the ESP32 confirms it ACTUALLY
+     * connected to the router (`status == "CONNECTED"`) or rejects a wrong password (`status == "FAILED"`).
      */
     suspend fun sendProvisioningPayload(
         wifiSsid: String,
@@ -402,12 +411,15 @@ class Esp32ProvisioningClient(private val appContext: Context) {
         claimCode: String,
         displayName: String,
         ownerUid: String,
-        nextOwnershipEpoch: Long
+        nextOwnershipEpoch: Long,
+        onStatusUpdate: (String) -> Unit = {}
     ): ProvisionResult = withContext(Dispatchers.IO) {
         runCatching {
+            val cleanSsid = IotDomainLogic.sanitizeWifiSsid(wifiSsid)
+            val cleanPassword = IotDomainLogic.sanitizeWifiPassword(wifiPassword)
             val payload = JSONObject().apply {
-                put("ssid", wifiSsid.trim())
-                put("password", wifiPassword)
+                put("ssid", cleanSsid)
+                put("password", cleanPassword)
                 put("claimCode", claimCode.trim())
                 put("displayName", displayName.trim().ifEmpty { "SmartPlantCare Box" })
                 put("ownerUid", ownerUid)
@@ -419,25 +431,159 @@ class Esp32ProvisioningClient(private val appContext: Context) {
                 .post(payload.toRequestBody(JSON_MEDIA))
                 .build()
 
+            var initialStatus = ""
+            var initialDeviceId = "spc-unit-0001"
+            var initialDisplayName = displayName.trim()
+            var initialEpoch = nextOwnershipEpoch
+            var initialSuccess = false
+
             boundHttpClient.newCall(req).execute().use { resp ->
                 val respStr = resp.body?.string().orEmpty()
                 val json = runCatching { JSONObject(respStr) }.getOrNull()
                 if (!resp.isSuccessful) {
                     val err = json?.optString("error")?.takeIf { it.isNotBlank() }
                         ?: "Provisioning rejected (HTTP ${resp.code})"
-                    return@use ProvisionResult(success = false, errorMessage = err)
+                    return@withContext ProvisionResult(success = false, errorMessage = err)
                 }
-                ProvisionResult(
-                    success = json?.optBoolean("success", true) ?: true,
-                    deviceId = json?.optString("deviceId", "spc-unit-0001") ?: "spc-unit-0001",
-                    displayName = json?.optString("displayName", displayName.trim()) ?: displayName.trim(),
-                    ownershipEpoch = json?.optLong("ownershipEpoch", nextOwnershipEpoch) ?: nextOwnershipEpoch
+                initialStatus = json?.optString("status", "") ?: ""
+                initialSuccess = json?.optBoolean("success", false) ?: false
+                initialDeviceId = json?.optString("deviceId", initialDeviceId) ?: initialDeviceId
+                initialDisplayName = json?.optString("displayName", initialDisplayName) ?: initialDisplayName
+                initialEpoch = json?.optLong("ownershipEpoch", nextOwnershipEpoch) ?: nextOwnershipEpoch
+            }
+
+            // Backward compatibility if an older firmware immediately returned CONNECTED/success=true
+            if (initialStatus.equals("CONNECTED", ignoreCase = true) || (initialStatus.isEmpty() && initialSuccess)) {
+                return@withContext ProvisionResult(
+                    success = true,
+                    deviceId = initialDeviceId,
+                    displayName = initialDisplayName,
+                    ownershipEpoch = initialEpoch
                 )
             }
+
+            // Give ESP32 single 2.4 GHz radio 2.2s of uninterrupted airtime to start router handshake
+            delay(2200L)
+
+            // Poll GET /api/provision-status up to 38 seconds (covers AP+STA profiles + pure-STA fallback)
+            val pollDeadlineMs = System.currentTimeMillis() + 38_000L
+            var consecutiveNetErrors = 0
+            var activePollNetwork: Network? = boundNetwork
+            var pollClient = buildHttpClient(
+                network = activePollNetwork,
+                connectTimeoutMs = 2500L,
+                readTimeoutMs = 3000L
+            )
+
+            while (System.currentTimeMillis() < pollDeadlineMs) {
+                val secLeft = ((pollDeadlineMs - System.currentTimeMillis()) / 1000L).coerceAtLeast(1L)
+
+                // Dynamically pick up refreshed boundNetwork or active Wi-Fi network if SoftAP hopped/reappeared
+                val currentNet = boundNetwork ?: connectivityManager.allNetworks.firstOrNull { net ->
+                    connectivityManager.getNetworkCapabilities(net)
+                        ?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+                }
+                if (currentNet != activePollNetwork) {
+                    activePollNetwork = currentNet
+                    pollClient = buildHttpClient(
+                        network = activePollNetwork,
+                        connectTimeoutMs = 2500L,
+                        readTimeoutMs = 3000L
+                    )
+                }
+
+                val statusReq = Request.Builder().url("$ESP_BASE_URL/api/provision-status").get().build()
+                var httpCode = -1
+                val pollOutcome = runCatching {
+                    pollClient.newCall(statusReq).execute().use { resp ->
+                        httpCode = resp.code
+                        val body = resp.body?.string().orEmpty()
+                        if (!resp.isSuccessful) null else JSONObject(body)
+                    }
+                }.getOrNull()
+
+                if (httpCode == 404) {
+                    return@withContext ProvisionResult(
+                        success = false,
+                        errorMessage = "ESP32 firmware is outdated (missing /api/provision-status). Please re-upload the updated SmartPlantCare sketch to your ESP32."
+                    )
+                }
+
+                if (pollOutcome == null) {
+                    consecutiveNetErrors++
+                    Log.w(TAG, "Poll /api/provision-status transient miss #$consecutiveNetErrors (http=$httpCode)")
+                    onStatusUpdate("ESP32 is testing router connection... (${secLeft}s)")
+                    // Allow up to 10 misses (~18s) while ESP32 tests router channel / pure-STA fallback
+                    if (consecutiveNetErrors >= 10) {
+                        return@withContext ProvisionResult(
+                            success = false,
+                            deviceId = initialDeviceId,
+                            displayName = initialDisplayName,
+                            ownershipEpoch = initialEpoch,
+                            contactLostAfterAccept = true,
+                            errorMessage = "Lost contact with ESP32 while checking Wi-Fi password. Reconnect to SPC-SETUP and try again."
+                        )
+                    }
+                    delay(1800L)
+                    continue
+                }
+
+                consecutiveNetErrors = 0
+                val status = pollOutcome.optString("status", "TESTING")
+                val reasonCode = pollOutcome.optInt("reasonCode", 0)
+                val reasonName = pollOutcome.optString("reasonName", "")
+                val staConnected = pollOutcome.optBoolean("staConnected", false)
+                when (status.uppercase()) {
+                    "CONNECTED" -> {
+                        return@withContext ProvisionResult(
+                            success = true,
+                            deviceId = pollOutcome.optString("deviceId", initialDeviceId),
+                            displayName = pollOutcome.optString("displayName", initialDisplayName),
+                            ownershipEpoch = pollOutcome.optLong("ownershipEpoch", nextOwnershipEpoch)
+                        )
+                    }
+                    "FAILED" -> {
+                        val errMsg = pollOutcome.optString("error").takeIf { it.isNotBlank() }
+                            ?: if (reasonCode > 0) {
+                                val detail = if (reasonName.isNotBlank()) " ($reasonCode: $reasonName)" else " (code $reasonCode)"
+                                "Invalid Wi-Fi password or router rejected connection$detail. Please check your password and try again."
+                            } else {
+                                "Invalid Wi-Fi password. Please check your password and try again."
+                            }
+                        return@withContext ProvisionResult(
+                            success = false,
+                            errorMessage = errMsg
+                        )
+                    }
+                    "IDLE" -> {
+                        return@withContext ProvisionResult(
+                            success = false,
+                            errorMessage = "ESP32 Wi-Fi verification did not start. Please try again."
+                        )
+                    }
+                    else -> {
+                        if (staConnected) {
+                            onStatusUpdate("Password accepted by router! Finalizing... (${secLeft}s)")
+                        } else {
+                            onStatusUpdate("Verifying Wi-Fi password on ESP32... (${secLeft}s)")
+                        }
+                    }
+                }
+                delay(1800L)
+            }
+
+            ProvisionResult(
+                success = false,
+                deviceId = initialDeviceId,
+                displayName = initialDisplayName,
+                ownershipEpoch = initialEpoch,
+                contactLostAfterAccept = consecutiveNetErrors >= 3,
+                errorMessage = "Timed out verifying Wi-Fi on ESP32. Please check your Wi-Fi password and ensure your router broadcasts 2.4 GHz WPA2."
+            )
         }.getOrElse { ex ->
             ProvisionResult(
                 success = false,
-                errorMessage = ex.localizedMessage ?: "Failed to send Wi-Fi credentials to ESP32."
+                errorMessage = ex.localizedMessage ?: "Failed to verify Wi-Fi credentials on ESP32."
             )
         }
     }

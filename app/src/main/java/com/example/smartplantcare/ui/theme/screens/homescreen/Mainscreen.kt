@@ -53,6 +53,8 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.example.smartplantcare.R
 import com.example.smartplantcare.auth.AuthViewModel
+import com.example.smartplantcare.iot.MyPlantsViewModel
+import com.google.firebase.auth.FirebaseAuth
 import com.example.smartplantcare.data.ClassificationResult
 import com.example.smartplantcare.ui.theme.screens.homescreen.plantidentify.PlantIdentifyScreen
 import com.example.smartplantcare.data.DiseaseResult
@@ -201,6 +203,28 @@ fun MainScreen(
         }
     )
 
+    // Hoisted at MainScreen scope so My Plants keeps its live Firebase state & never reloads on tab switch!
+    val myPlantsViewModel: MyPlantsViewModel = viewModel(
+        factory = object : androidx.lifecycle.ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+                if (modelClass.isAssignableFrom(MyPlantsViewModel::class.java)) {
+                    return MyPlantsViewModel(appContext) as T
+                }
+                throw IllegalArgumentException("Unknown ViewModel class")
+            }
+        }
+    )
+
+    LaunchedEffect(uiState.isAuthenticated, uiState.isGuest, userProfile.email, userProfile.name) {
+        val effectiveUid = if (uiState.isAuthenticated && !uiState.isGuest) {
+            FirebaseAuth.getInstance().currentUser?.uid
+        } else {
+            null
+        }
+        myPlantsViewModel.bindUser(effectiveUid, userProfile.email, userProfile.name, uiState.isGuest)
+    }
+
     LaunchedEffect(Unit) {
         treatmentPlanViewModel.loadPlans()
         notificationHistoryViewModel.loadUnreadCount()
@@ -251,6 +275,7 @@ fun MainScreen(
                     key(refreshKey) {
                         val unreadCount by notificationHistoryViewModel.unreadCount.collectAsState()
                         val plans by treatmentPlanViewModel.plans.collectAsState()
+                        val myPlantsUiState by myPlantsViewModel.uiState.collectAsState()
 
                         LaunchedEffect(Unit) {
                             notificationHistoryViewModel.loadUnreadCount()
@@ -261,6 +286,10 @@ fun MainScreen(
                             userEmail = userProfile.email,
                             unreadCount = unreadCount,
                             plans = plans,
+                            myPlantsUiState = myPlantsUiState,
+                            onOpenMyPlants = {
+                                goToTab(tabNavController, BottomTab.MyPlants.route)
+                            },
                             onNotificationClick = {
                                 tabNavController.navigate(ROUTE_NOTIFICATION_HISTORY)
                             },
@@ -286,7 +315,8 @@ fun MainScreen(
                             isGuest = uiState.isGuest,
                             userEmail = userProfile.email,
                             userName = userProfile.name,
-                            onNavigateToLogin = { onNavigateToLogin?.invoke() }
+                            onNavigateToLogin = { onNavigateToLogin?.invoke() },
+                            sharedViewModel = myPlantsViewModel
                         )
                     }
                 }
@@ -400,13 +430,18 @@ fun MainScreen(
                 }
                 composable(BottomTab.Settings.route) {
                     key(refreshKey) {
+                        val myPlantsUiState by myPlantsViewModel.uiState.collectAsState()
                         SettingsScreen(
                             userName  = userProfile.name,
                             userEmail = userProfile.email,
                             onSignOut = { onNavigateToLogin?.invoke() },
                             onNavigateToLogin = onNavigateToLogin,
                             onNavigateToSignUp = onNavigateToSignUp,
-                            settingsViewModel = settingsViewModel
+                            settingsViewModel = settingsViewModel,
+                            myPlantsUiState = myPlantsUiState,
+                            onOpenMyPlants = {
+                                goToTab(tabNavController, BottomTab.MyPlants.route)
+                            }
                         )
                     }
                 }

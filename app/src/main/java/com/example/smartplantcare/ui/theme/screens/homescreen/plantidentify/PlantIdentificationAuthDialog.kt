@@ -110,7 +110,8 @@ fun PlantIdentificationAuthDialog(
                         text = "Sign In",
                         fontFamily = HomeInterFont,
                         fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White
                     )
                 }
 

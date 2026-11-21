@@ -18,6 +18,7 @@ import com.example.smartplantcare.data.ImageUtils
 object NotificationHelper {
     const val CHANNEL_ID = "treatment_reminder_channel"
     const val DAILY_CHANNEL_ID = "daily_reminder_channel"
+    const val IOT_ALERT_CHANNEL_ID = "iot_plant_alerts_channel"
 
     fun createChannel(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -44,6 +45,18 @@ object NotificationHelper {
                 vibrationPattern = longArrayOf(0, 300, 200, 300)
             }
             context.getSystemService(NotificationManager::class.java).createNotificationChannel(dailyChannel)
+
+            // SmartPlantCare IoT Hardware & Weather Alerts channel (high importance)
+            val iotChannel = NotificationChannel(
+                IOT_ALERT_CHANNEL_ID, "Smart Garden IoT Alerts", NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Real-time ESP32 sensor, reservoir, rain suspension, and irrigation alerts"
+                enableLights(true)
+                lightColor = android.graphics.Color.parseColor("#1D4B34")
+                enableVibration(true)
+                vibrationPattern = longArrayOf(0, 250, 150, 250)
+            }
+            context.getSystemService(NotificationManager::class.java).createNotificationChannel(iotChannel)
         }
     }
 
@@ -253,6 +266,62 @@ object NotificationHelper {
             android.util.Log.d("NotificationHelper", "Treatment reminder notification shown successfully")
         } catch (e: Exception) {
             android.util.Log.e("NotificationHelper", "Error showing treatment reminder notification", e)
+        }
+    }
+
+    /**
+     * Posts a deduplicated Android system notification for a real-time ESP32 IoT event transition
+     * (per V3.1 Specification Section 14.2: Rain Suspension, Forecast Advisory, Reservoir Low/Critical/Empty,
+     * Sensor Faults, High Temp / Low Humidity / Light Alerts, Emergency Stop, Irrigation Aborted).
+     */
+    fun showIotDeviceAlert(
+        context: Context,
+        notificationId: Int,
+        title: String,
+        message: String,
+        boxName: String = "SmartPlantCare Box",
+        isCritical: Boolean = false
+    ) {
+        createChannel(context)
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            notificationId,
+            intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val fullTitle = if (boxName.isNotBlank() && !title.contains(boxName, ignoreCase = true)) {
+            "$title • $boxName"
+        } else {
+            title
+        }
+
+        val builder = NotificationCompat.Builder(context, IOT_ALERT_CHANNEL_ID)
+            .setSmallIcon(R.drawable.appsicon)
+            .setContentTitle(fullTitle)
+            .setContentText(message)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(message).setBigContentTitle(fullTitle))
+            .setContentIntent(pendingIntent)
+            .setColor(Color.parseColor(if (isCritical) "#B91C1C" else "#1D4B34"))
+            .setPriority(
+                if (isCritical) NotificationCompat.PRIORITY_MAX else NotificationCompat.PRIORITY_HIGH
+            )
+            .setCategory(
+                if (isCritical) NotificationCompat.CATEGORY_ALARM else NotificationCompat.CATEGORY_STATUS
+            )
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setAutoCancel(true)
+            .setShowWhen(true)
+            .setWhen(System.currentTimeMillis())
+
+        try {
+            context.getSystemService(NotificationManager::class.java)
+                .notify(notificationId, builder.build())
+        } catch (e: Exception) {
+            android.util.Log.e("NotificationHelper", "Error showing IoT alert notification", e)
         }
     }
 

@@ -66,15 +66,19 @@ uint32_t gLastIrrigationMs  = 0;
 uint32_t gLastRainMs        = 0;
 uint32_t gLastLcdMs         = 0;
 uint32_t gLastDhtMs         = 0;
-uint32_t gLastReservoirMs   = 1200;  // Offset from DHT22 to spread loop work
-uint32_t gLastSoilMs        = 600;
-uint32_t gLastLdrMs         = 1800;
+uint32_t gLastReservoirMs   = 0;
+uint32_t gLastSoilMs        = 0;
+uint32_t gLastLdrMs         = 0;
 uint32_t gLastTelemetryMs   = 0;
-uint32_t gLastCommandPollMs = 1500;
-uint32_t gLastCloudPollMs   = 3500;
+uint32_t gLastCommandPollMs = 0;
+uint32_t gLastCloudPollMs   = 0;
 uint32_t gLastDiagnosticsMs = 0;
 
-IrrigationState gPrevPublishedIrrState = IrrigationState::BOOT_SAFE;
+IrrigationState gPrevPublishedIrrState      = IrrigationState::BOOT_SAFE;
+bool            gPrevPublishedRainRawWet    = false;
+bool            gPrevPublishedRainConfirmed = false;
+bool            gPrevPublishedRainAccWet    = false;
+bool            gPrevPublishedRainSuspended = false;
 
 }  // namespace
 
@@ -151,7 +155,7 @@ void loop() {
                              gBuzzer,
                              gEvents,
                              gLcd);
-  gFirebase.serviceNetworkAndTime(nowMs, gDiagnostics.metrics());
+  gFirebase.serviceNetworkAndTime(nowMs, gDiagnostics.metrics(), gBuzzer);
 
   // ─── 2. Nonblocking Buzzer Scheduler (15 ms) ───────────────────────────────
   if (nowMs - gLastBuzzerMs >= Config::INTERVAL_BUZZER_MS) {
@@ -188,7 +192,13 @@ void loop() {
   }
 
   // ─── 6. Ultrasonic 7-Inch Water Reservoir Air-Gap Monitor (2500 ms) ────────
-  if (nowMs - gLastReservoirMs >= Config::INTERVAL_RESERVOIR_MS) {
+  // Skip blocking pulseIn/DHT critical sections while live Wi-Fi password test or initial
+  // post-reboot Wi-Fi association (first 30s before WL_CONNECTED) is running so the
+  // 2.4 GHz WPA2 handshake and DHCP lease never miss a key frame!
+  const bool testingWifiNow =
+      gProvisioning.isWifiTestInProgress() ||
+      (gProvisioning.hasWifiCredentials() && !gFirebase.isWifiConnected() && nowMs < 30000UL);
+  if (!testingWifiNow && (nowMs - gLastReservoirMs >= Config::INTERVAL_RESERVOIR_MS)) {
     gLastReservoirMs = nowMs;
     bool pumpBlocked = gReservoir.sampleAndEvaluate(
         nowMs, gRuntimeConfig, gBuzzer, gEvents);
@@ -199,19 +209,19 @@ void loop() {
   }
 
   // ─── 7. DHT22 Temperature & Humidity Monitor (2500 ms) ─────────────────────
-  if (nowMs - gLastDhtMs >= Config::INTERVAL_DHT_MS) {
+  if (!testingWifiNow && (nowMs - gLastDhtMs >= Config::INTERVAL_DHT_MS)) {
     gLastDhtMs = nowMs;
     gEnvSensors.sampleDht22(nowMs, gRuntimeConfig, gBuzzer, gEvents);
   }
 
   // ─── 8. 3-Zone Capacitive Soil Moisture Monitor (3000 ms) ──────────────────
-  if (nowMs - gLastSoilMs >= Config::INTERVAL_SOIL_MS) {
+  if (!testingWifiNow && (nowMs - gLastSoilMs >= Config::INTERVAL_SOIL_MS)) {
     gLastSoilMs = nowMs;
     gSoil.sampleAllZones(nowMs, gRuntimeConfig, gEvents);
   }
 
   // ─── 9. LDR Relative Brightness Monitor (5000 ms) ──────────────────────────
-  if (nowMs - gLastLdrMs >= Config::INTERVAL_LDR_MS) {
+  if (!testingWifiNow && (nowMs - gLastLdrMs >= Config::INTERVAL_LDR_MS)) {
     gLastLdrMs = nowMs;
     gEnvSensors.sampleLdr(nowMs, gRuntimeConfig, gBuzzer, gEvents);
   }
@@ -235,18 +245,37 @@ void loop() {
   }
 
   // ─── 10B. Fast Remote Manual/Emergency Command Poll (2.5 s) ────────────────
-  if (nowMs - gLastCommandPollMs >= Config::INTERVAL_COMMAND_POLL_MS) {
+  // Let initial post-boot telemetry publish complete first so Android sees Online immediately!
+  const bool initialBootSyncDone = (gFirebase.lastSyncUptimeMs() > 0) || (nowMs > 20000UL);
+  if (initialBootSyncDone && (nowMs - gLastCommandPollMs >= Config::INTERVAL_COMMAND_POLL_MS)) {
     gLastCommandPollMs = nowMs;
     gFirebase.pollPendingCommandsOnly(nowMs, gRuntimeConfig, gIrrigation, gBuzzer);
     gFirebase.flushPendingEventsAndReports(
         nowMs, gEvents, gIrrigation, gDiagnostics.metrics());
   }
 
-  // ─── 11. Firebase Telemetry & Event Queue Sync (15 s or on state change) ───
+  // ─── 11. Firebase Telemetry & Event Queue Sync (15 s; fast 4 s until first post-boot sync) ──
+  const uint32_t telemetryIntervalMs =
+      (gProvisioning.ownershipState() == OwnershipState::OWNED &&
+       gFirebase.isWifiConnected() &&
+       gFirebase.lastSyncUptimeMs() == 0)
+          ? 4000UL
+          : Config::INTERVAL_TELEMETRY_MS;
+  const RainGateStatus& curRain = gRainWeather.rainStatus();
   bool irrStateChanged = (gIrrigation.state() != gPrevPublishedIrrState);
-  if (irrStateChanged || (nowMs - gLastTelemetryMs >= Config::INTERVAL_TELEMETRY_MS)) {
-    gLastTelemetryMs       = nowMs;
-    gPrevPublishedIrrState = gIrrigation.state();
+  bool rainStateChanged =
+      (curRain.rawWet != gPrevPublishedRainRawWet) ||
+      (curRain.wetConfirmed != gPrevPublishedRainConfirmed) ||
+      (curRain.accidentalWet != gPrevPublishedRainAccWet) ||
+      (curRain.rainSuspensionLatched != gPrevPublishedRainSuspended);
+  bool rainPushAllowed = rainStateChanged && (nowMs - gLastTelemetryMs >= 1500UL);
+  if (irrStateChanged || rainPushAllowed || (nowMs - gLastTelemetryMs >= telemetryIntervalMs)) {
+    gLastTelemetryMs            = nowMs;
+    gPrevPublishedIrrState      = gIrrigation.state();
+    gPrevPublishedRainRawWet    = curRain.rawWet;
+    gPrevPublishedRainConfirmed = curRain.wetConfirmed;
+    gPrevPublishedRainAccWet    = curRain.accidentalWet;
+    gPrevPublishedRainSuspended = curRain.rainSuspensionLatched;
 
     gDiagnostics.updatePeriodicMetrics(nowMs, gEvents);
     gFirebase.publishStatusAndTelemetry(nowMs,
@@ -263,8 +292,14 @@ void loop() {
         nowMs, gEvents, gIrrigation, gDiagnostics.metrics());
   }
 
-  // ─── 12. Firebase Meta, Weather, Config & Command Poll (20 s) ──────────────
-  if (nowMs - gLastCloudPollMs >= Config::INTERVAL_CONFIG_POLL_MS) {
+  // ─── 12. Firebase Meta, Weather, Config & Command Poll (15 s; fast 4 s until first sync) ───
+  const uint32_t cloudPollIntervalMs =
+      (gProvisioning.ownershipState() == OwnershipState::OWNED &&
+       gFirebase.isWifiConnected() &&
+       gFirebase.lastSyncUptimeMs() == 0)
+          ? 4000UL
+          : Config::INTERVAL_CONFIG_POLL_MS;
+  if (nowMs - gLastCloudPollMs >= cloudPollIntervalMs) {
     gLastCloudPollMs = nowMs;
     gFirebase.pollCloudControlAndWeather(nowMs,
                                          gRuntimeConfig,

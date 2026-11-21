@@ -88,9 +88,12 @@ void DiagnosticsManager::printStatusReport(
                 reservoir.airGapInches,
                 reservoir.waterLevelPct,
                 reservoirStateString(reservoir.state));
-  Serial.printf("Rain(32) & Weather: rawWet=%s wetConf=%s(wetMs=%lu,dryMs=%lu) Forecast=%d%%(valid=%s,fresh=%s) Latch=%s Advisory=%s\n",
+  Serial.printf("Rain(32) & Weather: loc='%s' rawWet=%s wetConf=%s accWet=%s wxFirst=%s (wetMs=%lu,dryMs=%lu) Forecast=%d%%(valid=%s,fresh=%s) Latch=%s Advisory=%s\n",
+                weather.locationName[0] != '\0' ? weather.locationName : "Detecting...",
                 rain.rawWet ? "WET" : "DRY",
                 rain.wetConfirmed ? "YES" : "NO",
+                rain.accidentalWet ? "YES" : "NO",
+                rain.weatherMetBeforeWet ? "YES" : "NO",
                 static_cast<unsigned long>(rain.wetDurationMs),
                 static_cast<unsigned long>(rain.dryDurationMs),
                 weather.probabilityPct,
@@ -188,6 +191,12 @@ void DiagnosticsManager::processCliLine(
     } else {
       Serial.println(F("Usage: wifi <ssid> <password>"));
     }
+  } else if (strcmp(cmd, "testwifi") == 0) {
+    char* ssid = strtok(nullptr, " ");
+    char* pass = strtok(nullptr, "");
+    provisioning.startSerialWifiTest(ssid, pass ? pass : "");
+  } else if (strcmp(cmd, "wifiscan") == 0) {
+    provisioning.printWifiScanToSerial();
   } else if (strcmp(cmd, "claimstate") == 0) {
     char* stStr    = strtok(nullptr, " ");
     char* epochStr = strtok(nullptr, " ");
@@ -223,6 +232,26 @@ void DiagnosticsManager::processCliLine(
     ioConfig.physicalLoadsEnabled = false;
     relays.setPhysicalLoadsEnabled(false);
     Serial.println(F("[CLI] Physical relay loads DISABLED (safe bench mode)."));
+  } else if (strcmp(cmd, "testrelay") == 0) {
+    ioConfig.physicalLoadsEnabled = true;
+    relays.runSequentialPinTest(1200);
+  } else if (strcmp(cmd, "testzone") == 0) {
+    char* cropStr = strtok(nullptr, " ");
+    CropZoneId z = CropZoneId::NONE;
+    if (cropStr && strcmp(cropStr, "tomato") == 0) z = CropZoneId::TOMATO;
+    else if (cropStr && strcmp(cropStr, "chili") == 0) z = CropZoneId::CHILI;
+    else if (cropStr && strcmp(cropStr, "eggplant") == 0) z = CropZoneId::EGGPLANT;
+    ioConfig.physicalLoadsEnabled = true;
+    relays.runZonePairTest(z, 3000);
+  } else if (strcmp(cmd, "relaypolarity") == 0) {
+    char* arg = strtok(nullptr, " ");
+    bool nextActiveLow = !relays.isActiveLow();
+    if (arg && (strcmp(arg, "low") == 0 || strcmp(arg, "LOW") == 0)) {
+      nextActiveLow = true;
+    } else if (arg && (strcmp(arg, "high") == 0 || strcmp(arg, "HIGH") == 0)) {
+      nextActiveLow = false;
+    }
+    relays.setActiveLow(nextActiveLow);
   } else if (strcmp(cmd, "water") == 0) {
     char* cropStr = strtok(nullptr, " ");
     char* durStr  = strtok(nullptr, " ");
@@ -253,6 +282,17 @@ void DiagnosticsManager::processCliLine(
   } else if (strcmp(cmd, "unmute") == 0) {
     buzzer.setMuted(false);
     Serial.println(F("[CLI] Buzzer unmuted."));
+  } else if (strcmp(cmd, "testbuzzer") == 0) {
+    char* mode = strtok(nullptr, " ");
+    if (mode && strcmp(mode, "passive") == 0) {
+      buzzer.configureDriverMode(true, true);
+    } else if (mode && strcmp(mode, "active") == 0) {
+      buzzer.configureDriverMode(false, true);
+    } else if (mode && strcmp(mode, "activelow") == 0) {
+      buzzer.configureDriverMode(false, false);
+    }
+    buzzer.playDiagnosticBeep();
+    Serial.println(F("[CLI] Played 2 test beeps on GPIO18. Try 'testbuzzer passive' or 'testbuzzer activelow' if silent."));
   } else if (strcmp(cmd, "factoryreset") == 0) {
     provisioning.initiateResetPendingLifecycle(
         provisioning.ownershipEpoch() + 1, relays, irrigation, buzzer, events);
@@ -266,13 +306,19 @@ void DiagnosticsManager::printCliHelp() const {
   Serial.println(F("─── Smart Plant Care V3.1 Bench CLI Commands ───────────────────────────"));
   Serial.println(F("  status                                  : Print full sensor & state report"));
   Serial.println(F("  wifi <ssid> <password>                  : Save Wi-Fi credentials to NVS"));
+  Serial.println(F("  testwifi <ssid> <password>              : Run live Wi-Fi verification test"));
+  Serial.println(F("  wifiscan                                : Scan 2.4 GHz Wi-Fi (ch/rssi/auth)"));
   Serial.println(F("  claimstate <UNCLAIMED|OWNED|RESET_PENDING> [epoch] : Set ownership state"));
   Serial.println(F("  mode <OUTDOOR|INDOOR>                   : Switch outdoor/indoor mode"));
   Serial.println(F("  simweather <0..100 | -1>                : Simulate Open-Meteo rain prob %"));
   Serial.println(F("  enableloads / disableloads              : Enable/disable physical relay coils"));
+  Serial.println(F("  testrelay                               : Pulse IN1..IN4 (GPIO25/26/27/23) 1.2s each"));
+  Serial.println(F("  testzone <tomato|chili|eggplant>        : Open selected Valve + Pump TOGETHER (3s)"));
+  Serial.println(F("  relaypolarity [low|high]                : Toggle relay active-LOW vs active-HIGH"));
   Serial.println(F("  water <tomato|chili|eggplant> [ms]      : Test manual watering state machine"));
   Serial.println(F("  estop / clearfault                      : Trigger or clear emergency lockout"));
   Serial.println(F("  mute / unmute                           : Mute or unmute GPIO18 buzzer"));
+  Serial.println(F("  testbuzzer [active|activelow|passive]   : Test GPIO18 buzzer hardware mode"));
   Serial.println(F("  factoryreset                            : Run local RESET_PENDING unclaim"));
   Serial.println(F("────────────────────────────────────────────────────────────────────────"));
 }

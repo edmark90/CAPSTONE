@@ -299,7 +299,10 @@ fun OnboardingScreen(onGetStarted: () -> Unit) {
                     .height(56.dp)
                     .scale(scaleBtn),
                 shape = RoundedCornerShape(30.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = DarkGreen)
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = DarkGreen,
+                    contentColor = Color.White
+                )
             ) {
                 AnimatedContent(
                     targetState = isLastPage,

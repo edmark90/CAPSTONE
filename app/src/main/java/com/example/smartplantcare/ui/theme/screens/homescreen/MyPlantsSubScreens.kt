@@ -6,9 +6,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -17,6 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -54,8 +57,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -80,7 +85,7 @@ internal fun MyPlantsShareScreen(
     onGenerateInvite: (DeviceRole) -> Unit,
     onRevokeMember: (String) -> Unit
 ) {
-    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
     var selectedRole by remember { mutableStateOf(DeviceRole.OPERATOR) }
     var copiedNotice by remember { mutableStateOf(false) }
 
@@ -90,8 +95,8 @@ internal fun MyPlantsShareScreen(
             .background(HomeColors.PageBg)
             .statusBarsPadding()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp)
-            .padding(top = 12.dp, bottom = HomeDimens.BottomBarClearance)
+            .padding(horizontal = 16.dp)
+            .padding(top = 14.dp, bottom = HomeDimens.BottomBarClearance)
     ) {
         SubPageHeader(
             title = "Share My Plant",
@@ -104,7 +109,7 @@ internal fun MyPlantsShareScreen(
         if (currentUserRole.canManageSharing) {
             Surface(
                 color = HomeColors.SurfaceWhite,
-                shape = RoundedCornerShape(18.dp),
+                shape = RoundedCornerShape(20.dp),
                 border = BorderStroke(1.dp, HomeColors.CardBorder),
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -121,24 +126,34 @@ internal fun MyPlantsShareScreen(
                         text = "Choose what the invited account can do, then generate a single-use 24-hour code.",
                         fontFamily = HomeInterFont,
                         fontSize = 12.sp,
-                        color = HomeColors.TextSecondary
+                        color = HomeColors.TextSecondary,
+                        lineHeight = 17.sp
                     )
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(IntrinsicSize.Max),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
                         RoleChoiceCard(
                             title = "Operator",
                             desc = "Water plants & edit thresholds",
                             selected = selectedRole == DeviceRole.OPERATOR,
                             onClick = { selectedRole = DeviceRole.OPERATOR },
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
                         )
                         RoleChoiceCard(
                             title = "Viewer",
                             desc = "Read-only sensors & alerts",
                             selected = selectedRole == DeviceRole.VIEWER,
                             onClick = { selectedRole = DeviceRole.VIEWER },
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
                         )
                     }
 
@@ -154,15 +169,19 @@ internal fun MyPlantsShareScreen(
                             .fillMaxWidth()
                             .height(48.dp),
                         shape = RoundedCornerShape(14.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = HomeColors.ForestPrimary)
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = HomeColors.ForestPrimary,
+                            contentColor = Color.White
+                        )
                     ) {
-                        Icon(Icons.Filled.Share, null, modifier = Modifier.size(17.dp))
+                        Icon(Icons.Filled.Share, null, tint = Color.White, modifier = Modifier.size(17.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = "Generate 24-Hour ${selectedRole.label} Code",
                             fontFamily = HomeInterFont,
                             fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
                         )
                     }
 
@@ -206,7 +225,8 @@ internal fun MyPlantsShareScreen(
                                 }
                                 IconButton(
                                     onClick = {
-                                        clipboard.setText(AnnotatedString(displayInvite.inviteCode))
+                                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        cm.setPrimaryClip(ClipData.newPlainText("Invite Code", displayInvite.inviteCode))
                                         copiedNotice = true
                                     }
                                 ) {
@@ -369,8 +389,8 @@ internal fun MyPlantsEventLogScreen(
             .fillMaxSize()
             .background(HomeColors.PageBg)
             .statusBarsPadding()
-            .padding(horizontal = 20.dp)
-            .padding(top = 12.dp)
+            .padding(horizontal = 16.dp)
+            .padding(top = 14.dp)
     ) {
         SubPageHeader(
             title = "Device Alerts & Activity",
@@ -378,10 +398,13 @@ internal fun MyPlantsEventLogScreen(
             onBack = onBack
         )
 
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("ALL" to "All", "CRITICAL" to "Critical", "WARNING" to "Warnings", "IRRIGATION" to "Irrigation").forEach { (key, label) ->
+        val filterItems = remember {
+            listOf("ALL" to "All", "CRITICAL" to "Critical", "WARNING" to "Warnings", "IRRIGATION" to "Irrigation")
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(filterItems, key = { it.first }) { (key, label) ->
                 val active = filter == key
                 Surface(
                     color = if (active) HomeColors.ForestPrimary else HomeColors.SurfaceWhite,
@@ -394,10 +417,10 @@ internal fun MyPlantsEventLogScreen(
                     Text(
                         text = label,
                         fontFamily = HomeInterFont,
-                        fontSize = 11.sp,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = if (active) Color.White else HomeColors.TextSecondary,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
                     )
                 }
             }
@@ -432,7 +455,7 @@ internal fun MyPlantsEventLogScreen(
                     }
                     Surface(
                         color = HomeColors.SurfaceWhite,
-                        shape = RoundedCornerShape(16.dp),
+                        shape = RoundedCornerShape(18.dp),
                         border = BorderStroke(1.dp, HomeColors.CardBorder),
                         modifier = Modifier.fillMaxWidth()
                     ) {
@@ -447,7 +470,12 @@ internal fun MyPlantsEventLogScreen(
                                     fontFamily = HomeInterFont,
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = HomeColors.TextPrimary
+                                    color = HomeColors.TextPrimary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(end = 8.dp)
                                 )
                                 Surface(color = bg, shape = RoundedCornerShape(50)) {
                                     Text(
@@ -456,7 +484,7 @@ internal fun MyPlantsEventLogScreen(
                                         fontSize = 9.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = fg,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                                     )
                                 }
                             }
@@ -509,8 +537,8 @@ internal fun MyPlantsSettingsScreen(
             .background(HomeColors.PageBg)
             .statusBarsPadding()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp)
-            .padding(top = 12.dp, bottom = HomeDimens.BottomBarClearance),
+            .padding(horizontal = 16.dp)
+            .padding(top = 14.dp, bottom = HomeDimens.BottomBarClearance),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         SubPageHeader(
@@ -522,7 +550,7 @@ internal fun MyPlantsSettingsScreen(
         // 1. Rename Plant Box Card
         Surface(
             color = HomeColors.SurfaceWhite,
-            shape = RoundedCornerShape(18.dp),
+            shape = RoundedCornerShape(20.dp),
             border = BorderStroke(1.dp, HomeColors.CardBorder),
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -534,26 +562,31 @@ internal fun MyPlantsSettingsScreen(
                     fontWeight = FontWeight.Bold,
                     color = HomeColors.TextPrimary
                 )
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(10.dp))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     OutlinedTextField(
                         value = boxName,
                         onValueChange = { boxName = it.take(35) },
                         enabled = role.canControl,
                         singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(14.dp),
                         modifier = Modifier.weight(1f)
                     )
                     Button(
                         onClick = { onRenameBox(boxName) },
                         enabled = role.canControl && boxName.isNotBlank() && boxName.trim() != snapshot.meta.displayName,
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = HomeColors.ForestPrimary)
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.height(52.dp),
+                        contentPadding = PaddingValues(horizontal = 16.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = HomeColors.ForestPrimary,
+                            contentColor = Color.White
+                        )
                     ) {
-                        Icon(Icons.Filled.Edit, null, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Filled.Edit, null, tint = Color.White, modifier = Modifier.size(18.dp))
                     }
                 }
             }
@@ -677,15 +710,19 @@ internal fun MyPlantsSettingsScreen(
                     .fillMaxWidth()
                     .height(52.dp),
                 shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = HomeColors.ForestPrimary)
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = HomeColors.ForestPrimary,
+                    contentColor = Color.White
+                )
             ) {
-                Icon(Icons.Filled.Save, null, modifier = Modifier.size(18.dp))
+                Icon(Icons.Filled.Save, null, tint = Color.White, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = if (isBusy) "Saving..." else "Save Settings to ESP32",
                     fontFamily = HomeInterFont,
                     fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
                 )
             }
         }
@@ -797,9 +834,17 @@ internal fun MyPlantsSettingsScreen(
                         showUnclaimConfirm = false
                         onUnclaimDevice()
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = HomeColors.AlertRed)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = HomeColors.AlertRed,
+                        contentColor = Color.White
+                    )
                 ) {
-                    Text("Unclaim & Reset", fontFamily = HomeInterFont, fontWeight = FontWeight.Bold)
+                    Text(
+                        text = "Unclaim & Reset",
+                        fontFamily = HomeInterFont,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
                 }
             },
             dismissButton = {
@@ -821,22 +866,39 @@ private fun CropThresholdEditor(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(14.dp))
             .background(HomeColors.PageBg)
-            .padding(12.dp)
+            .padding(14.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = "$title (Start ${cfg.startPct.toInt()}% → Stop ${cfg.stopPct.toInt()}%)",
-                fontFamily = HomeInterFont,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Bold,
-                color = HomeColors.TextPrimary
-            )
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 8.dp)
+            ) {
+                Text(
+                    text = title,
+                    fontFamily = HomeInterFont,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = HomeColors.TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = "Dry ≤ ${cfg.startPct.toInt()}% → Stop ≥ ${cfg.stopPct.toInt()}%",
+                    fontFamily = HomeInterFont,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = HomeColors.ForestPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
             Switch(
                 checked = cfg.enabled,
                 onCheckedChange = { onChange(cfg.copy(enabled = it)) },
@@ -844,7 +906,13 @@ private fun CropThresholdEditor(
                 colors = SwitchDefaults.colors(checkedTrackColor = HomeColors.ForestPrimary)
             )
         }
-        Text("Auto-Water Start: ${cfg.startPct.toInt()}%", fontFamily = HomeInterFont, fontSize = 11.sp, color = HomeColors.TextSecondary)
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = "Dry Start Threshold (triggers auto watering): ${cfg.startPct.toInt()}%",
+            fontFamily = HomeInterFont,
+            fontSize = 11.sp,
+            color = HomeColors.TextSecondary
+        )
         Slider(
             value = cfg.startPct,
             onValueChange = { start ->
@@ -854,6 +922,22 @@ private fun CropThresholdEditor(
             valueRange = 15f..65f,
             enabled = enabled && cfg.enabled,
             colors = SliderDefaults.colors(thumbColor = HomeColors.ForestPrimary, activeTrackColor = HomeColors.ForestPrimary)
+        )
+        Text(
+            text = "Wet Stop Threshold (stops auto watering): ${cfg.stopPct.toInt()}%",
+            fontFamily = HomeInterFont,
+            fontSize = 11.sp,
+            color = HomeColors.TextSecondary
+        )
+        val minStop = (cfg.startPct + 10f).coerceAtMost(85f)
+        Slider(
+            value = cfg.stopPct.coerceIn(minStop, 90f),
+            onValueChange = { stop ->
+                onChange(cfg.copy(stopPct = stop.coerceIn(minStop, 90f)))
+            },
+            valueRange = minStop..90f,
+            enabled = enabled && cfg.enabled,
+            colors = SliderDefaults.colors(thumbColor = HomeColors.WaterBlue, activeTrackColor = HomeColors.WaterBlue)
         )
     }
 }
@@ -905,26 +989,42 @@ private fun SubPageHeader(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        IconButton(onClick = onBack) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                contentDescription = "Back",
-                tint = HomeColors.TextPrimary
-            )
+        Surface(
+            color = HomeColors.SurfaceWhite,
+            shape = RoundedCornerShape(12.dp),
+            border = BorderStroke(1.dp, HomeColors.CardBorder),
+            modifier = Modifier
+                .size(38.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .clickable(onClick = onBack)
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Back",
+                    tint = HomeColors.ForestPrimary,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
         }
-        Column {
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = title,
                 fontFamily = HomeInterFont,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
-                color = HomeColors.TextPrimary
+                color = HomeColors.TextPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
             Text(
                 text = subtitle,
                 fontFamily = HomeInterFont,
                 fontSize = 12.sp,
-                color = HomeColors.TextSecondary
+                color = HomeColors.TextSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }

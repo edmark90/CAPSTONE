@@ -270,7 +270,10 @@ fun CameraScreen(
                 Button(
                     onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) },
                     shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = HomeColors.ForestMedium)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = HomeColors.ForestMedium,
+                        contentColor = Color.White
+                    )
                 ) {
                     Text("Allow Camera", color = Color.White, fontWeight = FontWeight.SemiBold)
                 }

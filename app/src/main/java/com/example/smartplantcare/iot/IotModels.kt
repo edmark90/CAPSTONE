@@ -68,7 +68,8 @@ data class ProvisionResult(
     val deviceId: String = "",
     val displayName: String = "",
     val ownershipEpoch: Long = 1L,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val contactLostAfterAccept: Boolean = false
 )
 
 @Immutable
@@ -92,7 +93,9 @@ data class DeviceMeta(
     val resetRequired: Boolean = false,
     val claimedAt: Long = 0L,
     val lat: Double = 14.5995,
-    val lon: Double = 120.9842
+    val lon: Double = 120.9842,
+    val locationName: String = "",
+    val locationSource: String = ""
 )
 
 @Immutable
@@ -104,6 +107,7 @@ data class DeviceStatus(
     val ipAddress: String = "",
     val wifiRssi: Int = -127,
     val mode: String = "OUTDOOR",
+    val autoIrrigationEnabled: Boolean = true,
     val rainSuspensionActive: Boolean = false,
     val weatherAdvisoryActive: Boolean = false,
     val weatherUnavailableFault: Boolean = false,
@@ -155,6 +159,7 @@ data class DeviceTelemetry(
     val lightBand: String = "ERR",
     val rainRawWet: Boolean = false,
     val rainWetConfirmed: Boolean = false,
+    val rainAccidentalWet: Boolean = false,
     val rainValid: Boolean = true,
     val reservoirAirGapInches: Float? = null,
     val reservoirPct: Float? = null,
@@ -174,6 +179,9 @@ data class DeviceWeather(
     val rainProbabilityPct: Int = -1,
     val windowHours: Int = 3,
     val windowLabel: String = "NEXT 3 H",
+    val locationName: String = "",
+    val lat: Double = 0.0,
+    val lon: Double = 0.0,
     val fetchedAt: Long = 0L,
     val validUntil: Long = 0L
 )
@@ -194,6 +202,7 @@ data class CropZoneConfig(
 @Immutable
 data class DeviceConfig(
     val mode: String = "OUTDOOR",
+    val autoIrrigationEnabled: Boolean = true,
     val rainThresholdPct: Int = 60,
     val wetConfirmMs: Long = 30000L,
     val dryRecoverMs: Long = 120000L,
@@ -206,7 +215,7 @@ data class DeviceConfig(
     val lightHighPct: Float = 85f,
     val lightLowPct: Float = 20f,
     val buzzerMuted: Boolean = false,
-    val physicalLoadsEnabled: Boolean = false,
+    val physicalLoadsEnabled: Boolean = true,
     val tomato: CropZoneConfig = CropZoneConfig("tomato", startPct = 35f, stopPct = 55f),
     val chili: CropZoneConfig = CropZoneConfig("chili", startPct = 32f, stopPct = 52f),
     val eggplant: CropZoneConfig = CropZoneConfig("eggplant", startPct = 38f, stopPct = 58f)
@@ -268,7 +277,8 @@ data class LiveDeviceSnapshot(
     val members: List<AclMember> = emptyList(),
     val activeInvites: List<ShareInvite> = emptyList(),
     val events: List<DeviceEvent> = emptyList(),
-    val commandResults: Map<String, CommandResult> = emptyMap()
+    val commandResults: Map<String, CommandResult> = emptyMap(),
+    val receivedAtClientMs: Long = 0L
 )
 
 /**
@@ -282,6 +292,84 @@ object IotDomainLogic {
     const val MIN_PULSE_MS = 1000L
     const val MAX_PULSE_MS = 15000L
     const val COMMAND_TTL_MS = 60000L
+    const val EVENT_MAX_PUSH_AGE_MS = 120_000L
+    const val SENSOR_FAULT_COOLDOWN_MS = 3_600_000L
+    const val ADVISORY_EVENT_COOLDOWN_MS = 900_000L
+    const val CRITICAL_EVENT_COOLDOWN_MS = 300_000L
+    const val RAIN_WET_EVENT_COOLDOWN_MS = 60_000L
+
+    private val SILENT_HISTORY_ONLY_TYPES = setOf("DEVICE_READY")
+
+    private val SENSOR_FAULT_EVENT_TYPES = setOf(
+        "SOIL_SENSOR_FAULT",
+        "DHT_SENSOR_FAULT",
+        "LIGHT_SENSOR_FAULT",
+        "RESERVOIR_SENSOR_FAULT",
+        "RAIN_SENSOR_FAULT",
+        "WEATHER_UNAVAILABLE"
+    )
+
+    private val CRITICAL_SAFETY_EVENT_TYPES = setOf(
+        "RAIN_SUSPENSION_STARTED",
+        "RESERVOIR_CRITICAL",
+        "RESERVOIR_EMPTY",
+        "EMERGENCY_STOP",
+        "POWER_OR_RELAY_FAULT",
+        "IRRIGATION_ABORTED"
+    )
+
+    /**
+     * Strict policy: ONLY the plant box OWNER may be prompted for mobile GPS permission
+     * and set the box's physical installation coordinates. Shared Operators and Viewers
+     * NEVER get prompted for location and always share the Owner's saved box location.
+     */
+    fun canRequestDeviceLocationPermission(role: DeviceRole): Boolean = role == DeviceRole.OWNER
+
+    fun notificationCooldownMsForEventType(eventType: String): Long {
+        val norm = eventType.trim().uppercase()
+        return when {
+            norm == "RAIN_SENSOR_WET" -> RAIN_WET_EVENT_COOLDOWN_MS
+            norm in SENSOR_FAULT_EVENT_TYPES -> SENSOR_FAULT_COOLDOWN_MS
+            norm in CRITICAL_SAFETY_EVENT_TYPES -> CRITICAL_EVENT_COOLDOWN_MS
+            else -> ADVISORY_EVENT_COOLDOWN_MS
+        }
+    }
+
+    fun eventCooldownKey(deviceId: String, eventType: String, crop: String?): String {
+        val normType = eventType.trim().uppercase()
+        val normCrop = crop?.trim()?.lowercase().orEmpty()
+        return if (normCrop.isNotEmpty()) "${deviceId}_${normType}_${normCrop}" else "${deviceId}_${normType}"
+    }
+
+    fun stableNotificationId(deviceId: String, eventType: String, crop: String?): Int {
+        val key = eventCooldownKey(deviceId, eventType, crop)
+        return (key.hashCode() and 0x7FFFFFFF).coerceAtLeast(10_000)
+    }
+
+    fun shouldDispatchDeviceEventNotification(
+        event: DeviceEvent,
+        nowMs: Long,
+        isAlreadySeen: Boolean,
+        lastNotifiedSameTypeMs: Long?
+    ): Boolean {
+        if (event.eventId.isBlank() || isAlreadySeen) return false
+        val normType = event.type.trim().uppercase()
+        if (normType in SILENT_HISTORY_ONLY_TYPES) return false
+
+        // Drop historical / stale events (older than 2 minutes or missing valid epoch timestamp)
+        if (event.createdAt < 1_700_000_000_000L) return false
+        val ageMs = nowMs - event.createdAt
+        if (ageMs > EVENT_MAX_PUSH_AGE_MS || ageMs < -300_000L) return false
+
+        // Enforce per-(deviceId, eventType, crop) cooldown so disconnected sensors or reboots NEVER loop
+        if (lastNotifiedSameTypeMs != null && lastNotifiedSameTypeMs > 0L) {
+            val cooldownMs = notificationCooldownMsForEventType(normType)
+            if ((nowMs - lastNotifiedSameTypeMs) < cooldownMs) {
+                return false
+            }
+        }
+        return true
+    }
 
     fun parseNearbyEspDevices(rawScan: List<Pair<String, Int>>): List<NearbyEspDevice> {
         return rawScan
@@ -299,9 +387,15 @@ object IotDomainLogic {
             .sortedByDescending { it.rssi }
     }
 
+    fun sanitizeWifiSsid(rawSsid: String): String =
+        rawSsid.replace("\r", "").replace("\n", "").trim().removeSurrounding("\"")
+
+    fun sanitizeWifiPassword(rawPassword: String): String =
+        rawPassword.replace("\r", "").replace("\n", "")
+
     fun normalizeScannedWifi(networks: List<ScannedWifiNetwork>): List<ScannedWifiNetwork> {
         return networks
-            .map { it.copy(ssid = it.ssid.trim()) }
+            .map { it.copy(ssid = sanitizeWifiSsid(it.ssid)) }
             .filter { it.ssid.isNotEmpty() && !it.ssid.startsWith(ESP_SETUP_PREFIX) }
             .groupBy { it.ssid }
             .map { (_, group) -> group.maxBy { it.rssi } }
@@ -311,8 +405,31 @@ object IotDomainLogic {
     fun clampPulseDurationMs(requestedMs: Long): Long = requestedMs.coerceIn(MIN_PULSE_MS, MAX_PULSE_MS)
 
     /**
-     * Returns null when manual watering is allowed for [cropSlug], or a concise user-facing
-     * safety lockout reason matching the ESP32 IrrigationController safety precedence.
+     * Evaluates whether the ESP32 heartbeat is fresh.
+     * Uses the most recent of [status.lastSeenAt] and [telemetryUpdatedAt], and handles both
+     * real Unix epoch timestamps (>= 1.7e12 ms) and pre-NTP boot uptime values (< 1.7e12 ms)
+     * so an ESP32 that just rebooted before NTP sync is NEVER falsely marked Offline.
+     */
+    fun isDeviceOnlineFresh(
+        status: DeviceStatus,
+        nowMs: Long,
+        receivedAtClientMs: Long = 0L,
+        telemetryUpdatedAt: Long = 0L,
+        staleThresholdMs: Long = 45_000L
+    ): Boolean {
+        if (!status.online) return false
+        val lastSeen = maxOf(status.lastSeenAt, telemetryUpdatedAt)
+        return when {
+            lastSeen <= 0L -> receivedAtClientMs == 0L || (nowMs - receivedAtClientMs) < staleThresholdMs
+            lastSeen >= 1_700_000_000_000L -> (nowMs - lastSeen) < staleThresholdMs
+            else -> receivedAtClientMs == 0L || (nowMs - receivedAtClientMs) < staleThresholdMs
+        }
+    }
+
+    /**
+     * Returns null when manual watering is allowed for [cropSlug], or a concise reason.
+     * Manual button commands bypass automatic sensor/rain/reservoir/crop-threshold logic
+     * and only enforce role permission, Emergency Stop, and 1-valve-at-a-time electrical safety.
      */
     fun manualWaterLockReason(
         role: DeviceRole,
@@ -323,25 +440,15 @@ object IotDomainLogic {
             return "Read-only Viewer account"
         }
         val status = snapshot.status
-        val tel = snapshot.telemetry
 
         if (status.emergencyStop || status.faultLockout) {
             return "Emergency Stop / Fault Lockout active"
-        }
-        if (!tel.reservoirValid || tel.reservoirState in setOf("CRITICAL", "EMPTY", "SENSOR_ERROR", "UNKNOWN")) {
-            return "Reservoir ${tel.reservoirState} — Pump locked OFF"
-        }
-        if (status.isOutdoor && status.rainSuspensionActive) {
-            return "Paused: Confirmed Rain Suspension (Outdoor)"
         }
         if (status.isActivelyIrrigating && status.activeValve != "none" && status.activeValve != cropSlug) {
             return "1 valve at a time (${status.activeValve.uppercase()} active)"
         }
         if (status.isActivelyIrrigating && status.activeValve == cropSlug) {
             return "Already watering this zone"
-        }
-        if (!snapshot.config.cropConfig(cropSlug).enabled) {
-            return "Zone disabled in Device Settings"
         }
         return null
     }

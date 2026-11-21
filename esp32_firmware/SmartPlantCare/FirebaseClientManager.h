@@ -34,8 +34,8 @@ class FirebaseClientManager {
  public:
   void begin(ProvisioningPairingManager* provisioning);
 
-  // Maintain nonblocking Wi-Fi connection and NTP clock sync
-  void serviceNetworkAndTime(uint32_t nowMs, DiagnosticsMetrics& ioDiag);
+  // Maintain nonblocking Wi-Fi connection, NTP clock sync, and buzzer confirmation on connect
+  void serviceNetworkAndTime(uint32_t nowMs, DiagnosticsMetrics& ioDiag, BuzzerManager& buzzer);
 
   // Periodic 15s telemetry + status publish (or immediate on state transition)
   bool publishStatusAndTelemetry(uint32_t nowMs,
@@ -106,20 +106,27 @@ class FirebaseClientManager {
                        const String& payload,
                        String& outResponse);
 
-  ProvisioningPairingManager* provisioning_          = nullptr;
-  bool                        wifiAttemptActive_     = false;
-  uint32_t                    wifiConnectedAtMs_     = 0;
-  uint32_t                    lastWifiAttemptAtMs_   = 0;
-  uint32_t                    wifiBackoffMs_         = Config::WIFI_RECONNECT_MIN_MS;
-  bool                        ntpConfigured_         = false;
+  ProvisioningPairingManager* provisioning_             = nullptr;
+  bool                        wifiAttemptActive_        = false;
+  uint8_t                     wifiConnectAttemptNum_    = 0;
+  uint32_t                    wifiConnectedAtMs_        = 0;
+  uint32_t                    wifiDhcpWaitStartMs_      = 0;
+  uint32_t                    lastWifiAttemptAtMs_      = 0;
+  uint32_t                    wifiBackoffMs_            = 12000UL;
+  bool                        ntpConfigured_            = false;
+  bool                        firstTelemetryPublished_  = false;
 
   bool                        idTokenValid_          = false;
   bool                        sparkDirectMode_       = false;
   String                      idToken_;
   uint32_t                    idTokenObtainedAtMs_   = 0;
   uint32_t                    lastAuthAttemptAtMs_   = 0;
-  uint32_t                    lastSuccessfulSyncMs_  = 0;
-  uint32_t                    lastDirectWeatherAtMs_ = 0;
-  float                       deviceLat_             = Secrets::DEFAULT_WEATHER_LATITUDE;
-  float                       deviceLon_             = Secrets::DEFAULT_WEATHER_LONGITUDE;
+  uint32_t                    lastSuccessfulSyncMs_     = 0;
+  uint32_t                    lastDirectWeatherAtMs_    = 0;
+  uint32_t                    lastDirectWeatherRetryMs_ = 0;
+  uint64_t                    lastCloudWeatherFetched_  = 0;
+  bool                        ownerLocationLoaded_      = false;
+  float                       deviceLat_                = Secrets::DEFAULT_WEATHER_LATITUDE;
+  float                       deviceLon_                = Secrets::DEFAULT_WEATHER_LONGITUDE;
+  char                        deviceLocationName_[48]   = "";
 };

@@ -42,11 +42,20 @@ class NotificationHistoryRepository(
                 isCompleted = notification.isCompleted
             )
             notificationDao.insertNotification(entity)
+            notificationDao.pruneOldNotifications()
             Log.d("NotificationHistoryRepository", "Notification saved to local database: $id")
             id
         } catch (e: Exception) {
             Log.e("NotificationHistoryRepository", "Failed to save notification", e)
             ""
+        }
+    }
+
+    suspend fun pruneHistory() {
+        try {
+            notificationDao.pruneOldNotifications()
+        } catch (e: Exception) {
+            Log.e("NotificationHistoryRepository", "Failed to prune notification history", e)
         }
     }
 

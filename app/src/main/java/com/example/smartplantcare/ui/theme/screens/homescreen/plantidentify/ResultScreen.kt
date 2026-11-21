@@ -181,7 +181,10 @@ fun PlantResultScreen(
             Button(
                 onClick = onCaptureAnother,
                 shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = HomeColors.ForestPrimary),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = HomeColors.ForestPrimary,
+                    contentColor = Color.White
+                ),
                 modifier = Modifier
                     .fillMaxWidth()
                     .navigationBarsPadding()
@@ -486,7 +489,10 @@ fun ErrorScreen(
             Spacer(modifier = Modifier.height(6.dp))
             Button(
                 onClick = onRetry,
-                colors = ButtonDefaults.buttonColors(containerColor = HomeColors.ForestPrimary),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = HomeColors.ForestPrimary,
+                    contentColor = Color.White
+                ),
                 shape = RoundedCornerShape(14.dp),
                 modifier = Modifier
                     .fillMaxWidth()

@@ -39,4 +39,6 @@ class SoilMoistureManager {
   SoilZoneStatus zones_[3];
   bool           faultEventSent_[3]   = {false, false, false};
   bool           lowSoilEventSent_[3] = {false, false, false};
+  uint8_t        validStreak_[3]      = {0, 0, 0};
+  uint32_t       lastFaultEventMs_[3] = {0, 0, 0};
 };

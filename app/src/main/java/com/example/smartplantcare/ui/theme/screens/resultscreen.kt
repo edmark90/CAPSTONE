@@ -82,7 +82,10 @@ fun ResultScreen(
             ) {
                 Button(
                     onClick = { onViewTreatmentPlan() },
-                    colors = ButtonDefaults.buttonColors(containerColor = DarkGreen),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = DarkGreen,
+                        contentColor = Color.White
+                    ),
                     shape = RoundedCornerShape(14.dp),
                     modifier = Modifier
                         .fillMaxWidth()

@@ -244,7 +244,10 @@ fun AIDoctorScreen(
 
                     Button(
                         onClick = onIdentifyClick,
-                        colors = ButtonDefaults.buttonColors(containerColor = HomeColors.ForestPrimary),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = HomeColors.ForestPrimary,
+                            contentColor = Color.White
+                        ),
                         shape = RoundedCornerShape(12.dp),
                         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 9.dp)
                     ) {

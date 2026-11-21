@@ -84,6 +84,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -128,8 +130,8 @@ internal fun MyPlantsScanStepScreen(
             .background(HomeColors.PageBg)
             .statusBarsPadding()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 22.dp)
-            .padding(top = 16.dp, bottom = HomeDimens.BottomBarClearance),
+            .padding(horizontal = 16.dp)
+            .padding(top = 14.dp, bottom = HomeDimens.BottomBarClearance),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         if (hasExistingDevices) {
@@ -432,7 +434,8 @@ internal fun MyPlantsScanStepScreen(
                                 },
                                 fontFamily = HomeInterFont,
                                 fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
                             )
                         }
                     }
@@ -530,7 +533,8 @@ internal fun MyPlantsScanStepScreen(
                         text = "Connecting to ESP32...",
                         fontFamily = HomeInterFont,
                         fontSize = 15.sp,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White
                     )
                 } else {
                     Text(
@@ -541,7 +545,8 @@ internal fun MyPlantsScanStepScreen(
                         },
                         fontFamily = HomeInterFont,
                         fontSize = 15.sp,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White
                     )
                 }
             }
@@ -676,7 +681,8 @@ private fun NearbyEspCard(
                     text = "Connect",
                     fontFamily = HomeInterFont,
                     fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White
                 )
             }
         }
@@ -707,8 +713,8 @@ internal fun MyPlantsWifiSetupScreen(
             .background(HomeColors.PageBg)
             .statusBarsPadding()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp)
-            .padding(top = 12.dp, bottom = HomeDimens.BottomBarClearance)
+            .padding(horizontal = 16.dp)
+            .padding(top = 14.dp, bottom = HomeDimens.BottomBarClearance)
     ) {
         // Top Bar
         Row(
@@ -981,24 +987,40 @@ internal fun MyPlantsWifiSetupScreen(
                 }
 
                 // Selected Wi-Fi Password + Physical Claim Code Inputs
+                val selectedNet = uiState.scannedWifiNetworks.firstOrNull { it.ssid == uiState.selectedWifiSsid }
                 Spacer(modifier = Modifier.height(6.dp))
                 OutlinedTextField(
                     value = uiState.wifiPassword,
                     onValueChange = onPasswordChange,
                     label = {
                         Text(
-                            text = if (uiState.selectedWifiSsid.isNotBlank()) {
-                                "Password for ${uiState.selectedWifiSsid}"
-                            } else {
-                                "Wi-Fi Password"
+                            text = when {
+                                selectedNet != null && !selectedNet.secure ->
+                                    "Password for ${uiState.selectedWifiSsid} (Optional - Open)"
+                                uiState.selectedWifiSsid.isNotBlank() ->
+                                    "Password for ${uiState.selectedWifiSsid}"
+                                else -> "Wi-Fi Password"
                             },
                             fontFamily = HomeInterFont
+                        )
+                    },
+                    supportingText = {
+                        Text(
+                            text = "Case-sensitive • Tap the eye icon to verify exact spelling",
+                            fontFamily = HomeInterFont,
+                            fontSize = 11.sp,
+                            color = HomeColors.TextSecondary
                         )
                     },
                     singleLine = true,
                     enabled = !uiState.isProvisioning,
                     visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.None,
+                        autoCorrectEnabled = false,
+                        keyboardType = KeyboardType.Password,
+                        imeAction = ImeAction.Done
+                    ),
                     trailingIcon = {
                         IconButton(onClick = { passwordVisible = !passwordVisible }) {
                             Icon(
@@ -1123,7 +1145,8 @@ internal fun MyPlantsWifiSetupScreen(
                 text = if (uiState.isProvisioning) "Setting Up ESP32..." else "Save Wi-Fi & Finish Setup",
                 fontFamily = HomeInterFont,
                 fontSize = 15.sp,
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.Bold,
+                color = Color.White
             )
         }
     }
@@ -1251,12 +1274,16 @@ private fun JoinSharedDeviceDialog(
                         enabled = !isSubmitting && code.trim().length >= 6,
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(14.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = HomeColors.ForestPrimary)
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = HomeColors.ForestPrimary,
+                            contentColor = Color.White
+                        )
                     ) {
                         Text(
                             text = if (isSubmitting) "Joining..." else "Join Box",
                             fontFamily = HomeInterFont,
-                            fontWeight = FontWeight.SemiBold
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White
                         )
                     }
                 }
@@ -1491,13 +1518,17 @@ internal fun AuthRequiredDialog(
                         .fillMaxWidth()
                         .height(48.dp),
                     shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = HomeColors.ForestPrimary)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = HomeColors.ForestPrimary,
+                        contentColor = Color.White
+                    )
                 ) {
                     Text(
                         text = "Sign In / Create Account",
                         fontFamily = HomeInterFont,
                         fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White
                     )
                 }
                 Spacer(modifier = Modifier.height(8.dp))

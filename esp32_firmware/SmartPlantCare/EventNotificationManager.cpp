@@ -23,6 +23,11 @@ void EventNotificationManager::setIdentity(const char* deviceId,
     snprintf(bootId_, sizeof(bootId_), "%s", bootId);
   }
   ownershipEpoch_ = ownershipEpoch;
+  for (size_t i = 0; i < Config::EVENT_QUEUE_CAPACITY; ++i) {
+    if (queue_[i].occupied) {
+      queue_[i].ownershipEpoch = ownershipEpoch_;
+    }
+  }
 }
 
 bool EventNotificationManager::enqueueEvent(const char* type,

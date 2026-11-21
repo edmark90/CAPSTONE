@@ -310,7 +310,10 @@ fun TreatmentPlanDetailScreen(
                         Button(
                             onClick = onBackClick,
                             shape = RoundedCornerShape(14.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = HomeColors.ForestPrimary)
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = HomeColors.ForestPrimary,
+                                contentColor = Color.White
+                            )
                         ) {
                             Text("Go Back", color = Color.White, fontWeight = FontWeight.SemiBold)
                         }
@@ -900,7 +903,10 @@ fun TimelineItem(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(46.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = HomeColors.ForestPrimary),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = HomeColors.ForestPrimary,
+                                contentColor = Color.White
+                            ),
                             shape = RoundedCornerShape(12.dp)
                         ) {
                             Icon(Icons.Default.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))

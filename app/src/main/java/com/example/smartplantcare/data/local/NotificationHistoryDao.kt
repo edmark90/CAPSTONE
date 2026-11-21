@@ -13,11 +13,14 @@ interface NotificationHistoryDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertNotification(notification: NotificationHistoryEntity)
     
-    @Query("SELECT * FROM notification_history ORDER BY timestamp DESC")
+    @Query("SELECT * FROM notification_history ORDER BY timestamp DESC LIMIT 50")
     fun getAllNotifications(): Flow<List<NotificationHistoryEntity>>
     
-    @Query("SELECT * FROM notification_history WHERE isRead = 0 ORDER BY timestamp DESC")
+    @Query("SELECT * FROM notification_history WHERE isRead = 0 ORDER BY timestamp DESC LIMIT 50")
     fun getUnreadNotifications(): Flow<List<NotificationHistoryEntity>>
+    
+    @Query("DELETE FROM notification_history WHERE id NOT IN (SELECT id FROM notification_history ORDER BY timestamp DESC LIMIT 50)")
+    suspend fun pruneOldNotifications()
     
     @Query("SELECT COUNT(*) FROM notification_history WHERE isRead = 0")
     suspend fun getUnreadCount(): Int

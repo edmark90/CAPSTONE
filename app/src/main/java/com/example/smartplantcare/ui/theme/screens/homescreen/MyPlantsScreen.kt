@@ -13,6 +13,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -22,10 +23,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.smartplantcare.iot.EspScanBlocker
+import com.example.smartplantcare.iot.IotDomainLogic
 import com.example.smartplantcare.iot.MyPlantsStep
 import com.example.smartplantcare.iot.MyPlantsSubPage
 import com.example.smartplantcare.iot.MyPlantsViewModel
@@ -41,10 +46,11 @@ fun MyPlantsScreen(
     userId: String? = FirebaseAuth.getInstance().currentUser?.uid,
     userEmail: String = "",
     userName: String = "",
-    onNavigateToLogin: () -> Unit = {}
+    onNavigateToLogin: () -> Unit = {},
+    sharedViewModel: MyPlantsViewModel? = null
 ) {
     val context = LocalContext.current
-    val vm: MyPlantsViewModel = viewModel(
+    val vm: MyPlantsViewModel = sharedViewModel ?: viewModel(
         factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -55,6 +61,18 @@ fun MyPlantsScreen(
 
     val uiState by vm.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    // Automatically re-attach Firebase stream & fetch fresh ESP32 heartbeat whenever user returns to app
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                vm.resyncLiveDevice(silent = true)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     LaunchedEffect(userId, userEmail, userName, isGuest, isAuthenticated) {
         val effectiveUid = if (isAuthenticated && !isGuest) {
@@ -106,6 +124,73 @@ fun MyPlantsScreen(
         }
     }
 
+    val ownerGpsPermissions = remember {
+        arrayOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        )
+    }
+
+    val ownerLocationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { grants ->
+        val granted = grants[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            grants[Manifest.permission.ACCESS_COARSE_LOCATION] == true ||
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+        vm.onOwnerLocationPermissionResult(granted)
+    }
+
+    // Strict OWNER-ONLY mobile GPS prompt: shared OPERATOR / VIEWER users are NEVER asked for location.
+    LaunchedEffect(uiState.step, uiState.shouldPromptOwnerLocation, uiState.activeRole) {
+        if (uiState.step == MyPlantsStep.LIVE_DASHBOARD &&
+            uiState.shouldPromptOwnerLocation &&
+            IotDomainLogic.canRequestDeviceLocationPermission(uiState.activeRole)
+        ) {
+            vm.consumeOwnerLocationPrompt()
+            val alreadyGranted = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED ||
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                ) == PackageManager.PERMISSION_GRANTED
+            if (alreadyGranted) {
+                vm.refreshWeatherWithOwnerGps(silent = true)
+            } else {
+                ownerLocationPermissionLauncher.launch(ownerGpsPermissions)
+            }
+        }
+    }
+
+    fun requestWeatherOrOwnerGpsRefresh() {
+        if (IotDomainLogic.canRequestDeviceLocationPermission(uiState.activeRole)) {
+            val alreadyGranted = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED ||
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                ) == PackageManager.PERMISSION_GRANTED
+            if (alreadyGranted) {
+                vm.refreshWeatherWithOwnerGps(silent = false)
+            } else {
+                ownerLocationPermissionLauncher.launch(ownerGpsPermissions)
+            }
+        } else {
+            // Shared Operator / Viewer: refresh forecast using Owner's saved coordinates (no GPS prompt!)
+            vm.refreshWeatherForSavedBoxLocation(silent = false)
+        }
+    }
+
     fun requestScanWithPermissions() {
         val fineGranted = ContextCompat.checkSelfPermission(
             context,
@@ -133,7 +218,9 @@ fun MyPlantsScreen(
             .background(HomeColors.PageBg)
     ) {
         when {
-            uiState.isLoadingInitialDevices && isAuthenticated && !isGuest -> {
+            (uiState.isLoadingInitialDevices ||
+                (uiState.step == MyPlantsStep.LIVE_DASHBOARD && uiState.liveSnapshot == null)) &&
+                isAuthenticated && !isGuest -> {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(color = HomeColors.ForestPrimary)
                 }
@@ -196,11 +283,15 @@ fun MyPlantsScreen(
                             onAddAnotherDevice = { vm.openAddAnotherDeviceFlow() },
                             onOpenSubPage = { vm.openSubPage(it) },
                             onSwitchMode = { vm.switchMode(it) },
+                            onSwitchAutoIrrigation = { vm.switchAutoIrrigation(it) },
                             onSelectPulseSec = { crop, sec -> vm.setPulseSecondsForCrop(crop, sec) },
                             onManualWater = { vm.triggerManualWater(it) },
                             onEmergencyStop = { vm.triggerEmergencyStop() },
                             onClearEmergency = { vm.clearEmergencyFault() },
-                            onMuteBuzzer = { vm.muteBuzzerCommand() }
+                            onMuteBuzzer = { vm.muteBuzzerCommand() },
+                            onRefreshWeather = { requestWeatherOrOwnerGpsRefresh() },
+                            onEnablePhysicalLoads = { vm.enablePhysicalRelayLoads() },
+                            onResyncDevice = { vm.resyncLiveDevice(silent = false) }
                         )
                     }
                 }

@@ -48,4 +48,6 @@ class ReservoirManager {
   uint32_t            lowSinceMs_        = 0;
   bool                criticalLockout_   = true;  // Start locked until first valid reading > cutoff
   ReservoirLevelState lastNotifiedState_ = ReservoirLevelState::NORMAL;
+  uint8_t             validStreak_       = 0;
+  uint32_t            lastFaultEventMs_  = 0;
 };

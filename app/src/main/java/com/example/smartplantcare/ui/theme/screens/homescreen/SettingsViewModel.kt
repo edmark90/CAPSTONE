@@ -54,7 +54,12 @@ data class SettingsState(
     val treatmentMorningHour: Int = 8,
     val treatmentMorningMinute: Int = 0,
     val treatmentEveningHour: Int = 18,
-    val treatmentEveningMinute: Int = 0
+    val treatmentEveningMinute: Int = 0,
+    // Storage, Units & Hardware Guide
+    val cacheSizeFormatted: String = "0 KB",
+    val temperatureUnit: String = "C",
+    val measurementUnit: String = "in",
+    val showHardwareGuideDialog: Boolean = false
 )
 
 class SettingsViewModel(
@@ -91,6 +96,8 @@ class SettingsViewModel(
         val treatmentMorningMinute = prefs.getInt("treatment_morning_minute", 0)
         val treatmentEveningHour = prefs.getInt("treatment_evening_hour", 18)
         val treatmentEveningMinute = prefs.getInt("treatment_evening_minute", 0)
+        val temperatureUnit = prefs.getString("temp_unit", "C") ?: "C"
+        val measurementUnit = prefs.getString("measurement_unit", "in") ?: "in"
 
         _state.value = _state.value.copy(
             language = language,
@@ -106,8 +113,12 @@ class SettingsViewModel(
             treatmentMorningHour = treatmentMorningHour,
             treatmentMorningMinute = treatmentMorningMinute,
             treatmentEveningHour = treatmentEveningHour,
-            treatmentEveningMinute = treatmentEveningMinute
+            treatmentEveningMinute = treatmentEveningMinute,
+            temperatureUnit = temperatureUnit,
+            measurementUnit = measurementUnit
         )
+
+        refreshCacheSize()
     }
 
     private fun loadAuthState() {
@@ -523,6 +534,87 @@ class SettingsViewModel(
 
     fun clearSnackbar() {
         _state.value = _state.value.copy(snackbarMessage = null)
+    }
+
+    // ─── Storage & Cache Management ──────────────────────────────────────────
+
+    fun refreshCacheSize() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val sizeStr = calculateCacheSize()
+            _state.value = _state.value.copy(cacheSizeFormatted = sizeStr)
+        }
+    }
+
+    private fun calculateCacheSize(): String {
+        return try {
+            var size = getDirSize(context.cacheDir)
+            context.externalCacheDir?.let { size += getDirSize(it) }
+            formatFileSize(size)
+        } catch (e: Exception) {
+            "0 KB"
+        }
+    }
+
+    private fun getDirSize(dir: java.io.File?): Long {
+        if (dir == null || !dir.exists()) return 0L
+        var bytes = 0L
+        dir.listFiles()?.forEach { file ->
+            bytes += if (file.isDirectory) getDirSize(file) else file.length()
+        }
+        return bytes
+    }
+
+    private fun formatFileSize(bytes: Long): String {
+        return when {
+            bytes >= 1024 * 1024 -> String.format(Locale.US, "%.1f MB", bytes / (1024f * 1024f))
+            bytes >= 1024 -> String.format(Locale.US, "%.0f KB", bytes / 1024f)
+            else -> "$bytes B"
+        }
+    }
+
+    fun clearAppCache() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                deleteDirContents(context.cacheDir)
+                context.externalCacheDir?.let { deleteDirContents(it) }
+                val newSize = calculateCacheSize()
+                _state.value = _state.value.copy(
+                    cacheSizeFormatted = newSize,
+                    snackbarMessage = "App cache cleared successfully."
+                )
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(snackbarMessage = "Failed to clear cache.")
+            }
+        }
+    }
+
+    private fun deleteDirContents(dir: java.io.File?): Boolean {
+        if (dir == null || !dir.exists()) return true
+        var success = true
+        dir.listFiles()?.forEach { file ->
+            if (file.isDirectory) {
+                if (!deleteDirContents(file) || !file.delete()) success = false
+            } else {
+                if (!file.delete()) success = false
+            }
+        }
+        return success
+    }
+
+    // ─── Units & Hardware Guide ──────────────────────────────────────────────
+
+    fun setTemperatureUnit(unit: String) {
+        prefs.edit().putString("temp_unit", unit).apply()
+        _state.value = _state.value.copy(temperatureUnit = unit)
+    }
+
+    fun setMeasurementUnit(unit: String) {
+        prefs.edit().putString("measurement_unit", unit).apply()
+        _state.value = _state.value.copy(measurementUnit = unit)
+    }
+
+    fun setShowHardwareGuideDialog(show: Boolean) {
+        _state.value = _state.value.copy(showHardwareGuideDialog = show)
     }
 
     // ─── Locale Helper ────────────────────────────────────────────────────────
