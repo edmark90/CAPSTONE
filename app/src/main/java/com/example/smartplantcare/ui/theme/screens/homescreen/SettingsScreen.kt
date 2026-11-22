@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -22,6 +23,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -55,6 +57,7 @@ import com.example.smartplantcare.ui.theme.SoftGreen
 import com.example.smartplantcare.ui.theme.TextDark
 import com.example.smartplantcare.ui.theme.TextLight
 import com.example.smartplantcare.ui.theme.TextMedium
+import com.example.smartplantcare.util.NetworkMonitor
 
 // ─── Design Tokens (shared from HomeUiTokens) ────────────────────────────────
 private val PageBg        = HomeColors.PageBg
@@ -425,13 +428,13 @@ fun SettingsScreen(
                 .padding(paddingValues)
                 .verticalScroll(rememberScrollState())
                 .padding(bottom = HomeDimens.BottomBarClearance),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            verticalArrangement = Arrangement.spacedBy(HomeDimens.SectionSpacing)
         ) {
             HeaderSection()
 
             Column(
-                modifier = Modifier.padding(horizontal = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                modifier = Modifier.padding(horizontal = HomeDimens.ScreenHorizontalPadding),
+                verticalArrangement = Arrangement.spacedBy(HomeDimens.SectionSpacing)
             ) {
                 ProfileSection(
                     state = state,
@@ -538,8 +541,8 @@ fun HeaderSection() {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .padding(top = 16.dp, bottom = 16.dp)
+                .padding(horizontal = HomeDimens.ScreenHorizontalPadding)
+                .padding(top = HomeDimens.ScreenTopPadding, bottom = 16.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -550,24 +553,34 @@ fun HeaderSection() {
                     Text(
                         text = stringResource(R.string.settings_title),
                         fontFamily = InterFont,
-                        fontSize = 24.sp,
+                        fontSize = 23.sp,
                         fontWeight = FontWeight.Bold,
-                        color = TextDark
+                        color = HomeColors.TextPrimary
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(3.dp))
                     Text(
                         text = stringResource(R.string.settings_subtitle),
                         fontFamily = InterFont,
-                        fontSize = 13.sp,
-                        color = TextMedium
+                        fontSize = 12.sp,
+                        color = HomeColors.TextSecondary
                     )
                 }
                 Spacer(modifier = Modifier.width(12.dp))
-                Image(
-                    painter = painterResource(id = R.drawable.appslogo2),
-                    contentDescription = null,
-                    modifier = Modifier.size(44.dp)
-                )
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = HomeColors.PageBg,
+                    border = BorderStroke(1.dp, CardBorder),
+                    modifier = Modifier.size(46.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(6.dp)) {
+                        Image(
+                            painter = painterResource(id = R.drawable.appslogo2),
+                            contentDescription = null,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Fit
+                        )
+                    }
+                }
             }
         }
         HorizontalDivider(color = DividerLine, thickness = 1.dp)
@@ -633,40 +646,51 @@ fun ProfileSection(
                             ) {
                                 Button(
                                     onClick = onSignInClick,
-                                    shape = RoundedCornerShape(20.dp),
+                                    shape = RoundedCornerShape(12.dp),
                                     colors = ButtonDefaults.buttonColors(
-                                        containerColor = PrimaryGreen,
+                                        containerColor = HomeColors.ForestPrimary,
                                         contentColor = Color.White
                                     ),
-                                    modifier = Modifier.fillMaxWidth().height(36.dp)
+                                    modifier = Modifier.fillMaxWidth().height(42.dp)
                                 ) {
-                                    Text(stringResource(R.string.sign_in), color = Color.White,
-                                        fontSize = 13.sp)
+                                    Text(
+                                        stringResource(R.string.sign_in),
+                                        fontFamily = InterFont,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Color.White,
+                                        fontSize = 13.sp
+                                    )
                                 }
                                 OutlinedButton(
                                     onClick = onSignUpClick,
-                                    shape = RoundedCornerShape(20.dp),
-                                    border = BorderStroke(1.5.dp, PrimaryGreen),
-                                    modifier = Modifier.fillMaxWidth().height(36.dp)
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = BorderStroke(1.5.dp, HomeColors.ForestPrimary),
+                                    modifier = Modifier.fillMaxWidth().height(42.dp)
                                 ) {
-                                    Text(stringResource(R.string.sign_up), color = PrimaryGreen,
-                                        fontSize = 13.sp)
+                                    Text(
+                                        stringResource(R.string.sign_up),
+                                        fontFamily = InterFont,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = HomeColors.ForestPrimary,
+                                        fontSize = 13.sp
+                                    )
                                 }
                             }
                         } else {
                             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             Button(
                                 onClick = onSignInClick,
-                                shape = RoundedCornerShape(20.dp),
+                                shape = RoundedCornerShape(12.dp),
                                 colors = ButtonDefaults.buttonColors(
-                                    containerColor = PrimaryGreen,
+                                    containerColor = HomeColors.ForestPrimary,
                                     contentColor = Color.White
                                 ),
                                 contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
-                                modifier = Modifier.height(36.dp)
+                                modifier = Modifier.height(42.dp)
                             ) {
                                 Text(
                                     text = stringResource(R.string.sign_in),
+                                    fontFamily = InterFont,
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     color = Color.White
@@ -674,16 +698,17 @@ fun ProfileSection(
                             }
                             OutlinedButton(
                                 onClick = onSignUpClick,
-                                shape = RoundedCornerShape(20.dp),
-                                border = BorderStroke(1.5.dp, PrimaryGreen),
+                                shape = RoundedCornerShape(12.dp),
+                                border = BorderStroke(1.5.dp, HomeColors.ForestPrimary),
                                 contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
-                                modifier = Modifier.height(36.dp)
+                                modifier = Modifier.height(42.dp)
                             ) {
                                 Text(
                                     text = stringResource(R.string.sign_up),
+                                    fontFamily = InterFont,
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = PrimaryGreen
+                                    color = HomeColors.ForestPrimary
                                 )
                             }
                         }
@@ -799,7 +824,7 @@ fun GoogleProfileSection(
         title = stringResource(R.string.edit_profile_name),
         onClick = onEditNameClick
     )
-    HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 56.dp))
+    HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 66.dp, end = 16.dp))
 
     SettingsMenuItem(
         icon = Icons.Outlined.Lock,
@@ -810,7 +835,7 @@ fun GoogleProfileSection(
         enabled = false,
         subtitle = stringResource(R.string.google_password_disabled)
     )
-    HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 56.dp))
+    HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 66.dp, end = 16.dp))
 
     SettingsMenuItem(
         icon = Icons.AutoMirrored.Filled.ExitToApp,
@@ -878,14 +903,14 @@ fun EmailProfileSection(
         title = stringResource(R.string.edit_profile_name),
         onClick = onEditNameClick
     )
-    HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 56.dp))
+    HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 66.dp, end = 16.dp))
 
     SettingsMenuItem(
         icon = Icons.Outlined.Lock,
         title = stringResource(R.string.change_password),
         onClick = onChangePasswordClick
     )
-    HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 56.dp))
+    HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 66.dp, end = 16.dp))
 
     SettingsMenuItem(
         icon = Icons.AutoMirrored.Filled.ExitToApp,
@@ -983,7 +1008,7 @@ fun NotificationSection(
                 isChecked = morningReminder,
                 onCheckedChange = onMorningReminderChange
             )
-            HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 56.dp))
+            HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 66.dp, end = 16.dp))
 
             SettingsSwitchItem(
                 icon = Icons.Outlined.Nightlight,
@@ -991,7 +1016,7 @@ fun NotificationSection(
                 isChecked = eveningReminder,
                 onCheckedChange = onEveningReminderChange
             )
-            HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 56.dp))
+            HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 66.dp, end = 16.dp))
 
             // Morning time row
             NotificationTimeRow(
@@ -1000,7 +1025,7 @@ fun NotificationSection(
                 enabled = morningReminder,
                 onClick = onMorningTimeClick
             )
-            HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 56.dp))
+            HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 66.dp, end = 16.dp))
 
             // Evening time row
             NotificationTimeRow(
@@ -1009,7 +1034,7 @@ fun NotificationSection(
                 enabled = eveningReminder,
                 onClick = onEveningTimeClick
             )
-            HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 56.dp))
+            HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 66.dp, end = 16.dp))
 
             SettingsSwitchItem(
                 icon = Icons.Outlined.Vibration,
@@ -1030,17 +1055,17 @@ fun AboutSection(context: android.content.Context) {
         SettingsCard {
             Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
                 AboutInfoRow(stringResource(R.string.app_version), "1.0.0")
-                AboutInfoRow(stringResource(R.string.ml_model), "int8")
-                AboutInfoRow(stringResource(R.string.disease_classes), "22")
+                AboutInfoRow(stringResource(R.string.ml_model), "On-Device AI")
+                AboutInfoRow(stringResource(R.string.disease_classes), "22 Leaf Classes")
                 AboutInfoRow(
                     stringResource(R.string.plantnet_connected),
                     stringResource(R.string.yes),
                     isValueBold = true,
-                    valueColor = PrimaryGreen
+                    valueColor = HomeColors.ForestPrimary
                 )
                 AboutInfoRow(stringResource(R.string.framework), "Jetpack Compose")
-                AboutInfoRow(stringResource(R.string.database), "Firebase")
-                AboutInfoRow(stringResource(R.string.hardware), "IoT ESP32")
+                AboutInfoRow(stringResource(R.string.database), "Cloud Sync")
+                AboutInfoRow(stringResource(R.string.hardware), "SmartPlantCare Box")
             }
 
             HorizontalDivider(color = DividerLine, thickness = 1.dp)
@@ -1459,10 +1484,12 @@ fun NotificationTimeRow(
 fun SectionTitle(title: String) {
     Text(
         text = title,
+        fontFamily = InterFont,
         fontSize = 11.sp,
         fontWeight = FontWeight.Bold,
-        letterSpacing = 1.2.sp,
-        color = TextMedium
+        letterSpacing = 1.sp,
+        color = HomeColors.TextSecondary,
+        modifier = Modifier.padding(start = 2.dp)
     )
 }
 
@@ -1470,7 +1497,7 @@ fun SectionTitle(title: String) {
 fun SettingsCard(content: @Composable () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = SurfaceWhite),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         border = BorderStroke(1.dp, CardBorder)
@@ -1656,13 +1683,21 @@ private fun SmartPlantCareBoxSection(
     ) {
         nowMs = System.currentTimeMillis()
         while (snapshot != null) {
-            kotlinx.coroutines.delay(5_000L)
+            kotlinx.coroutines.delay(2_000L)
+            NetworkMonitor.refreshOnlineState()
             nowMs = System.currentTimeMillis()
         }
     }
+    val isPhoneOnline by NetworkMonitor.isOnlineFlow.collectAsState()
+    val phoneDisconnectedAtMs by NetworkMonitor.disconnectedAtMsFlow.collectAsState()
+    val evalNowMs = if (!isPhoneOnline && phoneDisconnectedAtMs != null) {
+        phoneDisconnectedAtMs!!
+    } else {
+        nowMs
+    }
     val isOnline = snapshot != null && com.example.smartplantcare.iot.IotDomainLogic.isDeviceOnlineFresh(
         status = snapshot.status,
-        nowMs = nowMs,
+        nowMs = evalNowMs,
         receivedAtClientMs = snapshot.receivedAtClientMs,
         telemetryUpdatedAt = snapshot.telemetry.updatedAt
     )
@@ -1710,14 +1745,17 @@ private fun SmartPlantCareBoxSection(
                                     modifier = Modifier
                                         .size(8.dp)
                                         .clip(CircleShape)
-                                        .background(if (isOnline) HomeColors.SuccessGreen else HomeColors.AlertRed)
+                                        .background(if (isOnline && isPhoneOnline) HomeColors.SuccessGreen else HomeColors.AlertRed)
                                 )
                             }
                         }
                         Text(
                             text = if (isConnected) {
-                                if (isOnline) "Online • Water $reservoirPctText"
-                                else "Offline • Sensors --"
+                                when {
+                                    isOnline && !isPhoneOnline -> "No internet connection • Check your internet"
+                                    isOnline -> "Online • Water $reservoirPctText"
+                                    else -> "Offline • Sensors --"
+                                }
                             } else "Connect ESP32 for 3-zone automated care",
                             fontSize = 12.sp,
                             color = TextMedium
@@ -1729,17 +1767,20 @@ private fun SmartPlantCareBoxSection(
 
                 Button(
                     onClick = onOpenMyPlants,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(46.dp),
+                    shape = RoundedCornerShape(14.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = PrimaryGreen,
+                        containerColor = HomeColors.ForestPrimary,
                         contentColor = Color.White
                     )
                 ) {
                     Text(
                         text = if (isConnected) "Manage in My Plants" else "Pair / Connect Box",
+                        fontFamily = InterFont,
                         color = Color.White,
-                        fontWeight = FontWeight.SemiBold,
+                        fontWeight = FontWeight.Bold,
                         fontSize = 14.sp
                     )
                 }
@@ -1758,7 +1799,7 @@ private fun UnitsAndPreferencesSection(
     onOpenGuide: () -> Unit
 ) {
     Column {
-        SectionTitle("PREFERENCES & HARDWARE")
+        SectionTitle("PREFERENCES & GUIDE")
         Spacer(modifier = Modifier.height(8.dp))
         SettingsCard {
             // Temperature Unit Row
@@ -1784,16 +1825,23 @@ private fun UnitsAndPreferencesSection(
                 }
                 Spacer(modifier = Modifier.width(14.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Temperature Unit", fontSize = 15.sp, color = TextDark)
-                    Text("Display weather and sensor temp", fontSize = 12.sp, color = TextMedium)
+                    Text("Temperature Unit", fontFamily = InterFont, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = HomeColors.TextPrimary)
+                    Text("Display weather and sensor temp", fontFamily = InterFont, fontSize = 12.sp, color = HomeColors.TextSecondary)
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Spacer(modifier = Modifier.width(8.dp))
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(HomeColors.PageBg)
+                        .padding(3.dp),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
                     AmPmButton(label = "°C", selected = tempUnit == "C", onClick = { onTempUnitChange("C") })
                     AmPmButton(label = "°F", selected = tempUnit == "F", onClick = { onTempUnitChange("F") })
                 }
             }
 
-            HorizontalDivider(color = DividerLine, thickness = 1.dp)
+            HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 66.dp, end = 16.dp))
 
             // Measurement Depth Row
             Row(
@@ -1818,22 +1866,29 @@ private fun UnitsAndPreferencesSection(
                 }
                 Spacer(modifier = Modifier.width(14.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Depth Units", fontSize = 15.sp, color = TextDark)
-                    Text("Tank depth and soil height", fontSize = 12.sp, color = TextMedium)
+                    Text("Depth Units", fontFamily = InterFont, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = HomeColors.TextPrimary)
+                    Text("Tank depth and soil height", fontFamily = InterFont, fontSize = 12.sp, color = HomeColors.TextSecondary)
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    AmPmButton(label = "Inches", selected = moistureUnit == "in", onClick = { onMoistureUnitChange("in") })
+                Spacer(modifier = Modifier.width(8.dp))
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(HomeColors.PageBg)
+                        .padding(3.dp),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    AmPmButton(label = "in", selected = moistureUnit == "in", onClick = { onMoistureUnitChange("in") })
                     AmPmButton(label = "cm", selected = moistureUnit == "cm", onClick = { onMoistureUnitChange("cm") })
                 }
             }
 
-            HorizontalDivider(color = DividerLine, thickness = 1.dp)
+            HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 66.dp, end = 16.dp))
 
-            // Hardware Guide Row
+            // How It Works & FAQ Guide Row
             SettingsMenuItem(
-                icon = Icons.Outlined.MenuBook,
-                title = "Hardware & Sensors Guide",
-                subtitle = "How soil, ultrasonic, rain & relays operate",
+                icon = Icons.AutoMirrored.Outlined.MenuBook,
+                title = "How SmartPlantCare Works (FAQ)",
+                subtitle = "Rain guard, auto-watering, sounds & sharing",
                 showArrow = true,
                 onClick = onOpenGuide
             )
@@ -1873,106 +1928,156 @@ private fun StorageAndCacheSection(
                 }
                 Spacer(modifier = Modifier.width(14.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("App Image & Temp Cache", fontSize = 15.sp, color = TextDark)
-                    Text("Current size: $cacheSize", fontSize = 12.sp, color = TextMedium)
+                    Text("App Image & Temp Cache", fontFamily = InterFont, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = HomeColors.TextPrimary)
+                    Text("Current size: $cacheSize", fontFamily = InterFont, fontSize = 12.sp, color = HomeColors.TextSecondary)
                 }
+                Spacer(modifier = Modifier.width(8.dp))
                 Button(
                     onClick = onClearCache,
-                    shape = RoundedCornerShape(10.dp),
+                    shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = PrimaryGreen,
+                        containerColor = HomeColors.ForestPrimary,
                         contentColor = Color.White
                     ),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                    modifier = Modifier.height(34.dp)
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                    modifier = Modifier.height(38.dp)
                 ) {
-                    Text("Clear", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text("Clear", fontFamily = InterFont, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
     }
 }
 
-// ─── Hardware Guide Dialog ────────────────────────────────────────────────────
+// ─── How SmartPlantCare Works (Interactive FAQ Guide Dialog) ──────────────────
+private data class FaqGuideEntry(
+    val question: String,
+    val answer: String,
+    val icon: ImageVector
+)
+
 @Composable
 private fun HardwareGuideDialog(onDismiss: () -> Unit) {
-    Dialog(onDismissRequest = onDismiss) {
+    val faqItems = remember {
+        listOf(
+            FaqGuideEntry(
+                question = "How does Automatic Watering work?",
+                answer = "Your SmartPlantCare box monitors soil moisture for Tomato, Chili, and Eggplant around the clock. In Auto mode, when soil drops below your Start % dry threshold, it waters that specific plant until it reaches your Stop % target, then pauses to let the soil absorb the water.",
+                icon = Icons.Outlined.Eco
+            ),
+            FaqGuideEntry(
+                question = "How do Weather Forecast & Rain Sensor work?",
+                answer = "In Outdoor Mode, the box combines the 3-hour rain forecast (from the Owner's GPS location) with the rain sensor. The weather chance must reach your threshold FIRST before the rain sensor gets wet to pause watering as real rain. If the sensor gets wet before weather meets the threshold, it is treated as accidental wet — you receive a notification and watering continues normally.",
+                icon = Icons.Outlined.Cloud
+            ),
+            FaqGuideEntry(
+                question = "How does Water Tank protection work?",
+                answer = "The box continuously tracks how much water is left in your 7-inch tank. You get a Low Water alert at 20%, and auto-watering safely pauses at 10% or empty so the water pump never runs dry.",
+                icon = Icons.Outlined.WaterDrop
+            ),
+            FaqGuideEntry(
+                question = "What do the Box Beeps mean?",
+                answer = "• 1 short beep: Watering started, watering finished, Wi-Fi connected, or box ready.\n• 2 short beeps: Low water warning or confirmed rain pause.\n• 3 short beeps: Empty water tank or emergency safety stop.\nYou can mute box sounds anytime in Device Settings.",
+                icon = Icons.Outlined.NotificationsActive
+            ),
+            FaqGuideEntry(
+                question = "What is Outdoor vs. Indoor Mode?",
+                answer = "Outdoor Mode turns on weather and rain protection so your plants are not overwatered during rain. Indoor Mode turns off rain checks so indoor or greenhouse plants follow their normal soil moisture schedule.",
+                icon = Icons.Outlined.WbSunny
+            ),
+            FaqGuideEntry(
+                question = "How does Sharing a Plant Box work?",
+                answer = "Only the Owner can create a 24-hour invite code in Share My Plant. Invite family or caretakers as Operator (can water and adjust settings) or Viewer (view-only). Shared members automatically use the Owner's saved box location without needing GPS permission.",
+                icon = Icons.Outlined.Group
+            )
+        )
+    }
+
+    var expandedIndex by remember { mutableIntStateOf(0) }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
         Surface(
             shape = RoundedCornerShape(24.dp),
             color = SurfaceWhite,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 16.dp)
+                .padding(horizontal = 20.dp, vertical = 24.dp)
         ) {
             Column(
                 modifier = Modifier
-                    .padding(22.dp)
+                    .padding(20.dp)
                     .verticalScroll(rememberScrollState())
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(
                         modifier = Modifier
-                            .size(42.dp)
-                            .clip(CircleShape)
-                            .background(SoftGreen),
+                            .size(44.dp)
+                            .clip(RoundedCornerShape(13.dp))
+                            .background(HomeColors.SoftMint),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = Icons.Outlined.Memory,
+                            imageVector = Icons.AutoMirrored.Outlined.MenuBook,
                             contentDescription = null,
-                            tint = PrimaryGreen,
+                            tint = HomeColors.ForestPrimary,
                             modifier = Modifier.size(22.dp)
                         )
                     }
                     Spacer(modifier = Modifier.width(12.dp))
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Hardware & Sensors Guide",
+                            text = "How SmartPlantCare Works",
                             fontFamily = InterFont,
                             fontSize = 17.sp,
                             fontWeight = FontWeight.Bold,
-                            color = TextDark
+                            color = HomeColors.TextPrimary
                         )
                         Text(
-                            text = "SmartPlantCare ESP32 Architecture",
+                            text = "Tap any question to learn more",
+                            fontFamily = InterFont,
                             fontSize = 12.sp,
-                            color = TextMedium
+                            color = HomeColors.TextSecondary
                         )
                     }
                 }
+
                 Spacer(modifier = Modifier.height(16.dp))
 
-                GuideItem(
-                    title = "🌱 3-Zone Soil Moisture Sensors",
-                    desc = "Capacitive analog sensors in Tomato (GPIO 34), Chili (GPIO 35), and Eggplant (GPIO 32). In Auto mode, irrigation automatically triggers when moisture falls below the dry threshold and stops when target % is reached."
-                )
-                Spacer(modifier = Modifier.height(10.dp))
-                GuideItem(
-                    title = "💧 Ultrasonic Water Tank Level (HC-SR04)",
-                    desc = "Measures reservoir depth calibrated for a standard 7-inch (17.8 cm) tank. Real-time water percentage is tracked, and low-water safety locks prevent the 12V pump from dry-running when level falls below 20%."
-                )
-                Spacer(modifier = Modifier.height(10.dp))
-                GuideItem(
-                    title = "🌧️ Rain & Weather Safety Gate",
-                    desc = "The physical digital rain sensor (GPIO 39) combined with GPS open-meteo hourly forecasts halts irrigation during rainfall, protecting plant root systems from over-saturation."
-                )
-                Spacer(modifier = Modifier.height(10.dp))
-                GuideItem(
-                    title = "⚡ Dual 4-Channel Relay Actuation",
-                    desc = "Irrigation energizes the 12V submersible power pump and the selected plant zone's 12V solenoid valve simultaneously, delivering water exclusively to the designated plant."
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    faqItems.forEachIndexed { index, item ->
+                        FaqAccordionItem(
+                            item = item,
+                            expanded = expandedIndex == index,
+                            onToggle = {
+                                expandedIndex = if (expandedIndex == index) -1 else index
+                            }
+                        )
+                    }
+                }
 
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(18.dp))
+
                 Button(
                     onClick = onDismiss,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(46.dp),
+                    shape = RoundedCornerShape(14.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = PrimaryGreen,
+                        containerColor = HomeColors.ForestPrimary,
                         contentColor = Color.White
                     )
                 ) {
-                    Text("Got It", color = Color.White, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        text = "Got It",
+                        fontFamily = InterFont,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp
+                    )
                 }
             }
         }
@@ -1980,17 +2085,74 @@ private fun HardwareGuideDialog(onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun GuideItem(title: String, desc: String) {
+private fun FaqAccordionItem(
+    item: FaqGuideEntry,
+    expanded: Boolean,
+    onToggle: () -> Unit
+) {
     Surface(
-        shape = RoundedCornerShape(14.dp),
-        color = HomeColors.PageBg,
-        border = BorderStroke(1.dp, CardBorder),
-        modifier = Modifier.fillMaxWidth()
+        shape = RoundedCornerShape(16.dp),
+        color = if (expanded) HomeColors.SoftMint.copy(alpha = 0.45f) else HomeColors.PageBg,
+        border = BorderStroke(
+            width = 1.dp,
+            color = if (expanded) HomeColors.ForestPrimary.copy(alpha = 0.28f) else CardBorder
+        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onToggle)
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Text(text = title, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = TextDark)
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(text = desc, fontSize = 12.sp, color = TextMedium, lineHeight = 17.sp)
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(9.dp))
+                        .background(if (expanded) HomeColors.ForestPrimary else HomeColors.SoftMint),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = item.icon,
+                        contentDescription = null,
+                        tint = if (expanded) Color.White else HomeColors.ForestPrimary,
+                        modifier = Modifier.size(17.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(
+                    text = item.question,
+                    fontFamily = InterFont,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = HomeColors.TextPrimary,
+                    lineHeight = 18.sp,
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Icon(
+                    imageVector = if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                    contentDescription = if (expanded) "Collapse" else "Expand",
+                    tint = HomeColors.ForestMedium,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            AnimatedVisibility(visible = expanded) {
+                Column {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    HorizontalDivider(color = HomeColors.DividerLine, thickness = 1.dp)
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = item.answer,
+                        fontFamily = InterFont,
+                        fontSize = 12.sp,
+                        color = HomeColors.TextSecondary,
+                        lineHeight = 18.sp
+                    )
+                }
+            }
         }
     }
 }

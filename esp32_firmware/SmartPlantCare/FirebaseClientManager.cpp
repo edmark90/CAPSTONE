@@ -18,6 +18,7 @@ constexpr uint32_t DIRECT_WEATHER_RETRY_MS        = 30000UL;    // Retry failed 
 
 void FirebaseClientManager::begin(ProvisioningPairingManager* provisioning) {
   provisioning_ = provisioning;
+  rtdbClient_.setInsecure();
   if (!provisioning_ || !provisioning_->isSetupApActive()) {
     WiFi.mode(WIFI_STA);
   }
@@ -50,6 +51,7 @@ void FirebaseClientManager::serviceNetworkAndTime(uint32_t nowMs,
   // CRITICAL: Do not run STA reconnect/channel-hopping scans while the SPC-SETUP-* SoftAP
   // or live Wi-Fi password verification test is active.
   if (provisioning_->isSetupApActive() || provisioning_->isWifiTestInProgress()) {
+    resetRtdbConnection();
     return;
   }
 
@@ -105,6 +107,7 @@ void FirebaseClientManager::serviceNetworkAndTime(uint32_t nowMs,
 
   wifiConnectedAtMs_ = 0;
   ioDiag.wifiRssiDbm = -127;
+  resetRtdbConnection();
   // Connect IMMEDIATELY on boot (lastWifiAttemptAtMs_ == 0), then retry every 12s..20s
   // using alternating standard & compatibility profiles so post-reboot reconnect ALWAYS succeeds!
   if (lastWifiAttemptAtMs_ == 0 || (nowMs - lastWifiAttemptAtMs_ >= wifiBackoffMs_)) {
@@ -557,6 +560,51 @@ void FirebaseClientManager::pollPendingCommandsOnly(
   syncPendingCommands(nowMs, cfg, irrigation, buzzer);
 }
 
+void FirebaseClientManager::pollConfigOnly(
+    uint32_t nowMs,
+    RuntimeConfig& ioConfig,
+    RelayController& relays,
+    BuzzerManager& buzzer) {
+  if (!ensureValidAuth(nowMs) || !provisioning_) {
+    return;
+  }
+  if (provisioning_->ownershipState() != OwnershipState::OWNED) {
+    return;
+  }
+  syncConfigNode(ioConfig, relays, buzzer);
+}
+
+void FirebaseClientManager::pollMetaOnly(
+    uint32_t nowMs,
+    RuntimeConfig& ioConfig,
+    RelayController& relays,
+    IrrigationController& irrigation,
+    BuzzerManager& buzzer,
+    EventNotificationManager& events,
+    LcdManager& lcd) {
+  if (!ensureValidAuth(nowMs) || !provisioning_) {
+    return;
+  }
+  syncMetaNode(nowMs, ioConfig, relays, irrigation, buzzer, events, lcd);
+
+  if (provisioning_->isResetAckPendingToCloud()) {
+    if (sendResetAckToBackend(nowMs)) {
+      resetRtdbConnection();
+      provisioning_->finalizeLocalUnclaimAndEnterSetup(ioConfig, true);
+    }
+  }
+}
+
+void FirebaseClientManager::pollWeatherOnly(uint32_t nowMs, RainWeatherManager& rainWeather) {
+  if (!ensureValidAuth(nowMs) || !provisioning_) {
+    return;
+  }
+  if (provisioning_->ownershipState() != OwnershipState::OWNED) {
+    return;
+  }
+  syncWeatherNode(nowMs, rainWeather);
+}
+
 void FirebaseClientManager::pollCloudControlAndWeather(
     uint32_t nowMs,
     RuntimeConfig& ioConfig,
@@ -567,26 +615,14 @@ void FirebaseClientManager::pollCloudControlAndWeather(
     EventNotificationManager& events,
     LcdManager& lcd,
     DiagnosticsMetrics& ioDiag) {
-  if (!ensureValidAuth(nowMs) || !provisioning_) {
+  (void)ioDiag;
+  pollMetaOnly(nowMs, ioConfig, relays, irrigation, buzzer, events, lcd);
+  if (!provisioning_ || provisioning_->ownershipState() != OwnershipState::OWNED) {
     return;
   }
-
-  syncMetaNode(nowMs, ioConfig, relays, irrigation, buzzer, events, lcd);
-
-  if (provisioning_->isResetAckPendingToCloud()) {
-    if (sendResetAckToBackend(nowMs)) {
-      provisioning_->finalizeLocalUnclaimAndEnterSetup(ioConfig, true);
-    }
-    return;
-  }
-
-  if (provisioning_->ownershipState() != OwnershipState::OWNED) {
-    return;
-  }
-
-  syncWeatherNode(nowMs, rainWeather);
-  syncConfigNode(ioConfig, relays, buzzer);
-  syncPendingCommands(nowMs, ioConfig, irrigation, buzzer);
+  pollWeatherOnly(nowMs, rainWeather);
+  pollConfigOnly(nowMs, ioConfig, relays, buzzer);
+  pollPendingCommandsOnly(nowMs, ioConfig, irrigation, buzzer);
 }
 
 void FirebaseClientManager::syncMetaNode(
@@ -646,7 +682,8 @@ void FirebaseClientManager::syncMetaNode(
       }
       if (coordsChanged) {
         // Force immediate weather refresh for the Owner's updated mobile GPS location
-        lastDirectWeatherAtMs_ = 0;
+        lastDirectWeatherAtMs_   = 0;
+        weatherRefreshRequested_ = true;
         Serial.printf("[WEATHER] Adopted Owner GPS location: '%s' (lat=%.4f, lon=%.4f)\n",
                       deviceLocationName_[0] ? deviceLocationName_ : "Box GPS",
                       deviceLat_, deviceLon_);
@@ -999,15 +1036,96 @@ bool FirebaseClientManager::sendResetAckToBackend(uint32_t nowMs) {
   return httpRequestJson("POST", url, body, resp);
 }
 
+void FirebaseClientManager::resetRtdbConnection() {
+  if (rtdbHttpActive_) {
+    rtdbHttp_.setReuse(false);
+    rtdbHttp_.end();
+    rtdbHttpActive_ = false;
+  }
+  rtdbClient_.stop();
+}
+
 bool FirebaseClientManager::httpRequestJson(const char* method,
                                             const String& url,
                                             const String& payload,
                                             String& outResponse) {
   if (WiFi.status() != WL_CONNECTED) {
+    resetRtdbConnection();
     return false;
   }
 
   const bool isHttps = url.startsWith("https://");
+  const bool isRtdbHttps =
+      isHttps && url.startsWith(Secrets::FIREBASE_RTDB_BASE_URL);
+
+  // Fast Path: Persistent HTTPS Keep-Alive socket dedicated to Firebase RTDB
+  // Eliminates 1.5-3.0s SSL/TLS handshakes on every poll/upload (~0.2-0.4s per request!)
+  if (isRtdbHttps) {
+    for (int attempt = 0; attempt < 2; ++attempt) {
+      if (!rtdbHttpActive_) {
+        rtdbClient_.setInsecure();
+        rtdbClient_.setTimeout(Config::HTTP_TIMEOUT_MS / 1000 + 1);
+      }
+      rtdbHttp_.setReuse(true);
+      rtdbHttp_.setTimeout(Config::HTTP_TIMEOUT_MS);
+
+      if (!rtdbHttp_.begin(rtdbClient_, url)) {
+        resetRtdbConnection();
+        continue;
+      }
+      rtdbHttpActive_ = true;
+      rtdbHttp_.addHeader("Content-Type", "application/json");
+      rtdbHttp_.addHeader("Connection", "keep-alive");
+
+      int statusCode = -1;
+      if (strcmp(method, "GET") == 0) {
+        statusCode = rtdbHttp_.GET();
+      } else if (strcmp(method, "POST") == 0) {
+        statusCode = rtdbHttp_.POST(payload);
+      } else if (strcmp(method, "PUT") == 0) {
+        statusCode = rtdbHttp_.PUT(payload);
+      } else if (strcmp(method, "PATCH") == 0) {
+        statusCode = rtdbHttp_.PATCH(payload);
+      }
+
+      if (statusCode >= 200 && statusCode < 300) {
+        outResponse = rtdbHttp_.getString();
+        // With setReuse(true), end() drains body & clears headers while keeping TLS open!
+        rtdbHttp_.end();
+        return true;
+      }
+
+      // Transport/idle-close error (<=0): tear down stale socket and silently retry once
+      if (statusCode <= 0) {
+        resetRtdbConnection();
+        if (attempt == 0) {
+          continue;
+        }
+        Serial.printf("[HTTP] %s transport error (code=%d) for %s\n",
+                      method, statusCode, url.c_str());
+        return false;
+      }
+
+      if (statusCode == 401 || statusCode == 403) {
+        idTokenValid_        = false;
+        idToken_             = "";
+        lastAuthAttemptAtMs_ = 0;
+      }
+      String errSnippet = rtdbHttp_.getString();
+      if (errSnippet.length() > 100) {
+        errSnippet = errSnippet.substring(0, 100);
+      }
+      errSnippet.replace("\n", " ");
+      errSnippet.replace("\r", " ");
+      Serial.printf("[HTTP] %s failed (code=%d) for %s %s\n",
+                    method, statusCode, url.c_str(), errSnippet.c_str());
+      rtdbHttp_.end();
+      return false;
+    }
+    return false;
+  }
+
+  // Non-RTDB hosts (Open-Meteo, Custom Token Cloud Functions): isolated temporary client
   WiFiClient       plainClient;
   WiFiClientSecure secureClient;
   HTTPClient       http;

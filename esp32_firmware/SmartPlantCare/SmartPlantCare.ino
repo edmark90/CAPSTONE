@@ -71,7 +71,9 @@ uint32_t gLastSoilMs        = 0;
 uint32_t gLastLdrMs         = 0;
 uint32_t gLastTelemetryMs   = 0;
 uint32_t gLastCommandPollMs = 0;
-uint32_t gLastCloudPollMs   = 0;
+uint32_t gLastConfigPollMs  = 0;
+uint32_t gLastMetaPollMs    = 0;
+uint32_t gLastWeatherPollMs = 0;
 uint32_t gLastDiagnosticsMs = 0;
 
 IrrigationState gPrevPublishedIrrState      = IrrigationState::BOOT_SAFE;
@@ -254,12 +256,12 @@ void loop() {
         nowMs, gEvents, gIrrigation, gDiagnostics.metrics());
   }
 
-  // ─── 11. Firebase Telemetry & Event Queue Sync (15 s; fast 4 s until first post-boot sync) ──
+  // ─── 11. Firebase Telemetry & Event Queue Sync (6 s; instant 1.5 s on irrigation/rain change) ─
   const uint32_t telemetryIntervalMs =
       (gProvisioning.ownershipState() == OwnershipState::OWNED &&
        gFirebase.isWifiConnected() &&
        gFirebase.lastSyncUptimeMs() == 0)
-          ? 4000UL
+          ? 3000UL
           : Config::INTERVAL_TELEMETRY_MS;
   const RainGateStatus& curRain = gRainWeather.rainStatus();
   bool irrStateChanged = (gIrrigation.state() != gPrevPublishedIrrState);
@@ -292,24 +294,37 @@ void loop() {
         nowMs, gEvents, gIrrigation, gDiagnostics.metrics());
   }
 
-  // ─── 12. Firebase Meta, Weather, Config & Command Poll (15 s; fast 4 s until first sync) ───
-  const uint32_t cloudPollIntervalMs =
-      (gProvisioning.ownershipState() == OwnershipState::OWNED &&
-       gFirebase.isWifiConnected() &&
-       gFirebase.lastSyncUptimeMs() == 0)
+  // ─── 12A. Staggered Firebase /config Poll (6 s, always >= 2 s after telemetry) ─
+  if (initialBootSyncDone &&
+      (nowMs - gLastConfigPollMs >= Config::INTERVAL_CONFIG_POLL_MS) &&
+      (nowMs - gLastTelemetryMs >= 2000UL)) {
+    gLastConfigPollMs = nowMs;
+    gFirebase.pollConfigOnly(nowMs, gRuntimeConfig, gRelays, gBuzzer);
+  }
+
+  // ─── 12B. Staggered Firebase /meta Poll (30 s; fast 4 s until first sync) ──
+  const uint32_t metaIntervalMs =
+      (gFirebase.isWifiConnected() && gFirebase.lastSyncUptimeMs() == 0)
           ? 4000UL
-          : Config::INTERVAL_CONFIG_POLL_MS;
-  if (nowMs - gLastCloudPollMs >= cloudPollIntervalMs) {
-    gLastCloudPollMs = nowMs;
-    gFirebase.pollCloudControlAndWeather(nowMs,
-                                         gRuntimeConfig,
-                                         gRelays,
-                                         gIrrigation,
-                                         gRainWeather,
-                                         gBuzzer,
-                                         gEvents,
-                                         gLcd,
-                                         gDiagnostics.metrics());
+          : Config::INTERVAL_META_POLL_MS;
+  if (nowMs - gLastMetaPollMs >= metaIntervalMs) {
+    gLastMetaPollMs = nowMs;
+    gFirebase.pollMetaOnly(nowMs,
+                           gRuntimeConfig,
+                           gRelays,
+                           gIrrigation,
+                           gBuzzer,
+                           gEvents,
+                           gLcd);
+  }
+
+  // ─── 12C. Staggered Firebase /weather Poll (60 s; fast 5 s until valid or GPS updated) ─
+  if (initialBootSyncDone &&
+      (gFirebase.consumeWeatherRefreshRequested() ||
+       (!gRainWeather.weather().valid && (nowMs - gLastWeatherPollMs >= 5000UL)) ||
+       (nowMs - gLastWeatherPollMs >= Config::INTERVAL_WEATHER_POLL_MS))) {
+    gLastWeatherPollMs = nowMs;
+    gFirebase.pollWeatherOnly(nowMs, gRainWeather);
   }
 
   // ─── 13. Periodic Heap & Uptime Health Summary (60 s) ──────────────────────

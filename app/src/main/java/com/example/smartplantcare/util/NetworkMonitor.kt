@@ -2,6 +2,7 @@ package com.example.smartplantcare.util
 
 import android.content.Context
 import android.net.ConnectivityManager
+import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.Handler
 import android.os.Looper
@@ -9,6 +10,9 @@ import android.os.SystemClock
 import android.widget.Toast
 import com.example.smartplantcare.R
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.net.HttpURLConnection
@@ -39,18 +43,96 @@ object NetworkMonitor {
     private var lastSlow    = false
     private var lastToastAt = 0L
 
+    private val _isOnlineFlow = MutableStateFlow(true)
+    val isOnlineFlow: StateFlow<Boolean> = _isOnlineFlow.asStateFlow()
+
+    /**
+     * Timestamp (epoch ms) when the phone last transitioned from online -> offline.
+     * Null while the phone has internet. Used to freeze ESP32 freshness evaluation so
+     * an online ESP32 is NOT falsely marked "ESP32 Offline" while the phone has no internet.
+     */
+    private val _disconnectedAtMsFlow = MutableStateFlow<Long?>(null)
+    val disconnectedAtMsFlow: StateFlow<Long?> = _disconnectedAtMsFlow.asStateFlow()
+
+    private var isCallbackRegistered = false
+
     fun init(context: Context) {
         appContext = context.applicationContext
+        val onlineNow = isOnline()
+        _isOnlineFlow.value = onlineNow
+        _disconnectedAtMsFlow.value = if (onlineNow) null else System.currentTimeMillis()
+        registerNetworkCallback()
+    }
+
+    private fun setOnlineState(online: Boolean) {
+        val wasOnline = _isOnlineFlow.value
+        if (online) {
+            _disconnectedAtMsFlow.value = null
+        } else if (wasOnline || _disconnectedAtMsFlow.value == null) {
+            _disconnectedAtMsFlow.value = System.currentTimeMillis()
+        }
+        _isOnlineFlow.value = online
+    }
+
+    /** Re-checks active network capabilities and updates [isOnlineFlow] immediately. */
+    fun refreshOnlineState(): Boolean {
+        val onlineNow = isOnline()
+        setOnlineState(onlineNow)
+        return onlineNow
+    }
+
+    private fun registerNetworkCallback() {
+        if (isCallbackRegistered) return
+        val ctx = appContext ?: return
+        val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
+        try {
+            val callback = object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) {
+                    setOnlineState(isOnline())
+                }
+
+                override fun onCapabilitiesChanged(
+                    network: Network,
+                    networkCapabilities: NetworkCapabilities
+                ) {
+                    val hasInternet = networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                            networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                    setOnlineState(hasInternet)
+                }
+
+                override fun onLost(network: Network) {
+                    // On Android, cm.activeNetwork can still briefly return the lost network inside onLost().
+                    val active = try { cm.activeNetwork } catch (_: Throwable) { null }
+                    if (active == null || active == network) {
+                        setOnlineState(false)
+                    } else {
+                        setOnlineState(isOnline())
+                    }
+                }
+
+                override fun onUnavailable() {
+                    setOnlineState(false)
+                }
+            }
+            cm.registerDefaultNetworkCallback(callback)
+            isCallbackRegistered = true
+        } catch (_: Throwable) {
+            setOnlineState(isOnline())
+        }
     }
 
     /** True only when the device has a validated internet connection. */
     fun isOnline(): Boolean {
-        val ctx = appContext ?: return false
-        val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-            ?: return false
-        val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
-        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        return try {
+            val ctx = appContext ?: return false
+            val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                ?: return false
+            val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                    caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        } catch (_: Throwable) {
+            false
+        }
     }
 
     /**

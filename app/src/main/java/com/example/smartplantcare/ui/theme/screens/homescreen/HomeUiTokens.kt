@@ -49,8 +49,16 @@ object HomeColors {
 }
 
 object HomeDimens {
+    /** Unified horizontal screen gutter across all post-login screens. */
+    val ScreenHorizontalPadding = 20.dp
+    /** Unified top breathing room below status bar. */
+    val ScreenTopPadding = 16.dp
+    /** Standard spacing between major vertical sections. */
+    val SectionSpacing = 18.dp
+    /** Standard spacing between sibling cards. */
+    val CardSpacing = 12.dp
     /** Extra bottom clearance so scrollable tabs never hide content behind FloatingBottomBar. */
-    val BottomBarClearance = 112.dp
+    val BottomBarClearance = 116.dp
 }
 
 val HomeInterFont = FontFamily(

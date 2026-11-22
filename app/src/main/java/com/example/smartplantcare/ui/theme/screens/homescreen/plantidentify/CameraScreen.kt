@@ -18,6 +18,7 @@ import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -67,6 +68,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.RoundRect
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.ClipOp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -317,6 +319,31 @@ fun CameraScreen(
         )
 
         IdentifyCutoutOverlay(boxSize = overlaySize)
+
+        // Subtle top & bottom gradient scrims for crisp readability in sunlight
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(160.dp)
+                .align(Alignment.TopCenter)
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(Color.Black.copy(alpha = 0.62f), Color.Transparent)
+                    )
+                )
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(210.dp)
+                .align(Alignment.BottomCenter)
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.78f))
+                    )
+                )
+        )
+
         ScanViewfinderOverlay(
             overlaySize = overlaySize,
             modifier = Modifier.align(Alignment.Center)
@@ -343,13 +370,14 @@ fun CameraScreen(
 
                 Surface(
                     color = SemiTransparentBlack,
-                    shape = RoundedCornerShape(50)
+                    shape = RoundedCornerShape(50),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.16f))
                 ) {
                     Text(
                         text = "Plant Species Identifier",
                         fontFamily = HomeInterFont,
                         fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        fontWeight = FontWeight.Bold,
                         color = Color.White,
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
                     )
@@ -372,22 +400,23 @@ fun CameraScreen(
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
                 .navigationBarsPadding()
-                .padding(bottom = 28.dp, start = 28.dp, end = 28.dp),
+                .padding(bottom = 24.dp, start = 24.dp, end = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
             Surface(
                 color = SemiTransparentBlack,
-                shape = RoundedCornerShape(12.dp)
+                shape = RoundedCornerShape(14.dp),
+                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.14f))
             ) {
                 Text(
-                    text = "Center the leaf or plant inside the square · Pinch to zoom",
+                    text = "Center the leaf or plant inside the square  •  Pinch to zoom",
                     fontFamily = HomeInterFont,
                     color = Color.White,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
                     textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp)
                 )
             }
 
@@ -396,13 +425,25 @@ fun CameraScreen(
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                CircleIconButton(
-                    icon = Icons.Filled.PhotoLibrary,
-                    contentDescription = "Upload from gallery",
-                    size = 50.dp,
-                    enabled = !isCapturing,
-                    onClick = { galleryLauncher.launch("image/*") }
-                )
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    CircleIconButton(
+                        icon = Icons.Filled.PhotoLibrary,
+                        contentDescription = "Upload from gallery",
+                        size = 52.dp,
+                        enabled = !isCapturing,
+                        onClick = { galleryLauncher.launch("image/*") }
+                    )
+                    Text(
+                        text = "Gallery",
+                        fontFamily = HomeInterFont,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color.White.copy(alpha = 0.85f)
+                    )
+                }
 
                 ShutterButton(
                     isCapturing = isCapturing,
@@ -425,23 +466,35 @@ fun CameraScreen(
                     }
                 )
 
-                CircleIconButton(
-                    icon = if (isFlashOn) Icons.Filled.FlashOn else Icons.Filled.FlashOff,
-                    contentDescription = "Toggle flash",
-                    size = 50.dp,
-                    enabled = hasFlashUnit && !isCapturing,
-                    iconTint = when {
-                        !hasFlashUnit -> Color.White.copy(alpha = 0.35f)
-                        isFlashOn -> Color(0xFFFFEB3B)
-                        else -> Color.White
-                    },
-                    onClick = {
-                        if (hasFlashUnit) {
-                            isFlashOn = !isFlashOn
-                            camera?.cameraControl?.enableTorch(isFlashOn)
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    CircleIconButton(
+                        icon = if (isFlashOn) Icons.Filled.FlashOn else Icons.Filled.FlashOff,
+                        contentDescription = "Toggle flash",
+                        size = 52.dp,
+                        enabled = hasFlashUnit && !isCapturing,
+                        iconTint = when {
+                            !hasFlashUnit -> Color.White.copy(alpha = 0.35f)
+                            isFlashOn -> Color(0xFFFFEB3B)
+                            else -> Color.White
+                        },
+                        onClick = {
+                            if (hasFlashUnit) {
+                                isFlashOn = !isFlashOn
+                                camera?.cameraControl?.enableTorch(isFlashOn)
+                            }
                         }
-                    }
-                )
+                    )
+                    Text(
+                        text = if (isFlashOn) "Flash On" else "Flash",
+                        fontFamily = HomeInterFont,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = if (isFlashOn) Color(0xFFFFEB3B) else Color.White.copy(alpha = 0.85f)
+                    )
+                }
             }
         }
     }
@@ -455,9 +508,10 @@ private fun ShutterButton(
     val interactionSource = remember { MutableInteractionSource() }
     Box(
         modifier = Modifier
-            .size(78.dp)
+            .size(82.dp)
             .clip(CircleShape)
-            .background(Color.White.copy(alpha = 0.28f))
+            .background(Color.White.copy(alpha = 0.22f))
+            .border(2.5.dp, Color.White.copy(alpha = 0.85f), CircleShape)
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
@@ -468,9 +522,13 @@ private fun ShutterButton(
     ) {
         Box(
             modifier = Modifier
-                .size(62.dp)
+                .size(64.dp)
                 .clip(CircleShape)
-                .background(HomeColors.ForestPrimary),
+                .background(
+                    Brush.linearGradient(
+                        colors = listOf(HomeColors.ForestMedium, HomeColors.ForestPrimary)
+                    )
+                ),
             contentAlignment = Alignment.Center
         ) {
             if (isCapturing) {

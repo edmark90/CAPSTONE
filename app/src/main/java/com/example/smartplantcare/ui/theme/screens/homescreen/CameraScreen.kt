@@ -47,6 +47,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Camera
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Eco
 import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.PhotoLibrary
@@ -280,210 +281,326 @@ fun CameraScreen(
             }
         }
 
-        // Top Bar: Close + Mode Badge
-        Row(
+        // Top & Bottom subtle gradient scrims so HUD controls stay readable in bright sunlight
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .statusBarsPadding()
-                .padding(horizontal = 20.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            IconButton(
-                onClick = onBackClick,
-                modifier = Modifier
-                    .size(42.dp)
-                    .clip(CircleShape)
-                    .background(Color.Black.copy(alpha = 0.45f))
-            ) {
-                Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
-            }
-
-            Surface(
-                color = Color.Black.copy(alpha = 0.45f),
-                shape = RoundedCornerShape(50)
-            ) {
-                Text(
-                    text = "Leaf Disease Scan",
-                    fontFamily = HomeInterFont,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color.White,
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
-                )
-            }
-
-            Spacer(modifier = Modifier.size(42.dp))
-        }
-
-        // Center Frame & Instructions
-        Column(
-            modifier = Modifier.align(Alignment.Center),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            StaticScanFrame(modifier = Modifier.size(boxSize))
-
-            Spacer(modifier = Modifier.height(22.dp))
-
-            Column(
-                modifier = Modifier
-                    .padding(horizontal = 28.dp)
-                    .background(
-                        color = Color.Black.copy(alpha = 0.55f),
-                        shape = RoundedCornerShape(14.dp)
+                .height(150.dp)
+                .align(Alignment.TopCenter)
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(Color.Black.copy(alpha = 0.62f), Color.Transparent)
                     )
-                    .padding(vertical = 10.dp, horizontal = 16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                )
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(210.dp)
+                .align(Alignment.BottomCenter)
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.78f))
+                    )
+                )
+        )
+
+        // Centered Scan Brackets — aligned 1:1 with ViewfinderCutoutOverlay(boxSize)
+        if (hasCameraPermission) {
+            StaticScanFrame(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .size(boxSize)
+            )
+        }
+
+        // Top Bar: Close + AI Mode Pill + Supported Crop Chips
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.TopCenter)
+                .statusBarsPadding()
+                .padding(horizontal = HomeDimens.ScreenHorizontalPadding, vertical = 14.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text(
-                    text = "Center Tomato, Chili, or Eggplant leaf inside the square",
-                    fontFamily = HomeInterFont,
-                    color = Color.White,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    textAlign = TextAlign.Center
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "Hold steady 10–15 cm away · Pinch to zoom",
-                    fontFamily = HomeInterFont,
-                    color = Color.White.copy(alpha = 0.78f),
-                    fontSize = 11.sp,
-                    textAlign = TextAlign.Center
-                )
+                IconButton(
+                    onClick = onBackClick,
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.48f))
+                        .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape)
+                ) {
+                    Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
+                }
+
+                Surface(
+                    color = Color.Black.copy(alpha = 0.52f),
+                    shape = RoundedCornerShape(50),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.16f))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(7.dp)
+                                .clip(CircleShape)
+                                .background(HomeColors.MintGlow)
+                        )
+                        Text(
+                            text = "AI Leaf Classifier",
+                            fontFamily = HomeInterFont,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.size(44.dp))
+            }
+
+            // Supported Crop Pills
+            Surface(
+                color = Color.Black.copy(alpha = 0.42f),
+                shape = RoundedCornerShape(50),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.12f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Eco,
+                        contentDescription = null,
+                        tint = HomeColors.MintGlow,
+                        modifier = Modifier.size(13.dp)
+                    )
+                    Text(
+                        text = "Tomato  •  Chili  •  Eggplant",
+                        fontFamily = HomeInterFont,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White.copy(alpha = 0.92f)
+                    )
+                }
             }
         }
 
-        // Bottom Controls Bar
-        Row(
+        // Bottom HUD: Guidance Pill + Controls Bar (never shifts the centered viewfinder)
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
                 .navigationBarsPadding()
-                .padding(horizontal = 32.dp, vertical = 28.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceEvenly
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
-            IconButton(
-                onClick = { galleryLauncher.launch("image/*") },
-                enabled = !showScanningAnimation && !isCapturing,
-                modifier = Modifier
-                    .size(50.dp)
-                    .clip(CircleShape)
-                    .background(Color.Black.copy(alpha = 0.45f))
-                    .border(1.dp, Color.White.copy(alpha = 0.2f), CircleShape)
+            Surface(
+                color = Color.Black.copy(alpha = 0.56f),
+                shape = RoundedCornerShape(14.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.14f))
             ) {
-                Icon(
-                    imageVector = Icons.Default.PhotoLibrary,
-                    contentDescription = "Gallery",
-                    tint = Color.White
-                )
+                Column(
+                    modifier = Modifier.padding(vertical = 9.dp, horizontal = 16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "Center a single leaf inside the square",
+                        fontFamily = HomeInterFont,
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "Hold steady 10–15 cm away  •  Pinch to zoom",
+                        fontFamily = HomeInterFont,
+                        color = Color.White.copy(alpha = 0.78f),
+                        fontSize = 11.sp,
+                        textAlign = TextAlign.Center
+                    )
+                }
             }
 
-            // Shutter CTA
-            val shutterInteraction = remember { MutableInteractionSource() }
-            Box(
-                modifier = Modifier
-                    .size(78.dp)
-                    .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.28f))
-                    .clickable(
-                        interactionSource = shutterInteraction,
-                        indication = null,
-                        enabled = hasCameraPermission && !showScanningAnimation && !isCapturing
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    IconButton(
+                        onClick = { galleryLauncher.launch("image/*") },
+                        enabled = !showScanningAnimation && !isCapturing,
+                        modifier = Modifier
+                            .size(52.dp)
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.48f))
+                            .border(1.dp, Color.White.copy(alpha = 0.24f), CircleShape)
                     ) {
-                        isCapturing = true
-                        imageCapture.takePicture(
-                            cameraExecutor,
-                            object : ImageCapture.OnImageCapturedCallback() {
-                                override fun onCaptureSuccess(image: ImageProxy) {
-                                    coroutineScope.launch {
-                                        try {
-                                            val prepared = withContext(Dispatchers.Default) {
-                                                val rotationDegrees = image.imageInfo.rotationDegrees
-                                                val rawBitmap = image.toBitmap()
-                                                image.close()
-                                                val argb = rawBitmap.copy(Bitmap.Config.ARGB_8888, false)
-                                                if (argb.width == 0 || argb.height == 0) {
-                                                    throw IllegalStateException("Invalid image dimensions")
-                                                }
-                                                val oriented = ImageProcessor.orientBitmap(argb, rotationDegrees)
-                                                val cropped = ImageProcessor.centerCropSquare(oriented)
-                                                downscaleForDisplay(cropped, 1080)
-                                            }
-                                            processAndNavigate(prepared)
-                                        } catch (e: Exception) {
+                        Icon(
+                            imageVector = Icons.Default.PhotoLibrary,
+                            contentDescription = "Gallery",
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Text(
+                        text = "Gallery",
+                        fontFamily = HomeInterFont,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color.White.copy(alpha = 0.85f)
+                    )
+                }
+
+                // Shutter CTA
+                val shutterInteraction = remember { MutableInteractionSource() }
+                Box(
+                    modifier = Modifier
+                        .size(82.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.22f))
+                        .border(2.5.dp, Color.White.copy(alpha = 0.85f), CircleShape)
+                        .clickable(
+                            interactionSource = shutterInteraction,
+                            indication = null,
+                            enabled = hasCameraPermission && !showScanningAnimation && !isCapturing
+                        ) {
+                            isCapturing = true
+                            imageCapture.takePicture(
+                                cameraExecutor,
+                                object : ImageCapture.OnImageCapturedCallback() {
+                                    override fun onCaptureSuccess(image: ImageProxy) {
+                                        coroutineScope.launch {
                                             try {
-                                                image.close()
-                                            } catch (_: Exception) {
+                                                val prepared = withContext(Dispatchers.Default) {
+                                                    val rotationDegrees = image.imageInfo.rotationDegrees
+                                                    val rawBitmap = image.toBitmap()
+                                                    image.close()
+                                                    val argb = rawBitmap.copy(Bitmap.Config.ARGB_8888, false)
+                                                    if (argb.width == 0 || argb.height == 0) {
+                                                        throw IllegalStateException("Invalid image dimensions")
+                                                    }
+                                                    val oriented = ImageProcessor.orientBitmap(argb, rotationDegrees)
+                                                    val cropped = ImageProcessor.centerCropSquare(oriented)
+                                                    downscaleForDisplay(cropped, 1080)
+                                                }
+                                                processAndNavigate(prepared)
+                                            } catch (e: Exception) {
+                                                try {
+                                                    image.close()
+                                                } catch (_: Exception) {
+                                                }
+                                                android.util.Log.e("CameraScreen", "Error processing capture", e)
+                                                scanError = "Failed to process capture"
+                                                isCapturing = false
                                             }
-                                            android.util.Log.e("CameraScreen", "Error processing capture", e)
-                                            scanError = "Failed to process capture"
+                                        }
+                                    }
+
+                                    override fun onError(e: ImageCaptureException) {
+                                        coroutineScope.launch(Dispatchers.Main) {
+                                            android.util.Log.e("CameraScreen", "Capture error", e)
+                                            scanError = "Capture failed: ${e.message}"
+                                            showScanningAnimation = false
                                             isCapturing = false
                                         }
                                     }
                                 }
-
-                                override fun onError(e: ImageCaptureException) {
-                                    coroutineScope.launch(Dispatchers.Main) {
-                                        android.util.Log.e("CameraScreen", "Capture error", e)
-                                        scanError = "Capture failed: ${e.message}"
-                                        showScanningAnimation = false
-                                        isCapturing = false
-                                    }
-                                }
-                            }
-                        )
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(62.dp)
-                        .clip(CircleShape)
-                        .background(HomeColors.ForestPrimary),
+                            )
+                        },
                     contentAlignment = Alignment.Center
                 ) {
-                    if (isCapturing) {
-                        CircularProgressIndicator(
-                            color = Color.White,
-                            strokeWidth = 2.5.dp,
-                            modifier = Modifier.size(26.dp)
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Default.Camera,
-                            contentDescription = "Capture",
-                            tint = Color.White,
-                            modifier = Modifier.size(30.dp)
-                        )
+                    Box(
+                        modifier = Modifier
+                            .size(64.dp)
+                            .clip(CircleShape)
+                            .background(
+                                Brush.linearGradient(
+                                    colors = listOf(HomeColors.ForestMedium, HomeColors.ForestPrimary)
+                                )
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (isCapturing) {
+                            CircularProgressIndicator(
+                                color = Color.White,
+                                strokeWidth = 2.5.dp,
+                                modifier = Modifier.size(26.dp)
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.Camera,
+                                contentDescription = "Capture",
+                                tint = Color.White,
+                                modifier = Modifier.size(30.dp)
+                            )
+                        }
                     }
                 }
-            }
 
-            IconButton(
-                onClick = {
-                    if (hasFlashUnit) {
-                        isFlashOn = !isFlashOn
-                        cameraControl?.enableTorch(isFlashOn)
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    IconButton(
+                        onClick = {
+                            if (hasFlashUnit) {
+                                isFlashOn = !isFlashOn
+                                cameraControl?.enableTorch(isFlashOn)
+                            }
+                        },
+                        enabled = hasFlashUnit && !showScanningAnimation && !isCapturing,
+                        modifier = Modifier
+                            .size(52.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (isFlashOn) Color(0xFFFFEB3B).copy(alpha = 0.22f)
+                                else Color.Black.copy(alpha = 0.48f)
+                            )
+                            .border(
+                                1.dp,
+                                if (isFlashOn) Color(0xFFFFEB3B).copy(alpha = 0.7f)
+                                else Color.White.copy(alpha = 0.24f),
+                                CircleShape
+                            )
+                    ) {
+                        Icon(
+                            imageVector = if (isFlashOn) Icons.Default.FlashOn else Icons.Default.FlashOff,
+                            contentDescription = "Flash",
+                            tint = when {
+                                !hasFlashUnit -> Color.White.copy(alpha = 0.35f)
+                                isFlashOn -> Color(0xFFFFEB3B)
+                                else -> Color.White
+                            },
+                            modifier = Modifier.size(22.dp)
+                        )
                     }
-                },
-                enabled = hasFlashUnit && !showScanningAnimation && !isCapturing,
-                modifier = Modifier
-                    .size(50.dp)
-                    .clip(CircleShape)
-                    .background(Color.Black.copy(alpha = 0.45f))
-                    .border(1.dp, Color.White.copy(alpha = 0.2f), CircleShape)
-            ) {
-                Icon(
-                    imageVector = if (isFlashOn) Icons.Default.FlashOn else Icons.Default.FlashOff,
-                    contentDescription = "Flash",
-                    tint = when {
-                        !hasFlashUnit -> Color.White.copy(alpha = 0.35f)
-                        isFlashOn -> Color(0xFFFFEB3B)
-                        else -> Color.White
-                    }
-                )
+                    Text(
+                        text = if (isFlashOn) "Flash On" else "Flash",
+                        fontFamily = HomeInterFont,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = if (isFlashOn) Color(0xFFFFEB3B) else Color.White.copy(alpha = 0.85f)
+                    )
+                }
             }
         }
     }
@@ -731,10 +848,12 @@ private fun DiseaseScanningAnimationScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .statusBarsPadding()
             .background(
                 Brush.verticalGradient(colors = listOf(DiseaseBgTop, DiseaseBgBottom))
-            ),
+            )
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .padding(horizontal = 24.dp),
         contentAlignment = Alignment.Center
     ) {
         Column(

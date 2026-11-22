@@ -55,13 +55,29 @@ class FirebaseClientManager {
                                     IrrigationController& irrigation,
                                     DiagnosticsMetrics& ioDiag);
 
-  // Fast 2.5s poll for manual watering & emergency stop commands only
+  // Fast 1.5s poll for manual watering & emergency stop commands only
   void pollPendingCommandsOnly(uint32_t nowMs,
                                const RuntimeConfig& cfg,
                                IrrigationController& irrigation,
                                BuzzerManager& buzzer);
 
-  // Poll /meta, /weather (with direct Open-Meteo Spark fallback), /config, and /commandRequests
+  // Individual staggered cloud polls (prevents 5-6 stacked HTTPS calls on one tick)
+  void pollConfigOnly(uint32_t nowMs,
+                      RuntimeConfig& ioConfig,
+                      RelayController& relays,
+                      BuzzerManager& buzzer);
+
+  void pollMetaOnly(uint32_t nowMs,
+                    RuntimeConfig& ioConfig,
+                    RelayController& relays,
+                    IrrigationController& irrigation,
+                    BuzzerManager& buzzer,
+                    EventNotificationManager& events,
+                    LcdManager& lcd);
+
+  void pollWeatherOnly(uint32_t nowMs, RainWeatherManager& rainWeather);
+
+  // Combined poll helper (kept for compatibility)
   void pollCloudControlAndWeather(uint32_t nowMs,
                                   RuntimeConfig& ioConfig,
                                   RelayController& relays,
@@ -75,9 +91,15 @@ class FirebaseClientManager {
   bool     isWifiConnected() const { return WiFi.status() == WL_CONNECTED; }
   bool     isFirebaseAuthenticated() const { return idTokenValid_ || sparkDirectMode_; }
   uint32_t lastSyncUptimeMs() const { return lastSuccessfulSyncMs_; }
+  bool     consumeWeatherRefreshRequested() {
+    if (!weatherRefreshRequested_) return false;
+    weatherRefreshRequested_ = false;
+    return true;
+  }
   uint64_t currentEpochMs() const;
 
  private:
+  void   resetRtdbConnection();
   bool   ensureValidAuth(uint32_t nowMs);
   bool   requestCustomTokenAndSignIn(uint32_t nowMs);
   bool   requestAnonymousOrSparkAuth(uint32_t nowMs);
@@ -126,7 +148,13 @@ class FirebaseClientManager {
   uint32_t                    lastDirectWeatherRetryMs_ = 0;
   uint64_t                    lastCloudWeatherFetched_  = 0;
   bool                        ownerLocationLoaded_      = false;
+  bool                        weatherRefreshRequested_  = false;
   float                       deviceLat_                = Secrets::DEFAULT_WEATHER_LATITUDE;
   float                       deviceLon_                = Secrets::DEFAULT_WEATHER_LONGITUDE;
   char                        deviceLocationName_[48]   = "";
+
+  // Persistent HTTPS Keep-Alive client dedicated to Firebase RTDB (eliminates 1.5-3s TLS handshakes)
+  WiFiClientSecure            rtdbClient_;
+  HTTPClient                  rtdbHttp_;
+  bool                        rtdbHttpActive_           = false;
 };

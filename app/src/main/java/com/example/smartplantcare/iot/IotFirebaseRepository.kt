@@ -762,9 +762,9 @@ class IotFirebaseRepository {
             reservoirPct = t.child("reservoirPct").asFloatOrNull(),
             reservoirValid = t.child("reservoirValid").asBool(false),
             reservoirState = t.child("reservoirState").asStr("UNKNOWN"),
-            tomato = parseSoilZone(soilNode.child("tomato"), "tomato", "Tomato", "GPIO34", "Valve 1 (IN1)"),
-            chili = parseSoilZone(soilNode.child("chili"), "chili", "Chili", "GPIO35", "Valve 2 (IN2)"),
-            eggplant = parseSoilZone(soilNode.child("eggplant"), "eggplant", "Eggplant", "GPIO33", "Valve 3 (IN3)")
+            tomato = parseSoilZone(soilNode.child("tomato"), "tomato", "Tomato", "Zone 1", "Tomato Zone"),
+            chili = parseSoilZone(soilNode.child("chili"), "chili", "Chili", "Zone 2", "Chili Zone"),
+            eggplant = parseSoilZone(soilNode.child("eggplant"), "eggplant", "Eggplant", "Zone 3", "Eggplant Zone")
         )
 
         val w = root.child("weather")
@@ -820,13 +820,15 @@ class IotFirebaseRepository {
             val code = iChild.key ?: return@mapNotNull null
             val st = iChild.child("status").asStr("")
             val exp = iChild.child("expiresAt").asLong(0L)
-            if (st != "PENDING" || (exp > 0L && now > exp)) return@mapNotNull null
+            val crAt = iChild.child("createdAt").asLong(0L)
+            val is24hPassed = crAt > 0L && (now - crAt) >= 24 * 60 * 60 * 1000L
+            if (st != "PENDING" || (exp > 0L && now > exp) || is24hPassed) return@mapNotNull null
             ShareInvite(
                 inviteCode = code,
                 deviceId = deviceId,
                 role = DeviceRole.fromSlug(iChild.child("role").asStr("viewer")),
                 status = st,
-                createdAt = iChild.child("createdAt").asLong(0L),
+                createdAt = crAt,
                 expiresAt = exp
             )
         }.sortedByDescending { it.createdAt }
@@ -1016,9 +1018,9 @@ class IotFirebaseRepository {
             reservoirPct = t.fltOrNull("reservoirPct"),
             reservoirValid = t.bool("reservoirValid", false),
             reservoirState = t.str("reservoirState", "UNKNOWN"),
-            tomato = parseSoilZoneFromJson(soilNode?.optJSONObject("tomato"), "tomato", "Tomato", "GPIO34", "Valve 1 (IN1)"),
-            chili = parseSoilZoneFromJson(soilNode?.optJSONObject("chili"), "chili", "Chili", "GPIO35", "Valve 2 (IN2)"),
-            eggplant = parseSoilZoneFromJson(soilNode?.optJSONObject("eggplant"), "eggplant", "Eggplant", "GPIO33", "Valve 3 (IN3)")
+            tomato = parseSoilZoneFromJson(soilNode?.optJSONObject("tomato"), "tomato", "Tomato", "Zone 1", "Tomato Zone"),
+            chili = parseSoilZoneFromJson(soilNode?.optJSONObject("chili"), "chili", "Chili", "Zone 2", "Chili Zone"),
+            eggplant = parseSoilZoneFromJson(soilNode?.optJSONObject("eggplant"), "eggplant", "Eggplant", "Zone 3", "Eggplant Zone")
         )
 
         val w = root.optJSONObject("weather")
@@ -1089,14 +1091,16 @@ class IotFirebaseRepository {
                     val iChild = invitesObj.optJSONObject(code) ?: continue
                     val st = iChild.str("status", "")
                     val exp = iChild.lng("expiresAt", 0L)
-                    if (st != "PENDING" || (exp > 0L && now > exp)) continue
+                    val crAt = iChild.lng("createdAt", 0L)
+                    val is24hPassed = crAt > 0L && (now - crAt) >= 24 * 60 * 60 * 1000L
+                    if (st != "PENDING" || (exp > 0L && now > exp) || is24hPassed) continue
                     add(
                         ShareInvite(
                             inviteCode = code,
                             deviceId = deviceId,
                             role = DeviceRole.fromSlug(iChild.str("role", "viewer")),
                             status = st,
-                            createdAt = iChild.lng("createdAt", 0L),
+                            createdAt = crAt,
                             expiresAt = exp
                         )
                     )

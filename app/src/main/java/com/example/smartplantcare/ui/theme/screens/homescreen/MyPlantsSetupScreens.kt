@@ -17,12 +17,14 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -36,6 +38,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.GroupAdd
@@ -130,8 +133,8 @@ internal fun MyPlantsScanStepScreen(
             .background(HomeColors.PageBg)
             .statusBarsPadding()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp)
-            .padding(top = 14.dp, bottom = HomeDimens.BottomBarClearance),
+            .padding(horizontal = HomeDimens.ScreenHorizontalPadding)
+            .padding(top = HomeDimens.ScreenTopPadding, bottom = HomeDimens.BottomBarClearance),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         if (hasExistingDevices) {
@@ -139,50 +142,48 @@ internal fun MyPlantsScanStepScreen(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = onBackToDashboard) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back to Dashboard",
-                        tint = HomeColors.TextPrimary
+                Surface(
+                    color = HomeColors.SurfaceWhite,
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, HomeColors.CardBorder),
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable(onClick = onBackToDashboard)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back to Dashboard",
+                            tint = HomeColors.ForestPrimary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Add Another Plant Box",
+                        fontFamily = HomeInterFont,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = HomeColors.TextPrimary
+                    )
+                    Text(
+                        text = "Pair a new SmartPlantCare controller",
+                        fontFamily = HomeInterFont,
+                        fontSize = 12.sp,
+                        color = HomeColors.TextSecondary
                     )
                 }
-                Text(
-                    text = "Add Another Plant Box",
-                    fontFamily = HomeInterFont,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = HomeColors.TextPrimary
-                )
             }
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(16.dp))
         }
 
-        Surface(
-            color = HomeColors.SoftMint,
-            shape = RoundedCornerShape(50)
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Sensors,
-                    contentDescription = null,
-                    tint = HomeColors.ForestPrimary,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = "Step 1 of 2 • Find ESP32 Device",
-                    fontFamily = HomeInterFont,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = HomeColors.ForestPrimary
-                )
-            }
-        }
+        // Sleek 2-Step Setup Progress Bar
+        SetupStepProgressHeader(currentStep = 1)
 
-        Spacer(modifier = Modifier.height(14.dp))
+        Spacer(modifier = Modifier.height(18.dp))
 
         Text(
             text = "Connect SmartPlantCare\nSensor Device",
@@ -200,59 +201,100 @@ internal fun MyPlantsScanStepScreen(
             text = when {
                 uiState.isConnectingToEsp -> "Connecting directly to your ESP32 setup hotspot..."
                 uiState.isScanningEsp -> "Scanning nearby for unclaimed SPC-SETUP ESP32 boxes..."
-                else -> "Turn on your ESP32 box and scan nearby to detect unclaimed SmartPlantCare devices."
+                else -> "Power ON your ESP32 plant box nearby, then start scanning to pair it with your account."
             },
             fontFamily = HomeInterFont,
             fontSize = 13.sp,
             color = HomeColors.TextSecondary,
             textAlign = TextAlign.Center,
             lineHeight = 19.sp,
-            modifier = Modifier.padding(horizontal = 6.dp)
+            modifier = Modifier.padding(horizontal = 8.dp)
         )
 
-        Spacer(modifier = Modifier.height(22.dp))
+        Spacer(modifier = Modifier.height(18.dp))
 
-        RadarScanArea(
-            isScanning = uiState.isScanningEsp || uiState.isConnectingToEsp,
-            modifier = Modifier
-                .widthIn(max = 236.dp)
-                .fillMaxWidth(0.70f)
-                .aspectRatio(1f)
-        )
-
-        Spacer(modifier = Modifier.height(14.dp))
-
-        // Live Active Scanning Progress Pill (with 2-minute live timer)
-        AnimatedVisibility(visible = uiState.isScanningEsp) {
-            val mins = uiState.scanElapsedSeconds / 60
-            val secs = uiState.scanElapsedSeconds % 60
-            val elapsedFormatted = String.format(java.util.Locale.US, "%d:%02d / 2:00", mins, secs)
-            Surface(
-                color = HomeColors.SoftMint,
-                shape = RoundedCornerShape(50),
-                border = BorderStroke(1.dp, HomeColors.ForestPrimary.copy(alpha = 0.25f)),
-                modifier = Modifier.padding(bottom = 14.dp)
+        // Elevated Radar Stage Card
+        Surface(
+            color = HomeColors.SurfaceWhite,
+            shape = RoundedCornerShape(24.dp),
+            border = BorderStroke(1.dp, HomeColors.CardBorder),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 22.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                RadarScanArea(
+                    isScanning = uiState.isScanningEsp || uiState.isConnectingToEsp,
+                    modifier = Modifier
+                        .widthIn(max = 216.dp)
+                        .fillMaxWidth(0.68f)
+                        .aspectRatio(1f)
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Live Status Pill inside Radar Stage
+                val mins = uiState.scanElapsedSeconds / 60
+                val secs = uiState.scanElapsedSeconds % 60
+                val elapsedFormatted = String.format(java.util.Locale.US, "%d:%02d / 2:00", mins, secs)
+                val pillBg = when {
+                    uiState.isConnectingToEsp -> HomeColors.WaterBg
+                    uiState.isScanningEsp -> HomeColors.SoftMint
+                    uiState.nearbyEspDevices.isNotEmpty() -> HomeColors.SuccessBg
+                    else -> HomeColors.PageBg
+                }
+                val pillFg = when {
+                    uiState.isConnectingToEsp -> HomeColors.WaterBlue
+                    uiState.isScanningEsp -> HomeColors.ForestPrimary
+                    uiState.nearbyEspDevices.isNotEmpty() -> HomeColors.SuccessGreen
+                    else -> HomeColors.TextSecondary
+                }
+                Surface(
+                    color = pillBg,
+                    shape = RoundedCornerShape(50),
+                    border = BorderStroke(1.dp, pillFg.copy(alpha = 0.22f))
                 ) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(14.dp),
-                        strokeWidth = 2.dp,
-                        color = HomeColors.ForestPrimary
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "Scanning for active ESP32 nearby...  $elapsedFormatted",
-                        fontFamily = HomeInterFont,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = HomeColors.ForestPrimary
-                    )
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (uiState.isScanningEsp || uiState.isConnectingToEsp) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(14.dp),
+                                strokeWidth = 2.dp,
+                                color = pillFg
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                        } else {
+                            Icon(
+                                imageVector = if (uiState.nearbyEspDevices.isNotEmpty()) Icons.Filled.CheckCircle else Icons.Filled.Sensors,
+                                contentDescription = null,
+                                tint = pillFg,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                        }
+                        Text(
+                            text = when {
+                                uiState.isConnectingToEsp -> "Connecting to ESP32 hotspot..."
+                                uiState.isScanningEsp -> "Scanning nearby...  $elapsedFormatted"
+                                uiState.nearbyEspDevices.isNotEmpty() -> "${uiState.nearbyEspDevices.size} ESP32 box ready to connect"
+                                else -> "Ready to scan nearby 2.4 GHz boxes"
+                            },
+                            fontFamily = HomeInterFont,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = pillFg
+                        )
+                    }
                 }
             }
         }
+
+        Spacer(modifier = Modifier.height(16.dp))
 
         // Detected Nearby ESP32 List (`SPC-SETUP-*` only)
         AnimatedVisibility(visible = uiState.nearbyEspDevices.isNotEmpty()) {
@@ -552,33 +594,67 @@ internal fun MyPlantsScanStepScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
-        // Join Shared Device via Invite Code (for family/operators/viewers)
-        TextButton(
-            onClick = {
-                if (isAuthenticated && !isGuest) {
-                    showJoinInviteDialog = true
-                } else {
-                    showAuthDialog = true
+        // Join Shared Device Card (for family/operators/viewers)
+        Surface(
+            color = HomeColors.SurfaceWhite,
+            shape = RoundedCornerShape(18.dp),
+            border = BorderStroke(1.dp, HomeColors.CardBorder),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(18.dp))
+                .clickable {
+                    if (isAuthenticated && !isGuest) {
+                        showJoinInviteDialog = true
+                    } else {
+                        showAuthDialog = true
+                    }
                 }
-            },
-            modifier = Modifier.fillMaxWidth()
         ) {
-            Icon(
-                imageVector = Icons.Filled.GroupAdd,
-                contentDescription = null,
-                tint = HomeColors.ForestMedium,
-                modifier = Modifier.size(18.dp)
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = "Have a Share Invite Code? Join Plant Box",
-                fontFamily = HomeInterFont,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = HomeColors.ForestMedium
-            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(HomeColors.SoftMint),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.GroupAdd,
+                        contentDescription = null,
+                        tint = HomeColors.ForestPrimary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Join Shared Plant Box",
+                        fontFamily = HomeInterFont,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = HomeColors.TextPrimary
+                    )
+                    Text(
+                        text = "Have a 24-hour invite code from an owner?",
+                        fontFamily = HomeInterFont,
+                        fontSize = 11.sp,
+                        color = HomeColors.TextSecondary
+                    )
+                }
+                Icon(
+                    imageVector = Icons.Filled.ChevronRight,
+                    contentDescription = null,
+                    tint = HomeColors.TextMuted,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
         }
     }
 
@@ -612,19 +688,19 @@ private fun NearbyEspCard(
     Surface(
         color = HomeColors.SurfaceWhite,
         shape = RoundedCornerShape(18.dp),
-        border = BorderStroke(1.dp, HomeColors.CardBorder),
+        border = BorderStroke(1.dp, HomeColors.ForestPrimary.copy(alpha = 0.22f)),
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(14.dp),
+                .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
-                    .size(44.dp)
-                    .clip(RoundedCornerShape(12.dp))
+                    .size(46.dp)
+                    .clip(RoundedCornerShape(13.dp))
                     .background(HomeColors.SoftMint),
                 contentAlignment = Alignment.Center
             ) {
@@ -632,7 +708,7 @@ private fun NearbyEspCard(
                     imageVector = Icons.Filled.Memory,
                     contentDescription = null,
                     tint = HomeColors.ForestPrimary,
-                    modifier = Modifier.size(22.dp)
+                    modifier = Modifier.size(23.dp)
                 )
             }
             Spacer(modifier = Modifier.width(12.dp))
@@ -646,13 +722,22 @@ private fun NearbyEspCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Text(
-                    text = "${device.deviceId} • ${device.rssi} dBm",
-                    fontFamily = HomeInterFont,
-                    fontSize = 11.sp,
-                    color = HomeColors.TextSecondary
-                )
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(2.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    SignalStrengthBars(bars = device.signalBars)
+                    Text(
+                        text = "${device.deviceId} • ${device.rssi} dBm",
+                        fontFamily = HomeInterFont,
+                        fontSize = 11.sp,
+                        color = HomeColors.TextSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Spacer(modifier = Modifier.height(6.dp))
                 Surface(
                     color = HomeColors.SuccessBg,
                     shape = RoundedCornerShape(50)
@@ -667,11 +752,13 @@ private fun NearbyEspCard(
                     )
                 }
             }
-            Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.width(10.dp))
             Button(
                 onClick = onConnect,
                 enabled = !isConnecting,
                 shape = RoundedCornerShape(12.dp),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                modifier = Modifier.height(42.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = HomeColors.ForestPrimary,
                     contentColor = Color.White
@@ -681,10 +768,124 @@ private fun NearbyEspCard(
                     text = "Connect",
                     fontFamily = HomeInterFont,
                     fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
+                    fontWeight = FontWeight.Bold,
                     color = Color.White
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun SetupStepProgressHeader(currentStep: Int) {
+    Surface(
+        color = HomeColors.SurfaceWhite,
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, HomeColors.CardBorder),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            SetupStepPill(
+                stepNumber = 1,
+                label = "Find ESP32",
+                isActive = currentStep == 1,
+                isCompleted = currentStep > 1
+            )
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 8.dp)
+                    .height(2.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(if (currentStep > 1) HomeColors.ForestPrimary else HomeColors.CardBorder)
+            )
+            SetupStepPill(
+                stepNumber = 2,
+                label = "Home Wi-Fi",
+                isActive = currentStep == 2,
+                isCompleted = false
+            )
+        }
+    }
+}
+
+@Composable
+private fun SetupStepPill(
+    stepNumber: Int,
+    label: String,
+    isActive: Boolean,
+    isCompleted: Boolean
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(22.dp)
+                .clip(CircleShape)
+                .background(
+                    when {
+                        isActive || isCompleted -> HomeColors.ForestPrimary
+                        else -> HomeColors.PlaceholderBg
+                    }
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            if (isCompleted) {
+                Icon(
+                    imageVector = Icons.Filled.CheckCircle,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(14.dp)
+                )
+            } else {
+                Text(
+                    text = stepNumber.toString(),
+                    fontFamily = HomeInterFont,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (isActive) Color.White else HomeColors.TextMuted
+                )
+            }
+        }
+        Text(
+            text = label,
+            fontFamily = HomeInterFont,
+            fontSize = 12.sp,
+            fontWeight = if (isActive || isCompleted) FontWeight.Bold else FontWeight.Medium,
+            color = if (isActive || isCompleted) HomeColors.ForestPrimary else HomeColors.TextMuted
+        )
+    }
+}
+
+@Composable
+private fun SignalStrengthBars(bars: Int, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier.height(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.Bottom
+    ) {
+        for (i in 1..4) {
+            val active = i <= bars.coerceIn(1, 4)
+            val barColor = when {
+                !active -> HomeColors.CardBorder
+                bars >= 3 -> HomeColors.SuccessGreen
+                bars == 2 -> HomeColors.WarningAmber
+                else -> HomeColors.AlertRed
+            }
+            Box(
+                modifier = Modifier
+                    .width(3.dp)
+                    .height((3 + i * 2).dp)
+                    .clip(RoundedCornerShape(1.5.dp))
+                    .background(barColor)
+            )
         }
     }
 }
@@ -712,33 +913,36 @@ internal fun MyPlantsWifiSetupScreen(
             .fillMaxSize()
             .background(HomeColors.PageBg)
             .statusBarsPadding()
+            .navigationBarsPadding()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp)
-            .padding(top = 14.dp, bottom = HomeDimens.BottomBarClearance)
+            .padding(horizontal = HomeDimens.ScreenHorizontalPadding)
+            .padding(top = HomeDimens.ScreenTopPadding, bottom = HomeDimens.BottomBarClearance)
     ) {
         // Top Bar
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(
-                onClick = onBack,
-                enabled = !uiState.isProvisioning
+            Surface(
+                color = HomeColors.SurfaceWhite,
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, HomeColors.CardBorder),
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable(enabled = !uiState.isProvisioning, onClick = onBack)
             ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
-                    tint = HomeColors.TextPrimary
-                )
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back",
+                        tint = HomeColors.ForestPrimary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             }
+            Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Step 2 of 2 • Wi-Fi & Plant Box Setup",
-                    fontFamily = HomeInterFont,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = HomeColors.ForestMedium
-                )
                 Text(
                     text = "Configure ESP32 Connection",
                     fontFamily = HomeInterFont,
@@ -746,10 +950,20 @@ internal fun MyPlantsWifiSetupScreen(
                     fontWeight = FontWeight.Bold,
                     color = HomeColors.TextPrimary
                 )
+                Text(
+                    text = "Connect your box to home 2.4 GHz Wi-Fi",
+                    fontFamily = HomeInterFont,
+                    fontSize = 12.sp,
+                    color = HomeColors.TextSecondary
+                )
             }
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(14.dp))
+
+        SetupStepProgressHeader(currentStep = 2)
+
+        Spacer(modifier = Modifier.height(14.dp))
 
         // Connected ESP32 Verification Banner
         Surface(
@@ -778,7 +992,7 @@ internal fun MyPlantsWifiSetupScreen(
                         color = HomeColors.ForestPrimary
                     )
                     Text(
-                        text = "Firmware ${espInfo?.firmwareVersion ?: "3.1.0-i2c"} • Ready for 2.4 GHz Wi-Fi",
+                        text = "SmartPlantCare Box connected • Ready for 2.4 GHz Wi-Fi",
                         fontFamily = HomeInterFont,
                         fontSize = 11.sp,
                         color = HomeColors.TextSecondary
@@ -1192,12 +1406,18 @@ private fun WifiNetworkRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Text(
-                    text = "2.4 GHz • Signal ${network.rssi} dBm (${network.signalBars}/4)",
-                    fontFamily = HomeInterFont,
-                    fontSize = 11.sp,
-                    color = HomeColors.TextSecondary
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    SignalStrengthBars(bars = network.signalBars)
+                    Text(
+                        text = "2.4 GHz • ${network.rssi} dBm",
+                        fontFamily = HomeInterFont,
+                        fontSize = 11.sp,
+                        color = HomeColors.TextSecondary
+                    )
+                }
             }
             if (isSelected) {
                 Icon(
@@ -1255,24 +1475,35 @@ private fun JoinSharedDeviceDialog(
                     singleLine = true,
                     enabled = !isSubmitting,
                     shape = RoundedCornerShape(14.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = HomeColors.ForestPrimary,
+                        unfocusedBorderColor = HomeColors.CardBorder,
+                        focusedLabelColor = HomeColors.ForestPrimary
+                    ),
                     modifier = Modifier.fillMaxWidth()
                 )
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(18.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    TextButton(
+                    OutlinedButton(
                         onClick = onDismiss,
                         enabled = !isSubmitting,
-                        modifier = Modifier.weight(1f)
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, HomeColors.CardBorder),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp)
                     ) {
-                        Text("Cancel", fontFamily = HomeInterFont, color = HomeColors.TextSecondary)
+                        Text("Cancel", fontFamily = HomeInterFont, fontWeight = FontWeight.SemiBold, color = HomeColors.TextSecondary)
                     }
                     Button(
                         onClick = { onSubmit(code) },
                         enabled = !isSubmitting && code.trim().length >= 6,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp),
                         shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = HomeColors.ForestPrimary,

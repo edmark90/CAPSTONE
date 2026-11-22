@@ -58,9 +58,11 @@ constexpr uint32_t INTERVAL_RESERVOIR_MS    = 2500;   // 2.5 s ultrasonic air-ga
 constexpr uint32_t INTERVAL_LDR_MS          = 5000;   // 5.0 s LDR ADC1 brightness sampling
 constexpr uint32_t INTERVAL_LCD_REFRESH_MS  = 750;    // 750 ms LCD row refresh
 constexpr uint32_t INTERVAL_LCD_PAGE_MS     = 3000;   // 3.0 s normal LCD page rotation
-constexpr uint32_t INTERVAL_TELEMETRY_MS            = 15000;  // 15.0 s Firebase telemetry snapshot
-constexpr uint32_t INTERVAL_COMMAND_POLL_MS         = 2500;   // 2.5 s fast manual/emergency command poll
-constexpr uint32_t INTERVAL_CONFIG_POLL_MS          = 15000;  // 15.0 s Firebase meta/weather/config sync
+constexpr uint32_t INTERVAL_TELEMETRY_MS            = 6000;   // 6.0 s Firebase telemetry snapshot (Keep-Alive)
+constexpr uint32_t INTERVAL_COMMAND_POLL_MS         = 1500;   // 1.5 s fast manual/emergency command poll
+constexpr uint32_t INTERVAL_CONFIG_POLL_MS          = 6000;   // 6.0 s staggered Firebase /config sync
+constexpr uint32_t INTERVAL_META_POLL_MS            = 30000;  // 30.0 s Firebase /meta (ownership & GPS) sync
+constexpr uint32_t INTERVAL_WEATHER_POLL_MS         = 60000;  // 60.0 s Firebase /weather sync (5s until valid)
 constexpr uint32_t INTERVAL_DIAGNOSTICS_MS          = 60000;  // 60.0 s heap/uptime diagnostics log
 constexpr uint32_t WIFI_PROVISION_VERIFY_TIMEOUT_MS = 35000;  // Re-open AP if Wi-Fi join fails
 
@@ -147,6 +149,6 @@ constexpr size_t   EVENT_QUEUE_CAPACITY              = 16;
 constexpr size_t   PROCESSED_CMD_RING_SIZE           = 12;
 constexpr uint32_t WIFI_RECONNECT_MIN_MS             = 5000;
 constexpr uint32_t WIFI_RECONNECT_MAX_MS             = 60000;
-constexpr uint32_t HTTP_TIMEOUT_MS                   = 9000;
+constexpr uint32_t HTTP_TIMEOUT_MS                   = 4500;   // Fast 4.5s bound (Keep-Alive avoids 2s TLS handshakes)
 
 }  // namespace Config

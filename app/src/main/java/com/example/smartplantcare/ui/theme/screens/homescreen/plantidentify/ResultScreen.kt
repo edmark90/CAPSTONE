@@ -5,8 +5,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -31,6 +33,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
@@ -126,10 +129,12 @@ fun PlantResultScreen(
                 } else {
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(IntrinsicSize.Max)
                     ) {
-                        InfoCard(label = "Species", value = topMatch.species, modifier = Modifier.weight(1f))
-                        InfoCard(label = "Family", value = topMatch.family, modifier = Modifier.weight(1f))
+                        InfoCard(label = "Species", value = topMatch.species, modifier = Modifier.weight(1f).fillMaxHeight())
+                        InfoCard(label = "Family", value = topMatch.family, modifier = Modifier.weight(1f).fillMaxHeight())
                     }
                 }
 
@@ -175,36 +180,40 @@ fun PlantResultScreen(
         }
 
         Surface(
-            color = HomeColors.PageBg.copy(alpha = 0.96f),
+            color = HomeColors.SurfaceWhite,
+            shadowElevation = 6.dp,
             modifier = Modifier.align(Alignment.BottomCenter)
         ) {
-            Button(
-                onClick = onCaptureAnother,
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = HomeColors.ForestPrimary,
-                    contentColor = Color.White
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .navigationBarsPadding()
-                    .padding(horizontal = 20.dp, vertical = 14.dp)
-                    .height(52.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.CameraAlt,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "Identify Another Plant",
-                    fontFamily = HomeInterFont,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color.White
-                )
+            Column(modifier = Modifier.fillMaxWidth()) {
+                HorizontalDivider(color = HomeColors.DividerLine, thickness = 1.dp)
+                Button(
+                    onClick = onCaptureAnother,
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = HomeColors.ForestPrimary,
+                        contentColor = Color.White
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(horizontal = 20.dp, vertical = 14.dp)
+                        .height(50.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.CameraAlt,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Identify Another Plant",
+                        fontFamily = HomeInterFont,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
             }
         }
     }

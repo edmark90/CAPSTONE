@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -27,6 +28,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Edit
@@ -34,13 +37,16 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
@@ -49,10 +55,15 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
+import com.example.smartplantcare.util.NetworkMonitor
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -68,6 +79,7 @@ import androidx.compose.ui.unit.sp
 import com.example.smartplantcare.iot.CropZoneConfig
 import com.example.smartplantcare.iot.DeviceConfig
 import com.example.smartplantcare.iot.DeviceRole
+import com.example.smartplantcare.iot.IotDomainLogic
 import com.example.smartplantcare.iot.LiveDeviceSnapshot
 import com.example.smartplantcare.iot.ShareInvite
 import java.util.Locale
@@ -94,9 +106,10 @@ internal fun MyPlantsShareScreen(
             .fillMaxSize()
             .background(HomeColors.PageBg)
             .statusBarsPadding()
+            .navigationBarsPadding()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp)
-            .padding(top = 14.dp, bottom = HomeDimens.BottomBarClearance)
+            .padding(horizontal = HomeDimens.ScreenHorizontalPadding)
+            .padding(top = HomeDimens.ScreenTopPadding, bottom = HomeDimens.BottomBarClearance)
     ) {
         SubPageHeader(
             title = "Share My Plant",
@@ -185,7 +198,13 @@ internal fun MyPlantsShareScreen(
                         )
                     }
 
-                    val displayInvite = latestInvite ?: snapshot.activeInvites.firstOrNull()
+                    val displayInvite = (latestInvite ?: snapshot.activeInvites.firstOrNull())?.takeIf { invite ->
+                        val now = System.currentTimeMillis()
+                        val isExpired = (invite.expiresAt > 0L && now >= invite.expiresAt) ||
+                                (invite.createdAt > 0L && (now - invite.createdAt) >= 24 * 60 * 60 * 1000L) ||
+                                invite.status != "PENDING"
+                        !isExpired
+                    }
                     if (displayInvite != null) {
                         Spacer(modifier = Modifier.height(14.dp))
                         Surface(
@@ -223,18 +242,36 @@ internal fun MyPlantsShareScreen(
                                         )
                                     }
                                 }
-                                IconButton(
-                                    onClick = {
-                                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                        cm.setPrimaryClip(ClipData.newPlainText("Invite Code", displayInvite.inviteCode))
-                                        copiedNotice = true
-                                    }
+                                Surface(
+                                    color = if (copiedNotice) HomeColors.SuccessGreen else HomeColors.ForestPrimary,
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .clickable {
+                                            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                            cm.setPrimaryClip(ClipData.newPlainText("Invite Code", displayInvite.inviteCode))
+                                            copiedNotice = true
+                                        }
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Filled.ContentCopy,
-                                        contentDescription = "Copy Code",
-                                        tint = HomeColors.ForestPrimary
-                                    )
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = if (copiedNotice) Icons.Filled.Check else Icons.Filled.ContentCopy,
+                                            contentDescription = "Copy Code",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Text(
+                                            text = if (copiedNotice) "Copied" else "Copy",
+                                            fontFamily = HomeInterFont,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -389,8 +426,9 @@ internal fun MyPlantsEventLogScreen(
             .fillMaxSize()
             .background(HomeColors.PageBg)
             .statusBarsPadding()
-            .padding(horizontal = 16.dp)
-            .padding(top = 14.dp)
+            .navigationBarsPadding()
+            .padding(horizontal = HomeDimens.ScreenHorizontalPadding)
+            .padding(top = HomeDimens.ScreenTopPadding)
     ) {
         SubPageHeader(
             title = "Device Alerts & Activity",
@@ -531,21 +569,87 @@ internal fun MyPlantsSettingsScreen(
     var draft by remember(snapshot.config) { mutableStateOf(snapshot.config) }
     var showUnclaimConfirm by remember { mutableStateOf(false) }
 
+    val isPhoneOnline by NetworkMonitor.isOnlineFlow.collectAsState()
+    val phoneDisconnectedAtMs by NetworkMonitor.disconnectedAtMsFlow.collectAsState()
+    var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(snapshot.deviceId, snapshot.receivedAtClientMs, snapshot.status.lastSeenAt) {
+        NetworkMonitor.refreshOnlineState()
+        nowMs = System.currentTimeMillis()
+        while (true) {
+            delay(2_000L)
+            NetworkMonitor.refreshOnlineState()
+            nowMs = System.currentTimeMillis()
+        }
+    }
+    val evalNowMs = if (!isPhoneOnline && phoneDisconnectedAtMs != null) {
+        phoneDisconnectedAtMs!!
+    } else {
+        nowMs
+    }
+    val isDeviceOnline = IotDomainLogic.isDeviceOnlineFresh(snapshot, nowMs = evalNowMs)
+    val isNoInternetWhileBoxOnline = isDeviceOnline && !isPhoneOnline
+    val canEditSettings = role.canControl && isDeviceOnline && isPhoneOnline
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(HomeColors.PageBg)
             .statusBarsPadding()
+            .navigationBarsPadding()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp)
-            .padding(top = 14.dp, bottom = HomeDimens.BottomBarClearance),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+            .padding(horizontal = HomeDimens.ScreenHorizontalPadding)
+            .padding(top = HomeDimens.ScreenTopPadding, bottom = HomeDimens.BottomBarClearance),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         SubPageHeader(
             title = "Device Settings & Calibration",
             subtitle = snapshot.deviceId,
             onBack = onBack
         )
+
+        // Status notice banner when ESP32 is offline OR phone lost internet while ESP32 is online
+        if (isNoInternetWhileBoxOnline || !isDeviceOnline) {
+            Surface(
+                color = HomeColors.AlertBg,
+                shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(1.dp, HomeColors.AlertRed.copy(alpha = 0.35f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Icon(
+                        imageVector = if (isNoInternetWhileBoxOnline) Icons.Filled.WifiOff else Icons.Filled.CloudOff,
+                        contentDescription = if (isNoInternetWhileBoxOnline) "No Internet Connection" else "ESP32 Offline",
+                        tint = HomeColors.AlertRed,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = if (isNoInternetWhileBoxOnline) "No Internet Connection" else "Plant Box is Offline",
+                            fontFamily = HomeInterFont,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = HomeColors.AlertRed
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = if (isNoInternetWhileBoxOnline) {
+                                "Check your internet connection. Your plant box is online, but settings cannot be changed while your phone has no internet."
+                            } else {
+                                "Settings, thresholds, and calibration adjustments are disabled until your plant box reconnects."
+                            },
+                            fontFamily = HomeInterFont,
+                            fontSize = 11.sp,
+                            color = HomeColors.TextSecondary,
+                            lineHeight = 15.sp
+                        )
+                    }
+                }
+            }
+        }
 
         // 1. Rename Plant Box Card
         Surface(
@@ -570,14 +674,19 @@ internal fun MyPlantsSettingsScreen(
                     OutlinedTextField(
                         value = boxName,
                         onValueChange = { boxName = it.take(35) },
-                        enabled = role.canControl,
+                        enabled = canEditSettings,
                         singleLine = true,
                         shape = RoundedCornerShape(14.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = HomeColors.ForestPrimary,
+                            unfocusedBorderColor = HomeColors.CardBorder,
+                            focusedLabelColor = HomeColors.ForestPrimary
+                        ),
                         modifier = Modifier.weight(1f)
                     )
                     Button(
                         onClick = { onRenameBox(boxName) },
-                        enabled = role.canControl && boxName.isNotBlank() && boxName.trim() != snapshot.meta.displayName,
+                        enabled = canEditSettings && boxName.isNotBlank() && boxName.trim() != snapshot.meta.displayName,
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier.height(52.dp),
                         contentPadding = PaddingValues(horizontal = 16.dp),
@@ -592,7 +701,7 @@ internal fun MyPlantsSettingsScreen(
             }
         }
 
-        // 2. Hardware Relay Safety & Buzzer Audio
+        // 2. Watering & Sound Controls
         Surface(
             color = HomeColors.SurfaceWhite,
             shape = RoundedCornerShape(18.dp),
@@ -601,24 +710,25 @@ internal fun MyPlantsSettingsScreen(
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    text = "Hardware Safety & Audio",
+                    text = "Watering & Sound Controls",
                     fontFamily = HomeInterFont,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
                     color = HomeColors.TextPrimary
                 )
                 SettingToggleRow(
-                    title = "Enable Physical Relay Loads",
-                    subtitle = "Turn ON only after verifying COM/NO wiring for the 3 valves & pump.",
+                    title = "Allow Watering Output",
+                    subtitle = "Keep ON to let your plant box deliver water during auto and manual cycles.",
                     checked = draft.physicalLoadsEnabled,
-                    enabled = role.canControl,
+                    enabled = canEditSettings,
                     onCheckedChange = { draft = draft.copy(physicalLoadsEnabled = it) }
                 )
+                HorizontalDivider(color = HomeColors.DividerLine, thickness = 1.dp)
                 SettingToggleRow(
-                    title = "Mute ESP32 Buzzer (GPIO18)",
-                    subtitle = "Silences audible beeps; LCD and mobile alerts remain active.",
+                    title = "Mute Box Alert Sounds",
+                    subtitle = "Silences the beeper on the box while keeping screen and phone alerts active.",
                     checked = draft.buzzerMuted,
-                    enabled = role.canControl,
+                    enabled = canEditSettings,
                     onCheckedChange = { draft = draft.copy(buzzerMuted = it) }
                 )
             }
@@ -639,13 +749,13 @@ internal fun MyPlantsSettingsScreen(
                     fontWeight = FontWeight.Bold,
                     color = HomeColors.TextPrimary
                 )
-                CropThresholdEditor("Tomato", draft.tomato, role.canControl) {
+                CropThresholdEditor("Tomato", draft.tomato, canEditSettings) {
                     draft = draft.copy(tomato = it)
                 }
-                CropThresholdEditor("Chili", draft.chili, role.canControl) {
+                CropThresholdEditor("Chili", draft.chili, canEditSettings) {
                     draft = draft.copy(chili = it)
                 }
-                CropThresholdEditor("Eggplant", draft.eggplant, role.canControl) {
+                CropThresholdEditor("Eggplant", draft.eggplant, canEditSettings) {
                     draft = draft.copy(eggplant = it)
                 }
             }
@@ -683,7 +793,7 @@ internal fun MyPlantsSettingsScreen(
                     value = draft.rainThresholdPct.toFloat(),
                     onValueChange = { draft = draft.copy(rainThresholdPct = it.toInt()) },
                     valueRange = 30f..90f,
-                    enabled = role.canControl,
+                    enabled = canEditSettings,
                     colors = SliderDefaults.colors(thumbColor = HomeColors.ForestPrimary, activeTrackColor = HomeColors.ForestPrimary)
                 )
                 Text(
@@ -696,7 +806,7 @@ internal fun MyPlantsSettingsScreen(
                     value = draft.reservoirEmptyGapIn,
                     onValueChange = { draft = draft.copy(reservoirEmptyGapIn = it) },
                     valueRange = 5.0f..10.0f,
-                    enabled = role.canControl,
+                    enabled = canEditSettings,
                     colors = SliderDefaults.colors(thumbColor = HomeColors.WaterBlue, activeTrackColor = HomeColors.WaterBlue)
                 )
             }
@@ -705,29 +815,45 @@ internal fun MyPlantsSettingsScreen(
         if (role.canControl) {
             Button(
                 onClick = { onSaveConfig(draft) },
-                enabled = !isBusy,
+                enabled = canEditSettings && !isBusy,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(52.dp),
                 shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = HomeColors.ForestPrimary,
-                    contentColor = Color.White
+                    containerColor = if (canEditSettings) HomeColors.ForestPrimary else HomeColors.CardBorder,
+                    contentColor = if (canEditSettings) Color.White else HomeColors.TextMuted,
+                    disabledContainerColor = HomeColors.CardBorder.copy(alpha = 0.5f),
+                    disabledContentColor = HomeColors.TextMuted
                 )
             ) {
-                Icon(Icons.Filled.Save, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                Icon(
+                    imageVector = when {
+                        isNoInternetWhileBoxOnline -> Icons.Filled.WifiOff
+                        !isDeviceOnline -> Icons.Filled.CloudOff
+                        else -> Icons.Filled.Save
+                    },
+                    contentDescription = null,
+                    tint = if (canEditSettings) Color.White else HomeColors.TextMuted,
+                    modifier = Modifier.size(18.dp)
+                )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = if (isBusy) "Saving..." else "Save Settings to ESP32",
+                    text = when {
+                        isBusy -> "Saving..."
+                        isNoInternetWhileBoxOnline -> "No Internet Connection"
+                        !isDeviceOnline -> "ESP32 Offline • Adjustments Disabled"
+                        else -> "Save Settings to ESP32"
+                    },
                     fontFamily = HomeInterFont,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
-                    color = Color.White
+                    color = if (canEditSettings) Color.White else HomeColors.TextMuted
                 )
             }
         }
 
-        // 5. Read-Only Hardware Diagnostics
+        // 5. Device Information
         Surface(
             color = HomeColors.SurfaceWhite,
             shape = RoundedCornerShape(18.dp),
@@ -736,20 +862,20 @@ internal fun MyPlantsSettingsScreen(
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    text = "Hardware Diagnostics",
+                    text = "Device Information",
                     fontFamily = HomeInterFont,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
                     color = HomeColors.TextPrimary
                 )
                 Text(
-                    text = "Firmware: ${snapshot.status.firmwareVersion} • Epoch: #${snapshot.meta.ownershipEpoch}",
+                    text = "Box ID: ${snapshot.deviceId} • Software: v3.1",
                     fontFamily = HomeInterFont,
                     fontSize = 12.sp,
                     color = HomeColors.TextSecondary
                 )
                 Text(
-                    text = "IP: ${snapshot.status.ipAddress.ifBlank { "--" }} • LCD I2C: 0x${snapshot.status.lcdAddress.toString(16).uppercase()} • Heap: ${snapshot.status.freeHeap / 1024} KB",
+                    text = "Local Network IP: ${snapshot.status.ipAddress.ifBlank { "--" }}",
                     fontFamily = HomeInterFont,
                     fontSize = 12.sp,
                     color = HomeColors.TextSecondary
@@ -757,7 +883,7 @@ internal fun MyPlantsSettingsScreen(
             }
         }
 
-        // 6. Danger Zone (Owner Only): Unclaim & Factory Reset ESP32
+        // 6. Danger Zone (Owner Only): Unclaim & Factory Reset Plant Box
         if (role.canUnclaim) {
             Surface(
                 color = HomeColors.AlertBg,
@@ -779,7 +905,7 @@ internal fun MyPlantsSettingsScreen(
                     }
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Unclaiming immediately stops the pump & valves, removes all shared users, wipes Owner Wi-Fi from ESP32 NVS (preserving sensor calibration), and returns the box to UNCLAIMED setup mode.",
+                        text = "Removing this plant box immediately stops active watering, removes all shared members, clears saved Wi-Fi settings, and resets the box so it can be paired again.",
                         fontFamily = HomeInterFont,
                         fontSize = 11.sp,
                         color = HomeColors.TextSecondary,
@@ -789,14 +915,16 @@ internal fun MyPlantsSettingsScreen(
                     OutlinedButton(
                         onClick = { showUnclaimConfirm = true },
                         enabled = !isBusy,
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp),
                         shape = RoundedCornerShape(14.dp),
                         border = BorderStroke(1.5.dp, HomeColors.AlertRed)
                     ) {
                         Icon(Icons.Filled.DeleteForever, null, tint = HomeColors.AlertRed, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "Unclaim & Factory Reset ESP32",
+                            text = "Remove & Reset Plant Box",
                             fontFamily = HomeInterFont,
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Bold,
@@ -814,7 +942,7 @@ internal fun MyPlantsSettingsScreen(
             containerColor = HomeColors.SurfaceWhite,
             title = {
                 Text(
-                    text = "Unclaim & Reset ESP32?",
+                    text = "Remove & Reset Plant Box?",
                     fontFamily = HomeInterFont,
                     fontWeight = FontWeight.Bold,
                     color = HomeColors.TextPrimary
@@ -822,7 +950,7 @@ internal fun MyPlantsSettingsScreen(
             },
             text = {
                 Text(
-                    text = "This triggers RESET_PENDING on ${snapshot.meta.displayName}. All shared users will lose access immediately and the ESP32 will wipe Wi-Fi and reopen SPC-SETUP mode.",
+                    text = "All shared members will lose access to ${snapshot.meta.displayName} immediately, saved Wi-Fi will be cleared, and the box will reopen setup mode for pairing.",
                     fontFamily = HomeInterFont,
                     fontSize = 13.sp,
                     color = HomeColors.TextSecondary

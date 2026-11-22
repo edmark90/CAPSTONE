@@ -513,7 +513,7 @@ private fun FloatingBottomBar(
         modifier = Modifier
             .fillMaxWidth()
             .navigationBarsPadding()
-            .padding(horizontal = 16.dp, vertical = 14.dp),
+            .padding(horizontal = HomeDimens.ScreenHorizontalPadding, vertical = 14.dp),
         contentAlignment = Alignment.BottomCenter
     ) {
         Row(

@@ -165,9 +165,9 @@ data class DeviceTelemetry(
     val reservoirPct: Float? = null,
     val reservoirValid: Boolean = false,
     val reservoirState: String = "UNKNOWN",
-    val tomato: SoilZoneTelemetry = SoilZoneTelemetry("tomato", "Tomato", "GPIO34", "Valve 1 (IN1)"),
-    val chili: SoilZoneTelemetry = SoilZoneTelemetry("chili", "Chili", "GPIO35", "Valve 2 (IN2)"),
-    val eggplant: SoilZoneTelemetry = SoilZoneTelemetry("eggplant", "Eggplant", "GPIO33", "Valve 3 (IN3)")
+    val tomato: SoilZoneTelemetry = SoilZoneTelemetry("tomato", "Tomato", "Zone 1", "Tomato Zone"),
+    val chili: SoilZoneTelemetry = SoilZoneTelemetry("chili", "Chili", "Zone 2", "Chili Zone"),
+    val eggplant: SoilZoneTelemetry = SoilZoneTelemetry("eggplant", "Eggplant", "Zone 3", "Eggplant Zone")
 ) {
     val zones: List<SoilZoneTelemetry> get() = listOf(tomato, chili, eggplant)
 }
@@ -410,6 +410,21 @@ object IotDomainLogic {
      * real Unix epoch timestamps (>= 1.7e12 ms) and pre-NTP boot uptime values (< 1.7e12 ms)
      * so an ESP32 that just rebooted before NTP sync is NEVER falsely marked Offline.
      */
+    fun isDeviceOnlineFresh(
+        snapshot: LiveDeviceSnapshot?,
+        nowMs: Long = System.currentTimeMillis(),
+        staleThresholdMs: Long = 45_000L
+    ): Boolean {
+        if (snapshot == null) return false
+        return isDeviceOnlineFresh(
+            status = snapshot.status,
+            nowMs = nowMs,
+            receivedAtClientMs = snapshot.receivedAtClientMs,
+            telemetryUpdatedAt = snapshot.telemetry.updatedAt,
+            staleThresholdMs = staleThresholdMs
+        )
+    }
+
     fun isDeviceOnlineFresh(
         status: DeviceStatus,
         nowMs: Long,

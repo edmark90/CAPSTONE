@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Thermostat
 import androidx.compose.material.icons.filled.TouchApp
@@ -92,6 +93,7 @@ import com.example.smartplantcare.iot.IotDomainLogic
 import com.example.smartplantcare.iot.LiveDeviceSnapshot
 import com.example.smartplantcare.iot.MyPlantsSubPage
 import com.example.smartplantcare.iot.MyPlantsUiState
+import com.example.smartplantcare.util.NetworkMonitor
 import com.example.smartplantcare.iot.SoilZoneTelemetry
 import java.util.Locale
 
@@ -159,15 +161,23 @@ internal fun MyPlantsDashboardScreen(
         snapshot.status.lastSeenAt,
         snapshot.telemetry.updatedAt
     ) {
+        NetworkMonitor.refreshOnlineState()
         nowMs = System.currentTimeMillis()
         while (true) {
-            delay(5_000L)
+            delay(2_000L)
+            NetworkMonitor.refreshOnlineState()
             nowMs = System.currentTimeMillis()
         }
     }
+    val isPhoneOnline = uiState.isPhoneOnline
+    val evalNowMs = if (!isPhoneOnline && uiState.phoneDisconnectedAtMs != null) {
+        uiState.phoneDisconnectedAtMs
+    } else {
+        nowMs
+    }
     val isDeviceOnline = IotDomainLogic.isDeviceOnlineFresh(
         status = status,
-        nowMs = nowMs,
+        nowMs = evalNowMs,
         receivedAtClientMs = snapshot.receivedAtClientMs,
         telemetryUpdatedAt = telemetry.updatedAt
     )
@@ -178,9 +188,9 @@ internal fun MyPlantsDashboardScreen(
             .background(HomeColors.PageBg)
             .statusBarsPadding(),
         contentPadding = PaddingValues(
-            start = 16.dp,
-            end = 16.dp,
-            top = 16.dp,
+            start = HomeDimens.ScreenHorizontalPadding,
+            end = HomeDimens.ScreenHorizontalPadding,
+            top = HomeDimens.ScreenTopPadding,
             bottom = HomeDimens.BottomBarClearance + 8.dp
         ),
         verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -233,7 +243,8 @@ internal fun MyPlantsDashboardScreen(
                 snapshot = snapshot,
                 role = role,
                 isDeviceOnline = isDeviceOnline,
-                nowMs = nowMs,
+                isPhoneOnline = isPhoneOnline,
+                nowMs = evalNowMs,
                 isOutdoor = isOutdoor,
                 isAutoIrrigation = isAutoIrrigation,
                 isSyncing = uiState.isSyncingDevice,
@@ -243,7 +254,19 @@ internal fun MyPlantsDashboardScreen(
         }
 
         // 4. Priority Live Status Banners (Zero idle clutter — appear only when active)
-        if (!isDeviceOnline) {
+        if (isDeviceOnline && !isPhoneOnline) {
+            // Case 1: ESP32 is ONLINE, but user's mobile has NO INTERNET
+            item(key = "banner_no_internet") {
+                InlineStatusBanner(
+                    bg = HomeColors.AlertBg,
+                    accent = HomeColors.AlertRed,
+                    icon = Icons.Filled.WifiOff,
+                    title = "No Internet Connection",
+                    subtitle = "Check your internet connection. Your plant box is online, but your phone has no internet."
+                )
+            }
+        } else if (!isDeviceOnline && isPhoneOnline) {
+            // Case 2: ESP32 is OFFLINE, and mobile has internet
             item(key = "banner_offline") {
                 InlineStatusBanner(
                     bg = HomeColors.AlertBg,
@@ -253,7 +276,10 @@ internal fun MyPlantsDashboardScreen(
                     subtitle = "Sensors and weather readings are paused (--). Check box power or Wi-Fi and tap Sync."
                 )
             }
-        } else {
+        }
+        // Case 3: If !isDeviceOnline && !isPhoneOnline -> No "Check your internet connection" banner!
+
+        if (isDeviceOnline && isPhoneOnline) {
             if (!status.physicalLoadsEnabled && role.canControl) {
                 item(key = "banner_bench_safe") {
                     Surface(
@@ -268,14 +294,14 @@ internal fun MyPlantsDashboardScreen(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Relays Paused (Bench Safe Mode)",
+                                    text = "Watering Output Paused",
                                     fontFamily = HomeInterFont,
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = HomeColors.TextPrimary
                                 )
                                 Text(
-                                    text = "Enable physical loads so valves & pump relays open when watering.",
+                                    text = "Turn on watering output so your plant box can start delivering water.",
                                     fontFamily = HomeInterFont,
                                     fontSize = 11.sp,
                                     color = HomeColors.TextSecondary,
@@ -354,7 +380,7 @@ internal fun MyPlantsDashboardScreen(
             SmartControlTilesRow(
                 isAutoIrrigation = isAutoIrrigation,
                 isOutdoor = isOutdoor,
-                canControl = role.canControl && isDeviceOnline,
+                canControl = role.canControl && isDeviceOnline && isPhoneOnline,
                 isDeviceOnline = isDeviceOnline,
                 onToggleAutoIrrigation = { onSwitchAutoIrrigation(!isAutoIrrigation) },
                 onToggleOutdoor = { onSwitchMode(if (isOutdoor) "INDOOR" else "OUTDOOR") }
@@ -367,16 +393,19 @@ internal fun MyPlantsDashboardScreen(
                 title = "Crop Zones",
                 trailingLabel = when {
                     !isDeviceOnline -> "Offline"
+                    !isPhoneOnline -> "No Internet"
                     isAutoIrrigation -> "Auto Active"
                     else -> "Manual Mode"
                 },
                 trailingBg = when {
                     !isDeviceOnline -> HomeColors.PlaceholderBg
+                    !isPhoneOnline -> HomeColors.AlertBg
                     isAutoIrrigation -> HomeColors.SoftMint
                     else -> HomeColors.WaterBg
                 },
                 trailingFg = when {
                     !isDeviceOnline -> HomeColors.TextSecondary
+                    !isPhoneOnline -> HomeColors.AlertRed
                     isAutoIrrigation -> HomeColors.ForestPrimary
                     else -> HomeColors.WaterBlue
                 }
@@ -386,7 +415,11 @@ internal fun MyPlantsDashboardScreen(
         items(telemetry.zones, key = { it.slug }) { zone ->
             val cropCfg = config.cropConfig(zone.slug)
             val baseLockReason = IotDomainLogic.manualWaterLockReason(role, snapshot, zone.slug)
-            val effectiveLockReason = if (!isDeviceOnline) "ESP32 offline" else baseLockReason
+            val effectiveLockReason = when {
+                !isDeviceOnline -> "ESP32 offline"
+                !isPhoneOnline -> "No internet connection"
+                else -> baseLockReason
+            }
             val isZoneWatering = isDeviceOnline && status.isActivelyIrrigating && status.activeValve == zone.slug
             val isZoneSoaking = isDeviceOnline && status.isInSoakSettle && status.activeValve == zone.slug
             val isZoneStarting = isDeviceOnline && !status.isActivelyIrrigating && uiState.pendingWaterCrop == zone.slug
@@ -567,6 +600,7 @@ private fun BotanicalHeroCard(
     snapshot: LiveDeviceSnapshot,
     role: DeviceRole,
     isDeviceOnline: Boolean,
+    isPhoneOnline: Boolean = true,
     nowMs: Long,
     isOutdoor: Boolean,
     isAutoIrrigation: Boolean,
@@ -578,9 +612,10 @@ private fun BotanicalHeroCard(
     val telemetry = snapshot.telemetry
     val latestHeartbeatMs = maxOf(status.lastSeenAt, telemetry.updatedAt)
     val isOnlineFresh = isDeviceOnline
+    val isNoInternetWhileOnline = isOnlineFresh && !isPhoneOnline
 
-    // Subtle breathing dot animation when online
-    val pulseAlpha = if (isOnlineFresh) {
+    // Subtle breathing dot animation when online and connected
+    val pulseAlpha = if (isOnlineFresh && isPhoneOnline) {
         val infinite = rememberInfiniteTransition(label = "online_dot")
         val a by infinite.animateFloat(
             initialValue = 0.45f,
@@ -597,6 +632,7 @@ private fun BotanicalHeroCard(
     }
 
     val summaryStatus = when {
+        isNoInternetWhileOnline -> "No Internet Connection"
         !isOnlineFresh -> "ESP32 Offline"
         status.emergencyStop || status.faultLockout -> "System Locked"
         status.isActivelyIrrigating -> {
@@ -650,7 +686,7 @@ private fun BotanicalHeroCard(
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Surface(
-                        color = if (isOnlineFresh) {
+                        color = if (isOnlineFresh && isPhoneOnline) {
                             HomeColors.MintGlow.copy(alpha = 0.18f)
                         } else {
                             HomeColors.AlertRed.copy(alpha = 0.28f)
@@ -666,7 +702,7 @@ private fun BotanicalHeroCard(
                                     .size(7.dp)
                                     .clip(CircleShape)
                                     .background(
-                                        if (isOnlineFresh) {
+                                        if (isOnlineFresh && isPhoneOnline) {
                                             HomeColors.MintGlow.copy(alpha = pulseAlpha)
                                         } else {
                                             Color(0xFFFCA5A5)
@@ -675,11 +711,15 @@ private fun BotanicalHeroCard(
                             )
                             Spacer(modifier = Modifier.width(5.dp))
                             Text(
-                                text = if (isOnlineFresh) "Online" else "Offline",
+                                text = when {
+                                    isNoInternetWhileOnline -> "No Internet"
+                                    isOnlineFresh -> "Online"
+                                    else -> "Offline"
+                                },
                                 fontFamily = HomeInterFont,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                color = if (isOnlineFresh) HomeColors.MintGlow else Color(0xFFFCA5A5),
+                                color = if (isOnlineFresh && isPhoneOnline) HomeColors.MintGlow else Color(0xFFFCA5A5),
                                 maxLines = 1
                             )
                         }
@@ -706,7 +746,7 @@ private fun BotanicalHeroCard(
                             shape = RoundedCornerShape(50)
                         ) {
                             Text(
-                                text = "Bench Safe",
+                                text = "Watering Off",
                                 fontFamily = HomeInterFont,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
@@ -1064,7 +1104,10 @@ private fun SmartModeTile(
     Surface(
         color = HomeColors.SurfaceWhite,
         shape = RoundedCornerShape(20.dp),
-        border = BorderStroke(1.dp, HomeColors.CardBorder),
+        border = BorderStroke(
+            width = 1.dp,
+            color = if (enabled) animatedAccent.copy(alpha = 0.22f) else HomeColors.CardBorder
+        ),
         modifier = modifier
             .clip(RoundedCornerShape(20.dp))
             .clickable(enabled = enabled, onClick = onClick)
@@ -1350,7 +1393,7 @@ private fun ProCropZoneCard(
         ),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(modifier = Modifier.padding(18.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
@@ -1525,8 +1568,8 @@ private fun ProCropZoneCard(
                             enabled = canTapWater,
                             modifier = Modifier
                                 .weight(1f)
-                                .height(42.dp),
-                            shape = RoundedCornerShape(12.dp),
+                                .height(44.dp),
+                            shape = RoundedCornerShape(13.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = if (isWateringThisZone || isStartingThisZone) {
                                     HomeColors.WaterBlue
@@ -1595,7 +1638,7 @@ private fun ProCropZoneCard(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "${zone.valveLabel} + Pump ON",
+                            text = "Watering ${zone.displayName} now",
                             fontFamily = HomeInterFont,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
@@ -1671,7 +1714,7 @@ private fun CircularMoistureRing(
     }
 
     Box(
-        modifier = Modifier.size(60.dp),
+        modifier = Modifier.size(64.dp),
         contentAlignment = Alignment.Center
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
@@ -1681,7 +1724,7 @@ private fun CircularMoistureRing(
                     radius = (size.minDimension / 2f) * (0.72f + 0.28f * ripple)
                 )
             }
-            val strokePx = 5.5.dp.toPx()
+            val strokePx = 6.dp.toPx()
             val inset = strokePx / 2f
             val arcSize = Size(size.width - strokePx, size.height - strokePx)
             val topLeft = Offset(inset, inset)
@@ -1796,22 +1839,38 @@ private fun ReservoirBentoCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // Vertical visual tank silhouette
-                Box(
+                // Vertical visual tank silhouette with crisp glass border & level ticks
+                Surface(
+                    shape = RoundedCornerShape(9.dp),
+                    color = HomeColors.PageBg,
+                    border = BorderStroke(1.dp, HomeColors.CardBorder),
                     modifier = Modifier
-                        .width(26.dp)
-                        .height(62.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(HomeColors.PageBg),
-                    contentAlignment = Alignment.BottomCenter
+                        .width(28.dp)
+                        .height(66.dp)
                 ) {
                     Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .fillMaxHeight(animatedFill)
-                            .clip(RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp))
-                            .background(liquidColor)
-                    )
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.BottomCenter
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .fillMaxHeight(animatedFill)
+                                .clip(RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp))
+                                .background(liquidColor)
+                        )
+                        Canvas(modifier = Modifier.fillMaxSize()) {
+                            listOf(0.25f, 0.50f, 0.75f).forEach { frac ->
+                                val y = size.height * frac
+                                drawLine(
+                                    color = Color.White.copy(alpha = 0.45f),
+                                    start = Offset(0f, y),
+                                    end = Offset(size.width * 0.35f, y),
+                                    strokeWidth = 1.dp.toPx()
+                                )
+                            }
+                        }
+                    }
                 }
 
                 Column(modifier = Modifier.weight(1f)) {
@@ -2008,11 +2067,11 @@ private fun WeatherRainBentoCard(
                 }
                 val sensorLabel = when {
                     !isDeviceOnline -> "Sensor: --"
-                    !telemetry.rainValid -> "Sensor: Fault"
-                    status.rainSuspensionActive -> "Sensor: Wet • Raining"
-                    isAccidentalWet -> "Sensor: Wet (Accidental)"
+                    !telemetry.rainValid -> "Sensor Fault"
+                    status.rainSuspensionActive -> "Wet • Raining"
+                    isAccidentalWet -> "Accidental Wet"
                     telemetry.rainWetConfirmed -> "Sensor: Wet"
-                    telemetry.rainRawWet -> "Sensor: Wet..."
+                    telemetry.rainRawWet -> "Detecting Wet..."
                     else -> "Sensor: Dry"
                 }
 
@@ -2059,6 +2118,7 @@ private fun WeatherRainBentoCard(
                 },
                 fontFamily = HomeInterFont,
                 fontSize = 10.sp,
+                lineHeight = 14.sp,
                 color = when {
                     !isDeviceOnline -> HomeColors.TextMuted
                     status.rainSuspensionActive -> HomeColors.WaterBlue
@@ -2066,7 +2126,7 @@ private fun WeatherRainBentoCard(
                     else -> HomeColors.TextMuted
                 },
                 fontWeight = if (isDeviceOnline && (status.rainSuspensionActive || isSensorWetNow)) FontWeight.Bold else FontWeight.Normal,
-                maxLines = 1,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
         }

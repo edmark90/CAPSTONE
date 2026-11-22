@@ -163,7 +163,7 @@ fun NotificationHistoryScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                        .padding(horizontal = HomeDimens.ScreenHorizontalPadding, vertical = 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -286,8 +286,8 @@ fun NotificationHistoryScreen(
                             .fillMaxSize()
                             .navigationBarsPadding(),
                         contentPadding = PaddingValues(
-                            start = 16.dp,
-                            end = 16.dp,
+                            start = HomeDimens.ScreenHorizontalPadding,
+                            end = HomeDimens.ScreenHorizontalPadding,
                             top = 14.dp,
                             bottom = 28.dp
                         ),

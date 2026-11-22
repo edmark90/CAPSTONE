@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.smartplantcare.data.NotificationHistory
 import com.example.smartplantcare.data.NotificationHistoryRepository
 import com.example.smartplantcare.notification.NotificationHelper
+import com.example.smartplantcare.util.NetworkMonitor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -75,6 +76,10 @@ data class MyPlantsUiState(
     // Page 4: Share My Plant
     val latestGeneratedInvite: ShareInvite? = null,
 
+    // Network & Phone Connectivity
+    val isPhoneOnline: Boolean = true,
+    val phoneDisconnectedAtMs: Long? = null,
+
     // Feedback
     val snackbarMessage: String? = null
 )
@@ -99,8 +104,46 @@ class MyPlantsViewModel(
     private val lastNotifiedAtByKey = mutableMapOf<String, Long>()
     private val ownerLocationPromptedDevices = mutableSetOf<String>()
 
-    private val _uiState = MutableStateFlow(MyPlantsUiState())
+    private val _uiState = MutableStateFlow(
+        MyPlantsUiState(
+            isPhoneOnline = NetworkMonitor.isOnlineFlow.value,
+            phoneDisconnectedAtMs = NetworkMonitor.disconnectedAtMsFlow.value
+        )
+    )
     val uiState: StateFlow<MyPlantsUiState> = _uiState.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            NetworkMonitor.isOnlineFlow.collect { online ->
+                val prevOnline = _uiState.value.isPhoneOnline
+                val disconnectedAt = NetworkMonitor.disconnectedAtMsFlow.value
+                _uiState.update { st ->
+                    var nextSnackbar = st.snackbarMessage
+                    if (prevOnline && !online) {
+                        val snap = st.liveSnapshot
+                        val evalMs = disconnectedAt ?: System.currentTimeMillis()
+                        val wasBoxOnline = snap != null && IotDomainLogic.isDeviceOnlineFresh(
+                            status = snap.status,
+                            nowMs = evalMs,
+                            receivedAtClientMs = snap.receivedAtClientMs,
+                            telemetryUpdatedAt = snap.telemetry.updatedAt
+                        )
+                        if (wasBoxOnline) {
+                            nextSnackbar = "No internet connection. Please check your internet connection."
+                        }
+                    }
+                    st.copy(
+                        isPhoneOnline = online,
+                        phoneDisconnectedAtMs = disconnectedAt,
+                        snackbarMessage = nextSnackbar
+                    )
+                }
+                if (!prevOnline && online && _uiState.value.activeDeviceId != null) {
+                    resyncLiveDevice(silent = true)
+                }
+            }
+        }
+    }
 
     private var boundUid: String? = null
     private var boundEmail: String = ""
@@ -208,9 +251,18 @@ class MyPlantsViewModel(
             val aclRole = snapshot?.members?.firstOrNull { it.uid == uid }?.role
                 ?: st.activeRole
 
+            // Filter latest generated invite if older than 24 hours or expired
+            val validInvite = st.latestGeneratedInvite?.takeIf { invite ->
+                val now = System.currentTimeMillis()
+                invite.status == "PENDING" &&
+                    (invite.expiresAt <= 0L || now < invite.expiresAt) &&
+                    (invite.createdAt <= 0L || (now - invite.createdAt) < 24 * 60 * 60 * 1000L)
+            }
+
             st.copy(
                 liveSnapshot = snapshot,
                 activeRole = aclRole,
+                latestGeneratedInvite = validInvite,
                 pendingCommandId = nextPendingCmd,
                 pendingWaterCrop = nextPendingCrop,
                 snackbarMessage = nextSnackbar
@@ -431,6 +483,7 @@ class MyPlantsViewModel(
             // Immediate direct REST check 1.2s after entering dashboard so stale cache never sticks
             delay(1200L)
             while (true) {
+                val phoneOnlineNow = NetworkMonitor.refreshOnlineState()
                 val st = _uiState.value
                 val currentSnap = st.liveSnapshot
                 val now = System.currentTimeMillis()
@@ -440,8 +493,8 @@ class MyPlantsViewModel(
                     receivedAtClientMs = currentSnap.receivedAtClientMs,
                     telemetryUpdatedAt = currentSnap.telemetry.updatedAt
                 )
-                if (st.step == MyPlantsStep.LIVE_DASHBOARD && st.activeDeviceId == deviceId && !st.isSyncingDevice) {
-                    val realtimeSilent = (now - lastRealtimeDeliveryAtMs) >= 10_000L
+                if (phoneOnlineNow && st.step == MyPlantsStep.LIVE_DASHBOARD && st.activeDeviceId == deviceId && !st.isSyncingDevice) {
+                    val realtimeSilent = (now - lastRealtimeDeliveryAtMs) >= 5_000L
                     if (realtimeSilent || currentStale) {
                         val restSnap = repository.fetchDeviceSnapshotViaRest(deviceId).getOrNull()
                         if (restSnap != null && isNewerSnapshot(restSnap, _uiState.value.liveSnapshot)) {
@@ -452,7 +505,7 @@ class MyPlantsViewModel(
                         }
                     }
                 }
-                delay(if (currentStale) 6_000L else 10_000L)
+                delay(if (!phoneOnlineNow) 2_000L else if (currentStale) 4_000L else 5_000L)
             }
         }
     }
@@ -1016,8 +1069,8 @@ class MyPlantsViewModel(
         }
         viewModelScope.launch {
             repository.setPhysicalLoadsEnabled(deviceId, true)
-                .onSuccess { showSnackbar("Physical relays ENABLED! ESP32 will energize valves & pump.") }
-                .onFailure { showSnackbar("Failed to enable relays: ${it.localizedMessage}") }
+                .onSuccess { showSnackbar("Watering output enabled! Your plant box is ready to water.") }
+                .onFailure { showSnackbar("Failed to enable watering output: ${it.localizedMessage}") }
         }
     }
 
@@ -1031,6 +1084,23 @@ class MyPlantsViewModel(
         val deviceId = st.activeDeviceId ?: return
         if (st.step != MyPlantsStep.LIVE_DASHBOARD) return
         if (st.isSyncingDevice) return
+
+        if (!NetworkMonitor.refreshOnlineState()) {
+            if (!silent) {
+                val snap = st.liveSnapshot
+                val evalMs = NetworkMonitor.disconnectedAtMsFlow.value ?: System.currentTimeMillis()
+                val wasBoxOnline = snap != null && IotDomainLogic.isDeviceOnlineFresh(
+                    status = snap.status,
+                    nowMs = evalMs,
+                    receivedAtClientMs = snap.receivedAtClientMs,
+                    telemetryUpdatedAt = snap.telemetry.updatedAt
+                )
+                if (wasBoxOnline) {
+                    showSnackbar("No internet connection. Please check your internet connection.")
+                }
+            }
+            return
+        }
 
         viewModelScope.launch {
             _uiState.update { it.copy(isSyncingDevice = true) }
