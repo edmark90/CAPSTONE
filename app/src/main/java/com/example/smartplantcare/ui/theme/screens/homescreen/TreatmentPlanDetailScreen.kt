@@ -505,12 +505,11 @@ fun DoctorNotesSection(
                 }
                 Spacer(modifier = Modifier.width(10.dp))
                 Text(
-                    text = "AI DOCTOR NOTES",
+                    text = "Care Guidance",
                     fontFamily = HomeInterFont,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 11.sp,
-                    color = HomeColors.ForestPrimary,
-                    letterSpacing = 0.6.sp
+                    fontSize = 14.sp,
+                    color = HomeColors.ForestPrimary
                 )
             }
             Spacer(modifier = Modifier.height(10.dp))
@@ -718,39 +717,54 @@ fun DiseaseInformationSection(diseaseName: String, isHealthy: Boolean) {
                     modifier = Modifier.weight(1f)
                 )
 
-                IconButton(
-                    onClick = {
-                        if (!ttsInitialized) return@IconButton
-                        if (isSpeaking) {
-                            tts?.stop()
-                            isSpeaking = false
-                            currentWordIndex = -1
-                        } else {
-                            tts?.let { textToSpeech ->
-                                textToSpeech.stop()
+                Surface(
+                    color = if (isSpeaking) HomeColors.AlertBg else if (ttsInitialized) HomeColors.SoftMint else HomeColors.PlaceholderBg,
+                    shape = RoundedCornerShape(50),
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .clickable(enabled = ttsInitialized) {
+                            if (isSpeaking) {
+                                tts?.stop()
+                                isSpeaking = false
                                 currentWordIndex = -1
-                                val params = Bundle()
-                                params.putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, "tts_utterance")
-                                textToSpeech.speak(speakText, TextToSpeech.QUEUE_FLUSH, params, "tts_utterance")
+                            } else {
+                                tts?.let { textToSpeech ->
+                                    textToSpeech.stop()
+                                    currentWordIndex = -1
+                                    val params = Bundle()
+                                    params.putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, "tts_utterance")
+                                    textToSpeech.speak(speakText, TextToSpeech.QUEUE_FLUSH, params, "tts_utterance")
+                                }
                             }
                         }
-                    },
-                    enabled = ttsInitialized,
-                    modifier = Modifier
-                        .size(38.dp)
-                        .clip(CircleShape)
-                        .background(if (isSpeaking) HomeColors.AlertBg else if (ttsInitialized) HomeColors.SoftMint else HomeColors.PlaceholderBg)
                 ) {
-                    Icon(
-                        imageVector = if (isSpeaking) Icons.Default.Stop else Icons.AutoMirrored.Filled.VolumeUp,
-                        contentDescription = if (isSpeaking) "Stop listening" else "Listen",
-                        tint = when {
-                            isSpeaking -> HomeColors.AlertRed
-                            ttsInitialized -> HomeColors.ForestPrimary
-                            else -> HomeColors.TextMuted
-                        },
-                        modifier = Modifier.size(19.dp)
-                    )
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (isSpeaking) Icons.Default.Stop else Icons.AutoMirrored.Filled.VolumeUp,
+                            contentDescription = if (isSpeaking) "Stop listening" else "Listen",
+                            tint = when {
+                                isSpeaking -> HomeColors.AlertRed
+                                ttsInitialized -> HomeColors.ForestPrimary
+                                else -> HomeColors.TextMuted
+                            },
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = if (isSpeaking) "Stop" else "Listen",
+                            fontFamily = HomeInterFont,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = when {
+                                isSpeaking -> HomeColors.AlertRed
+                                ttsInitialized -> HomeColors.ForestPrimary
+                                else -> HomeColors.TextMuted
+                            }
+                        )
+                    }
                 }
             }
 

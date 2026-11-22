@@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -46,6 +45,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -58,7 +58,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import com.example.smartplantcare.util.NetworkMonitor
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -79,6 +78,7 @@ import com.example.smartplantcare.R
 import com.example.smartplantcare.data.TreatmentPlan
 import com.example.smartplantcare.iot.IotDomainLogic
 import com.example.smartplantcare.iot.MyPlantsUiState
+import com.example.smartplantcare.util.NetworkMonitor
 import kotlinx.coroutines.delay
 import java.io.File
 import java.util.Calendar
@@ -108,10 +108,10 @@ fun HomeScreen(
     val greetingName = userName.ifBlank { "Plant Lover" }
 
     val activePlans = remember(plans) {
-        plans.filter { it.isActive && it.computedCurrentDayIndex < 7 }.take(3)
+        plans.filter { it.isActive && it.computedCurrentDayIndex < 7 && it.completedCount < 7 }.take(3)
     }
     val healthyCount = remember(plans) { plans.count { it.isHealthy } }
-    val inCareCount = remember(plans) { plans.count { !it.isHealthy && it.isActive } }
+    val inCareCount = remember(plans) { plans.count { !it.isHealthy && it.isActive && it.completedCount < 7 } }
 
     LazyColumn(
         modifier = Modifier
@@ -122,12 +122,12 @@ fun HomeScreen(
             start = HomeDimens.ScreenHorizontalPadding,
             end = HomeDimens.ScreenHorizontalPadding,
             top = HomeDimens.ScreenTopPadding,
-            bottom = HomeDimens.BottomBarClearance
+            bottom = HomeDimens.BottomBarClearance + 8.dp
         ),
-        verticalArrangement = Arrangement.spacedBy(HomeDimens.SectionSpacing)
+        verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
         // ─── 1. Top Header ─────────────────────────────────────────────────
-        item {
+        item(key = "home_header") {
             HomeHeader(
                 greetingLabel = greetingLabel,
                 userName = greetingName,
@@ -137,8 +137,8 @@ fun HomeScreen(
             )
         }
 
-        // ─── 2. Flagship SmartPlantCare Box Hero Card ──────────────────────
-        item {
+        // ─── 2. SmartPlantCare Box Dashboard Card (Clean, No Redundant Info)
+        item(key = "smart_box_card") {
             SmartPlantCareBoxHomeCard(
                 uiState = myPlantsUiState,
                 onOpenMyPlants = onOpenMyPlants
@@ -146,12 +146,12 @@ fun HomeScreen(
         }
 
         // ─── 3. AI Leaf Health Scanner Feature Card ────────────────────────
-        item {
+        item(key = "hero_scan_card") {
             HeroScanCard(onScanClick = onScanClick)
         }
 
         // ─── 4. Quick Tools Row ────────────────────────────────────────────
-        item {
+        item(key = "quick_tools_section") {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 SectionHeading(title = "Quick Tools")
                 Row(
@@ -175,8 +175,8 @@ fun HomeScreen(
                     QuickToolCard(
                         icon = Icons.Filled.MedicalServices,
                         title = "AI Doctor",
-                        subtitle = if (plans.isEmpty()) "Treatment plans"
-                        else "${plans.size} saved plant${if (plans.size == 1) "" else "s"}",
+                        subtitle = if (plans.isEmpty()) "7-day care plans"
+                        else "$healthyCount healthy • $inCareCount in care",
                         badgeText = if (inCareCount > 0) "$inCareCount active" else null,
                         iconBg = HomeColors.WaterBg,
                         iconTint = HomeColors.WaterBlue,
@@ -189,58 +189,53 @@ fun HomeScreen(
             }
         }
 
-        // ─── 4. Garden Overview Strip (when plans exist) ───────────────────
-        if (plans.isNotEmpty()) {
-            item {
-                GardenSummaryStrip(
-                    totalPlans = plans.size,
-                    healthyCount = healthyCount,
-                    inCareCount = inCareCount,
-                    onClick = onDoctorClick
-                )
-            }
-        }
+        // ─── 5. Today's Care Routine (Consistent 12.dp title-to-card rhythm)
+        item(key = "todays_care_section") {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    SectionHeading(title = "Today's Care Tasks")
+                    if (plans.isNotEmpty()) {
+                        Surface(
+                            color = HomeColors.SoftMint,
+                            shape = RoundedCornerShape(50),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(50))
+                                .clickable(onClick = onDoctorClick)
+                        ) {
+                            Text(
+                                text = "View all",
+                                fontFamily = HomeInterFont,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = HomeColors.ForestPrimary,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+                }
 
-        // ─── 5. Today's Care Routine ───────────────────────────────────────
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                SectionHeading(title = "Today's Care Tasks")
-                if (plans.isNotEmpty()) {
-                    Text(
-                        text = "View all",
-                        fontFamily = HomeInterFont,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = HomeColors.ForestMedium,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable(onClick = onDoctorClick)
-                            .padding(horizontal = 6.dp, vertical = 4.dp)
-                    )
+                if (activePlans.isEmpty()) {
+                    EmptyCarePromptCard(onScanClick = onScanClick)
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        activePlans.forEach { plan ->
+                            TodayTaskCard(
+                                plan = plan,
+                                onClick = { onPlanClick(plan.id) }
+                            )
+                        }
+                    }
                 }
             }
         }
 
-        if (activePlans.isEmpty()) {
-            item {
-                EmptyCarePromptCard(onScanClick = onScanClick)
-            }
-        } else {
-            items(activePlans, key = { it.id }) { plan ->
-                TodayTaskCard(
-                    plan = plan,
-                    onClick = { onPlanClick(plan.id) }
-                )
-            }
-        }
-
         // ─── 6. Daily Plant Care Tips ──────────────────────────────────────
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item(key = "daily_care_tips") {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 SectionHeading(title = "Daily Care Tips")
                 CareTipsCard()
             }
@@ -266,12 +261,12 @@ private fun HomeHeader(
             modifier = Modifier.weight(1f)
         ) {
             Surface(
-                shape = RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(15.dp),
                 color = HomeColors.SurfaceWhite,
                 border = BorderStroke(1.dp, HomeColors.CardBorder),
-                modifier = Modifier.size(46.dp)
+                modifier = Modifier.size(48.dp)
             ) {
-                Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(6.dp)) {
+                Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(7.dp)) {
                     Image(
                         painter = painterResource(id = R.drawable.appslogo2),
                         contentDescription = "SmartPlantCare",
@@ -285,16 +280,17 @@ private fun HomeHeader(
                 Text(
                     text = "$greetingLabel,",
                     fontFamily = HomeInterFont,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
                     color = HomeColors.ForestMedium
                 )
                 Text(
                     text = userName,
                     fontFamily = HomeInterFont,
-                    fontSize = 22.sp,
+                    fontSize = 21.sp,
                     fontWeight = FontWeight.Bold,
                     color = HomeColors.TextPrimary,
+                    letterSpacing = (-0.3).sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -311,7 +307,7 @@ private fun HomeHeader(
 
         Spacer(modifier = Modifier.width(12.dp))
 
-        Box(modifier = Modifier.size(46.dp), contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.size(48.dp), contentAlignment = Alignment.Center) {
             Surface(
                 shape = CircleShape,
                 color = HomeColors.SurfaceWhite,
@@ -342,6 +338,7 @@ private fun HomeHeader(
                 ) {
                     Text(
                         text = if (unreadCount > 99) "99+" else unreadCount.toString(),
+                        fontFamily = HomeInterFont,
                         color = Color.White,
                         fontSize = 9.sp,
                         fontWeight = FontWeight.Bold
@@ -380,49 +377,43 @@ private fun HeroScanCard(onScanClick: () -> Unit) {
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = Modifier.weight(1f)
+                    Box(
+                        modifier = Modifier
+                            .size(46.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(HomeColors.ForestPrimary),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(46.dp)
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(HomeColors.ForestPrimary),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.CameraAlt,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(22.dp)
-                            )
-                        }
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "AI Leaf Health Scanner",
-                                fontFamily = HomeInterFont,
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = HomeColors.TextPrimary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = "Detect leaf issues offline & get a 7-day care plan",
-                                fontFamily = HomeInterFont,
-                                fontSize = 12.sp,
-                                color = HomeColors.TextSecondary,
-                                lineHeight = 16.sp,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
+                        Icon(
+                            imageVector = Icons.Filled.CameraAlt,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "AI Leaf Health Scanner",
+                            fontFamily = HomeInterFont,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = HomeColors.TextPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "Detect leaf issues offline & get a 7-day care plan",
+                            fontFamily = HomeInterFont,
+                            fontSize = 12.sp,
+                            color = HomeColors.TextSecondary,
+                            lineHeight = 16.sp,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
 
@@ -431,7 +422,10 @@ private fun HeroScanCard(onScanClick: () -> Unit) {
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.weight(1f, fill = false)
+                    ) {
                         listOf("Tomato", "Chili", "Eggplant").forEach { crop ->
                             Surface(
                                 color = HomeColors.SurfaceWhite,
@@ -450,6 +444,8 @@ private fun HeroScanCard(onScanClick: () -> Unit) {
                         }
                     }
 
+                    Spacer(modifier = Modifier.width(8.dp))
+
                     Button(
                         onClick = onScanClick,
                         shape = RoundedCornerShape(12.dp),
@@ -458,7 +454,7 @@ private fun HeroScanCard(onScanClick: () -> Unit) {
                             contentColor = Color.White
                         ),
                         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
-                        modifier = Modifier.height(38.dp)
+                        modifier = Modifier.height(40.dp)
                     ) {
                         Text(
                             text = "Scan Leaf",
@@ -574,91 +570,6 @@ private fun QuickToolCard(
 }
 
 @Composable
-private fun GardenSummaryStrip(
-    totalPlans: Int,
-    healthyCount: Int,
-    inCareCount: Int,
-    onClick: () -> Unit
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = HomeColors.SurfaceWhite),
-        border = BorderStroke(1.dp, HomeColors.CardBorder),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            SummaryStatItem(
-                value = totalPlans.toString(),
-                label = "Total Plans",
-                color = HomeColors.ForestPrimary,
-                modifier = Modifier.weight(1f)
-            )
-            Box(
-                modifier = Modifier
-                    .width(1.dp)
-                    .height(28.dp)
-                    .background(HomeColors.DividerLine)
-            )
-            SummaryStatItem(
-                value = healthyCount.toString(),
-                label = "Healthy",
-                color = HomeColors.SuccessGreen,
-                modifier = Modifier.weight(1f)
-            )
-            Box(
-                modifier = Modifier
-                    .width(1.dp)
-                    .height(28.dp)
-                    .background(HomeColors.DividerLine)
-            )
-            SummaryStatItem(
-                value = inCareCount.toString(),
-                label = "In Care",
-                color = HomeColors.AlertRed,
-                modifier = Modifier.weight(1f)
-            )
-        }
-    }
-}
-
-@Composable
-private fun SummaryStatItem(
-    value: String,
-    label: String,
-    color: Color,
-    modifier: Modifier = Modifier
-) {
-    Column(
-        modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(
-            text = value,
-            fontFamily = HomeInterFont,
-            fontSize = 18.sp,
-            fontWeight = FontWeight.Bold,
-            color = color
-        )
-        Text(
-            text = label,
-            fontFamily = HomeInterFont,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Medium,
-            color = HomeColors.TextSecondary
-        )
-    }
-}
-
-@Composable
 private fun TodayTaskCard(
     plan: TreatmentPlan,
     onClick: () -> Unit
@@ -699,8 +610,8 @@ private fun TodayTaskCard(
         ) {
             Box(
                 modifier = Modifier
-                    .size(56.dp)
-                    .clip(RoundedCornerShape(14.dp))
+                    .size(58.dp)
+                    .clip(RoundedCornerShape(15.dp))
                     .background(HomeColors.SoftMint),
                 contentAlignment = Alignment.Center
             ) {
@@ -721,15 +632,16 @@ private fun TodayTaskCard(
                 }
             }
 
-            Spacer(modifier = Modifier.width(12.dp))
+            Spacer(modifier = Modifier.width(14.dp))
 
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 Row(
+                    modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
                         text = plan.plantName.ifBlank { "Plant" },
@@ -739,7 +651,9 @@ private fun TodayTaskCard(
                         color = HomeColors.TextPrimary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false)
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(end = 8.dp)
                     )
                     Surface(
                         color = if (plan.isHealthy) HomeColors.SuccessBg else HomeColors.SoftMint,
@@ -779,7 +693,7 @@ private fun TodayTaskCard(
                 )
             }
 
-            Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.width(10.dp))
 
             Icon(
                 imageVector = Icons.Filled.ChevronRight,
@@ -865,30 +779,20 @@ private fun CareTipsCard() {
         ) {
             CareTipRow(
                 icon = Icons.Filled.WaterDrop,
-                iconBg = Color(0xFFE0F2FE),
-                iconTint = Color(0xFF0284C7),
+                iconBg = HomeColors.WaterBg,
+                iconTint = HomeColors.WaterBlue,
                 title = "Water at the base",
                 description = "Keep soil moist in the morning and avoid wetting leaves late at night."
             )
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(1.dp)
-                    .background(HomeColors.DividerLine)
-            )
+            HorizontalDivider(color = HomeColors.DividerLine, thickness = 1.dp)
             CareTipRow(
                 icon = Icons.Filled.WbSunny,
-                iconBg = Color(0xFFFEF3C7),
-                iconTint = Color(0xFFD97706),
+                iconBg = HomeColors.WarningBg,
+                iconTint = HomeColors.WarningAmber,
                 title = "Good airflow & light",
                 description = "Space Tomato, Chili, and Eggplant leaves for airflow to reduce fungal spots."
             )
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(1.dp)
-                    .background(HomeColors.DividerLine)
-            )
+            HorizontalDivider(color = HomeColors.DividerLine, thickness = 1.dp)
             CareTipRow(
                 icon = Icons.Filled.HealthAndSafety,
                 iconBg = HomeColors.SoftMint,
@@ -911,7 +815,7 @@ private fun CareTipRow(
     Row(verticalAlignment = Alignment.Top) {
         Box(
             modifier = Modifier
-                .size(34.dp)
+                .size(36.dp)
                 .clip(RoundedCornerShape(10.dp))
                 .background(iconBg),
             contentAlignment = Alignment.Center
@@ -955,7 +859,7 @@ private fun SectionHeading(title: String) {
     )
 }
 
-// ─── 3. SmartPlantCare Box Quick Status Card ──────────────────────────────────
+// ─── 2. SmartPlantCare Box Quick Status Card (Clean, Zero Redundant Info) ────
 @Composable
 private fun SmartPlantCareBoxHomeCard(
     uiState: MyPlantsUiState?,
@@ -994,7 +898,6 @@ private fun SmartPlantCareBoxHomeCard(
         telemetryUpdatedAt = snapshot.telemetry.updatedAt
     )
     val isAuto = snapshot?.config?.autoIrrigationEnabled ?: true
-    val modeLabel = if (!isOnline) "--" else if (isAuto) "AUTO" else "MANUAL"
 
     val heroGradient = remember {
         Brush.linearGradient(
@@ -1003,11 +906,13 @@ private fun SmartPlantCareBoxHomeCard(
     }
 
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onOpenMyPlants),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(containerColor = HomeColors.SurfaceWhite),
         border = BorderStroke(1.dp, HomeColors.CardBorder),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
             // ── Top Deep Botanical Gradient Banner ────────────────────────
@@ -1033,7 +938,7 @@ private fun SmartPlantCareBoxHomeCard(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     // Top Status + Mode Pills
                     Row(
@@ -1088,13 +993,13 @@ private fun SmartPlantCareBoxHomeCard(
                             }
                         }
 
-                        if (isConnected) {
+                        if (isConnected && isOnline) {
                             Surface(
                                 shape = RoundedCornerShape(50),
                                 color = Color.White.copy(alpha = 0.16f)
                             ) {
                                 Text(
-                                    text = if (!isOnline) "--" else if (isAuto) "AUTO CARE" else "MANUAL",
+                                    text = if (isAuto) "AUTO CARE" else "MANUAL",
                                     fontFamily = HomeInterFont,
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
@@ -1117,9 +1022,9 @@ private fun SmartPlantCareBoxHomeCard(
                             overflow = TextOverflow.Ellipsis
                         )
                         val locSubtitle = when {
-                            !isConnected -> "Automated 3-zone watering for Tomato, Chili & Eggplant"
+                            !isConnected -> "Connect your ESP32 box for automated 3-zone watering"
                             isOnline && !isPhoneOnline -> "No internet connection • Check your internet"
-                            !isOnline -> "Box is offline • Sensor readings paused (--)"
+                            !isOnline -> "Box is offline • Tap below to manage in My Plants"
                             snapshot.meta.locationName.isNotBlank() -> snapshot.meta.locationName
                             snapshot.weather.locationName.isNotBlank() -> snapshot.weather.locationName
                             else -> "Live automated garden monitoring"
@@ -1128,31 +1033,29 @@ private fun SmartPlantCareBoxHomeCard(
                             text = locSubtitle,
                             fontFamily = HomeInterFont,
                             fontSize = 12.sp,
-                            color = Color.White.copy(alpha = 0.82f),
+                            color = Color.White.copy(alpha = 0.84f),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
 
-                    // Frosted Climate Strip inside Hero Banner (when connected)
-                    if (isConnected) {
-                        val tempText = if (isOnline && snapshot.telemetry.dhtValid && snapshot.telemetry.temperatureC != null) {
+                    // Frosted Climate Strip inside Hero Banner (only when connected & online)
+                    if (isConnected && isOnline) {
+                        val tempText = if (snapshot.telemetry.dhtValid && snapshot.telemetry.temperatureC != null) {
                             String.format(Locale.US, "%.1f°C", snapshot.telemetry.temperatureC)
                         } else "--"
-                        val humText = if (isOnline && snapshot.telemetry.dhtValid && snapshot.telemetry.humidityPct != null) {
+                        val humText = if (snapshot.telemetry.dhtValid && snapshot.telemetry.humidityPct != null) {
                             String.format(Locale.US, "%.0f%%", snapshot.telemetry.humidityPct)
                         } else "--"
                         val rainSensorStateText = when {
-                            !isOnline -> null
                             !snapshot.telemetry.rainValid -> "Err"
                             snapshot.telemetry.rainRawWet || snapshot.telemetry.rainWetConfirmed -> "Wet"
                             else -> "Dry"
                         }
-                        val rainText = when {
-                            !isOnline -> "--"
-                            snapshot.weather.valid && snapshot.weather.rainProbabilityPct >= 0 ->
-                                "${snapshot.weather.rainProbabilityPct}% · ${rainSensorStateText ?: "Dry"}"
-                            else -> rainSensorStateText ?: "--"
+                        val rainText = if (snapshot.weather.valid && snapshot.weather.rainProbabilityPct >= 0) {
+                            "${snapshot.weather.rainProbabilityPct}% · $rainSensorStateText"
+                        } else {
+                            rainSensorStateText
                         }
 
                         Surface(
@@ -1172,7 +1075,6 @@ private fun SmartPlantCareBoxHomeCard(
                                     label = "Temp",
                                     value = tempText,
                                     iconTint = HomeColors.MintGlow,
-                                    lightOnDark = true,
                                     modifier = Modifier.weight(1f)
                                 )
                                 Box(
@@ -1186,7 +1088,6 @@ private fun SmartPlantCareBoxHomeCard(
                                     label = "Humidity",
                                     value = humText,
                                     iconTint = Color(0xFFBAE6FD),
-                                    lightOnDark = true,
                                     modifier = Modifier.weight(1f)
                                 )
                                 Box(
@@ -1200,7 +1101,6 @@ private fun SmartPlantCareBoxHomeCard(
                                     label = "Rain",
                                     value = rainText,
                                     iconTint = Color(0xFFBAE6FD),
-                                    lightOnDark = true,
                                     modifier = Modifier.weight(1f)
                                 )
                             }
@@ -1209,7 +1109,7 @@ private fun SmartPlantCareBoxHomeCard(
                 }
             }
 
-            // ── Lower Clean White Body: 4 Zone Tiles + Action CTA ─────────
+            // ── Lower Clean White Body: Zone Tiles (when connected) + Action CTA
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1266,17 +1166,8 @@ private fun SmartPlantCareBoxHomeCard(
                             modifier = Modifier.weight(1f)
                         )
                     }
-                } else {
-                    Text(
-                        text = "Pair your SmartPlantCare box to monitor live soil moisture, water tank level, weather-aware rain guard, and automated watering.",
-                        fontFamily = HomeInterFont,
-                        fontSize = 12.sp,
-                        color = HomeColors.TextSecondary,
-                        lineHeight = 18.sp
-                    )
                 }
 
-                // Action Button: Green with crisp White text
                 Button(
                     onClick = onOpenMyPlants,
                     shape = RoundedCornerShape(14.dp),
@@ -1315,7 +1206,6 @@ private fun HomeAmbientChip(
     label: String,
     value: String,
     iconTint: Color,
-    lightOnDark: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -1338,7 +1228,7 @@ private fun HomeAmbientChip(
                 fontFamily = HomeInterFont,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Medium,
-                color = if (lightOnDark) Color.White.copy(alpha = 0.78f) else HomeColors.TextSecondary,
+                color = Color.White.copy(alpha = 0.78f),
                 maxLines = 1
             )
         }
@@ -1347,11 +1237,7 @@ private fun HomeAmbientChip(
             fontFamily = HomeInterFont,
             fontSize = 12.sp,
             fontWeight = FontWeight.Bold,
-            color = when {
-                lightOnDark -> Color.White.copy(alpha = if (value == "--") 0.65f else 0.98f)
-                value == "--" -> HomeColors.TextMuted
-                else -> HomeColors.TextPrimary
-            },
+            color = Color.White.copy(alpha = if (value == "--") 0.65f else 0.98f),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )

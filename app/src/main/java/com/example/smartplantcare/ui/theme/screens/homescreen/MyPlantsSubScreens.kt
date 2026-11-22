@@ -860,7 +860,7 @@ internal fun MyPlantsSettingsScreen(
             border = BorderStroke(1.dp, HomeColors.CardBorder),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
                     text = "Device Information",
                     fontFamily = HomeInterFont,
@@ -868,18 +868,65 @@ internal fun MyPlantsSettingsScreen(
                     fontWeight = FontWeight.Bold,
                     color = HomeColors.TextPrimary
                 )
-                Text(
-                    text = "Box ID: ${snapshot.deviceId} • Software: v3.1",
-                    fontFamily = HomeInterFont,
-                    fontSize = 12.sp,
-                    color = HomeColors.TextSecondary
-                )
-                Text(
-                    text = "Local Network IP: ${snapshot.status.ipAddress.ifBlank { "--" }}",
-                    fontFamily = HomeInterFont,
-                    fontSize = 12.sp,
-                    color = HomeColors.TextSecondary
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Controller ID",
+                        fontFamily = HomeInterFont,
+                        fontSize = 12.sp,
+                        color = HomeColors.TextSecondary
+                    )
+                    Text(
+                        text = snapshot.deviceId,
+                        fontFamily = HomeInterFont,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = HomeColors.TextPrimary
+                    )
+                }
+                HorizontalDivider(color = HomeColors.DividerLine, thickness = 1.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Firmware Version",
+                        fontFamily = HomeInterFont,
+                        fontSize = 12.sp,
+                        color = HomeColors.TextSecondary
+                    )
+                    Text(
+                        text = "v3.1",
+                        fontFamily = HomeInterFont,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = HomeColors.ForestPrimary
+                    )
+                }
+                HorizontalDivider(color = HomeColors.DividerLine, thickness = 1.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Local Network IP",
+                        fontFamily = HomeInterFont,
+                        fontSize = 12.sp,
+                        color = HomeColors.TextSecondary
+                    )
+                    Text(
+                        text = snapshot.status.ipAddress.ifBlank { "--" },
+                        fontFamily = HomeInterFont,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = HomeColors.TextPrimary
+                    )
+                }
             }
         }
 
@@ -1119,11 +1166,11 @@ private fun SubPageHeader(
     ) {
         Surface(
             color = HomeColors.SurfaceWhite,
-            shape = RoundedCornerShape(12.dp),
+            shape = RoundedCornerShape(14.dp),
             border = BorderStroke(1.dp, HomeColors.CardBorder),
             modifier = Modifier
-                .size(38.dp)
-                .clip(RoundedCornerShape(12.dp))
+                .size(44.dp)
+                .clip(RoundedCornerShape(14.dp))
                 .clickable(onClick = onBack)
         ) {
             Box(contentAlignment = Alignment.Center) {
@@ -1131,7 +1178,7 @@ private fun SubPageHeader(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = "Back",
                     tint = HomeColors.ForestPrimary,
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier.size(20.dp)
                 )
             }
         }
@@ -1140,7 +1187,7 @@ private fun SubPageHeader(
             Text(
                 text = title,
                 fontFamily = HomeInterFont,
-                fontSize = 18.sp,
+                fontSize = 19.sp,
                 fontWeight = FontWeight.Bold,
                 color = HomeColors.TextPrimary,
                 maxLines = 1,

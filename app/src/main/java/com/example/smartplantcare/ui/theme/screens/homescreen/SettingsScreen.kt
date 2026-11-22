@@ -1,7 +1,6 @@
 package com.example.smartplantcare.ui.theme.screens.homescreen
 
 import android.Manifest
-import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -21,6 +20,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.MenuBook
@@ -41,7 +41,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -51,15 +51,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.smartplantcare.R
-import com.example.smartplantcare.ui.theme.ErrorRed
-import com.example.smartplantcare.ui.theme.PrimaryGreen
-import com.example.smartplantcare.ui.theme.SoftGreen
-import com.example.smartplantcare.ui.theme.TextDark
-import com.example.smartplantcare.ui.theme.TextLight
-import com.example.smartplantcare.ui.theme.TextMedium
 import com.example.smartplantcare.util.NetworkMonitor
 
-// ─── Design Tokens (shared from HomeUiTokens) ────────────────────────────────
+// ─── Unified Design Tokens (from HomeUiTokens) ───────────────────────────────
 private val PageBg        = HomeColors.PageBg
 private val SurfaceWhite  = HomeColors.SurfaceWhite
 private val CardBorder    = HomeColors.CardBorder
@@ -67,7 +61,14 @@ private val MutedIconBg   = HomeColors.PlaceholderBg
 private val DividerLine   = HomeColors.DividerLine
 private val InterFont     = HomeInterFont
 
-// ─── SettingsScreen ────────────────────────────────────────────────────────────
+private val PrimaryGreen  = HomeColors.ForestPrimary
+private val SoftGreen     = HomeColors.SoftMint
+private val TextDark      = HomeColors.TextPrimary
+private val TextMedium    = HomeColors.TextSecondary
+private val TextLight     = HomeColors.TextMuted
+private val ErrorRed      = HomeColors.AlertRed
+
+// ─── SettingsScreen ──────────────────────────────────────────────────────────
 @Composable
 fun SettingsScreen(
     userName: String,
@@ -94,7 +95,6 @@ fun SettingsScreen(
 
     val state by vm.state.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
-    val scope = rememberCoroutineScope()
 
     LaunchedEffect(state.snackbarMessage) {
         state.snackbarMessage?.let { message ->
@@ -109,13 +109,14 @@ fun SettingsScreen(
 
     var showSignOutDialog by remember { mutableStateOf(false) }
 
-    // ─── Dialogs ───────────────────────────────────────────────────────────────
+    // ─── Dialogs ─────────────────────────────────────────────────────────────
 
     if (showSignOutDialog) {
         PlantDialog(
             onDismissRequest = { showSignOutDialog = false },
             icon = Icons.AutoMirrored.Filled.ExitToApp,
             iconTint = ErrorRed,
+            iconBackground = HomeColors.AlertBg,
             title = stringResource(R.string.sign_out_title),
             body = stringResource(R.string.sign_out_message),
             confirmText = stringResource(R.string.confirm),
@@ -141,7 +142,7 @@ fun SettingsScreen(
                     Box(
                         modifier = Modifier
                             .size(44.dp)
-                            .clip(CircleShape)
+                            .clip(RoundedCornerShape(14.dp))
                             .background(SoftGreen),
                         contentAlignment = Alignment.Center
                     ) {
@@ -163,6 +164,7 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
                         text = "Choose your preferred display language",
+                        fontFamily = InterFont,
                         fontSize = 13.sp,
                         color = TextMedium,
                         lineHeight = 18.sp
@@ -181,12 +183,17 @@ fun SettingsScreen(
                         onClick = { vm.setLanguage("fil") }
                     )
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
                     TextButton(
                         onClick = { vm.dismissLanguageDialog() },
                         modifier = Modifier.align(Alignment.End)
                     ) {
-                        Text(stringResource(R.string.cancel), color = TextMedium)
+                        Text(
+                            text = stringResource(R.string.cancel),
+                            fontFamily = InterFont,
+                            fontWeight = FontWeight.SemiBold,
+                            color = TextMedium
+                        )
                     }
                 }
             }
@@ -204,7 +211,7 @@ fun SettingsScreen(
                     Box(
                         modifier = Modifier
                             .size(44.dp)
-                            .clip(CircleShape)
+                            .clip(RoundedCornerShape(14.dp))
                             .background(SoftGreen),
                         contentAlignment = Alignment.Center
                     ) {
@@ -227,7 +234,7 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value = state.editNameText,
                         onValueChange = vm::updateEditNameText,
-                        label = { Text(stringResource(R.string.edit_name_label)) },
+                        label = { Text(stringResource(R.string.edit_name_label), fontFamily = InterFont) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(14.dp),
@@ -236,7 +243,7 @@ fun SettingsScreen(
                             unfocusedBorderColor = CardBorder,
                             focusedLabelColor = PrimaryGreen,
                             focusedContainerColor = Color.White,
-                            unfocusedContainerColor = SoftGreen.copy(alpha = 0.4f)
+                            unfocusedContainerColor = PageBg
                         )
                     )
                     Spacer(modifier = Modifier.height(24.dp))
@@ -246,17 +253,26 @@ fun SettingsScreen(
                     ) {
                         OutlinedButton(
                             onClick = { vm.dismissEditNameDialog() },
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(46.dp),
+                            shape = RoundedCornerShape(13.dp),
                             border = BorderStroke(1.dp, CardBorder)
                         ) {
-                            Text(stringResource(R.string.cancel), color = TextMedium)
+                            Text(
+                                text = stringResource(R.string.cancel),
+                                fontFamily = InterFont,
+                                fontWeight = FontWeight.SemiBold,
+                                color = TextMedium
+                            )
                         }
                         Button(
                             onClick = { vm.saveProfileName() },
                             enabled = !state.isLoading,
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(46.dp),
+                            shape = RoundedCornerShape(13.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = PrimaryGreen,
                                 contentColor = Color.White
@@ -270,9 +286,10 @@ fun SettingsScreen(
                                 )
                             } else {
                                 Text(
-                                    stringResource(R.string.save),
+                                    text = stringResource(R.string.save),
+                                    fontFamily = InterFont,
                                     color = Color.White,
-                                    fontWeight = FontWeight.SemiBold
+                                    fontWeight = FontWeight.Bold
                                 )
                             }
                         }
@@ -299,7 +316,7 @@ fun SettingsScreen(
                     Box(
                         modifier = Modifier
                             .size(44.dp)
-                            .clip(CircleShape)
+                            .clip(RoundedCornerShape(14.dp))
                             .background(SoftGreen),
                         contentAlignment = Alignment.Center
                     ) {
@@ -321,6 +338,7 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = stringResource(R.string.password_requirements),
+                        fontFamily = InterFont,
                         fontSize = 12.sp,
                         color = TextMedium,
                         lineHeight = 17.sp
@@ -350,17 +368,26 @@ fun SettingsScreen(
                     ) {
                         OutlinedButton(
                             onClick = { vm.dismissChangePasswordDialog() },
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(46.dp),
+                            shape = RoundedCornerShape(13.dp),
                             border = BorderStroke(1.dp, CardBorder)
                         ) {
-                            Text(stringResource(R.string.cancel), color = TextMedium)
+                            Text(
+                                text = stringResource(R.string.cancel),
+                                fontFamily = InterFont,
+                                fontWeight = FontWeight.SemiBold,
+                                color = TextMedium
+                            )
                         }
                         Button(
                             onClick = { vm.changePassword() },
                             enabled = !state.isLoading,
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(46.dp),
+                            shape = RoundedCornerShape(13.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = PrimaryGreen,
                                 contentColor = Color.White
@@ -374,9 +401,10 @@ fun SettingsScreen(
                                 )
                             } else {
                                 Text(
-                                    stringResource(R.string.update_password),
+                                    text = stringResource(R.string.update_password),
+                                    fontFamily = InterFont,
                                     color = Color.White,
-                                    fontWeight = FontWeight.SemiBold
+                                    fontWeight = FontWeight.Bold
                                 )
                             }
                         }
@@ -412,7 +440,7 @@ fun SettingsScreen(
         HardwareGuideDialog(onDismiss = { vm.setShowHardwareGuideDialog(false) })
     }
 
-    // ─── Main Layout ───────────────────────────────────────────────────────────
+    // ─── Main Layout ─────────────────────────────────────────────────────────
     Scaffold(
         snackbarHost = {
             SnackbarHost(
@@ -428,13 +456,13 @@ fun SettingsScreen(
                 .padding(paddingValues)
                 .verticalScroll(rememberScrollState())
                 .padding(bottom = HomeDimens.BottomBarClearance),
-            verticalArrangement = Arrangement.spacedBy(HomeDimens.SectionSpacing)
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             HeaderSection()
 
             Column(
                 modifier = Modifier.padding(horizontal = HomeDimens.ScreenHorizontalPadding),
-                verticalArrangement = Arrangement.spacedBy(HomeDimens.SectionSpacing)
+                verticalArrangement = Arrangement.spacedBy(18.dp)
             ) {
                 ProfileSection(
                     state = state,
@@ -456,11 +484,6 @@ fun SettingsScreen(
                     onTempUnitChange = vm::setTemperatureUnit,
                     onMoistureUnitChange = vm::setMeasurementUnit,
                     onOpenGuide = { vm.setShowHardwareGuideDialog(true) }
-                )
-
-                StorageAndCacheSection(
-                    cacheSize = state.cacheSizeFormatted,
-                    onClearCache = { vm.clearAppCache() }
                 )
 
                 NotificationSection(
@@ -498,30 +521,36 @@ fun SettingsScreen(
                     onVibrationChange = { vm.setVibration(it) }
                 )
 
-                LanguageSection(
+                LanguageAndStorageSection(
                     currentLanguage = if (state.language == "fil")
                         stringResource(R.string.filipino)
                     else
                         stringResource(R.string.english),
-                    onClick = { vm.showLanguageDialog() }
+                    onLanguageClick = { vm.showLanguageDialog() },
+                    cacheSize = state.cacheSizeFormatted,
+                    onClearCache = { vm.clearAppCache() }
                 )
 
                 AboutSection(context = context)
 
                 Column(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp, bottom = 8.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Spacer(modifier = Modifier.height(8.dp))
                     Text(
                         text = stringResource(R.string.smartplantcare_text),
+                        fontFamily = InterFont,
                         fontSize = 12.sp,
-                        color = TextLight
+                        fontWeight = FontWeight.SemiBold,
+                        color = TextMedium
                     )
                     Text(
                         text = stringResource(R.string.version_text),
-                        fontSize = 12.sp,
-                        color = TextLight.copy(alpha = 0.7f)
+                        fontFamily = InterFont,
+                        fontSize = 11.sp,
+                        color = TextLight
                     )
                 }
             }
@@ -529,7 +558,7 @@ fun SettingsScreen(
     }
 }
 
-// ─── Header Banner ─────────────────────────────────────────────────────────────
+// ─── Header Banner ───────────────────────────────────────────────────────────
 @Composable
 fun HeaderSection() {
     Column(
@@ -555,14 +584,17 @@ fun HeaderSection() {
                         fontFamily = InterFont,
                         fontSize = 23.sp,
                         fontWeight = FontWeight.Bold,
-                        color = HomeColors.TextPrimary
+                        color = HomeColors.TextPrimary,
+                        letterSpacing = (-0.3).sp
                     )
-                    Spacer(modifier = Modifier.height(3.dp))
+                    Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = stringResource(R.string.settings_subtitle),
+                        text = "Manage your account, plant box & app preferences",
                         fontFamily = InterFont,
                         fontSize = 12.sp,
-                        color = HomeColors.TextSecondary
+                        color = HomeColors.TextSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
                 Spacer(modifier = Modifier.width(12.dp))
@@ -587,7 +619,7 @@ fun HeaderSection() {
     }
 }
 
-// ─── Profile Section ──────────────────────────────────────────────────────────
+// ─── Profile Section ─────────────────────────────────────────────────────────
 @Composable
 fun ProfileSection(
     state: SettingsState,
@@ -610,7 +642,7 @@ fun ProfileSection(
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(60.dp)
+                            .size(56.dp)
                             .clip(CircleShape)
                             .background(SoftGreen),
                         contentAlignment = Alignment.Center
@@ -618,22 +650,23 @@ fun ProfileSection(
                         Icon(
                             imageVector = Icons.Outlined.Person,
                             contentDescription = stringResource(R.string.guest_user),
-                            modifier = Modifier.size(30.dp),
+                            modifier = Modifier.size(28.dp),
                             tint = PrimaryGreen
                         )
                     }
-                    Spacer(modifier = Modifier.width(16.dp))
+                    Spacer(modifier = Modifier.width(14.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = stringResource(R.string.guest_user),
                             fontFamily = InterFont,
-                            fontSize = 18.sp,
+                            fontSize = 17.sp,
                             fontWeight = FontWeight.Bold,
                             color = TextDark
                         )
                         Text(
-                            text = "Sign in to save your progress",
-                            fontSize = 13.sp,
+                            text = "Sign in to sync your plant box & care plans",
+                            fontFamily = InterFont,
+                            fontSize = 12.sp,
                             color = TextMedium
                         )
                         Spacer(modifier = Modifier.height(12.dp))
@@ -651,12 +684,14 @@ fun ProfileSection(
                                         containerColor = HomeColors.ForestPrimary,
                                         contentColor = Color.White
                                     ),
-                                    modifier = Modifier.fillMaxWidth().height(42.dp)
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(42.dp)
                                 ) {
                                     Text(
                                         stringResource(R.string.sign_in),
                                         fontFamily = InterFont,
-                                        fontWeight = FontWeight.SemiBold,
+                                        fontWeight = FontWeight.Bold,
                                         color = Color.White,
                                         fontSize = 13.sp
                                     )
@@ -665,12 +700,14 @@ fun ProfileSection(
                                     onClick = onSignUpClick,
                                     shape = RoundedCornerShape(12.dp),
                                     border = BorderStroke(1.5.dp, HomeColors.ForestPrimary),
-                                    modifier = Modifier.fillMaxWidth().height(42.dp)
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(42.dp)
                                 ) {
                                     Text(
                                         stringResource(R.string.sign_up),
                                         fontFamily = InterFont,
-                                        fontWeight = FontWeight.SemiBold,
+                                        fontWeight = FontWeight.Bold,
                                         color = HomeColors.ForestPrimary,
                                         fontSize = 13.sp
                                     )
@@ -678,41 +715,41 @@ fun ProfileSection(
                             }
                         } else {
                             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Button(
-                                onClick = onSignInClick,
-                                shape = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = HomeColors.ForestPrimary,
-                                    contentColor = Color.White
-                                ),
-                                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
-                                modifier = Modifier.height(42.dp)
-                            ) {
-                                Text(
-                                    text = stringResource(R.string.sign_in),
-                                    fontFamily = InterFont,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = Color.White
-                                )
-                            }
-                            OutlinedButton(
-                                onClick = onSignUpClick,
-                                shape = RoundedCornerShape(12.dp),
-                                border = BorderStroke(1.5.dp, HomeColors.ForestPrimary),
-                                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
-                                modifier = Modifier.height(42.dp)
-                            ) {
-                                Text(
-                                    text = stringResource(R.string.sign_up),
-                                    fontFamily = InterFont,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = HomeColors.ForestPrimary
-                                )
+                                Button(
+                                    onClick = onSignInClick,
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = HomeColors.ForestPrimary,
+                                        contentColor = Color.White
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
+                                    modifier = Modifier.height(42.dp)
+                                ) {
+                                    Text(
+                                        text = stringResource(R.string.sign_in),
+                                        fontFamily = InterFont,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White
+                                    )
+                                }
+                                OutlinedButton(
+                                    onClick = onSignUpClick,
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = BorderStroke(1.5.dp, HomeColors.ForestPrimary),
+                                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
+                                    modifier = Modifier.height(42.dp)
+                                ) {
+                                    Text(
+                                        text = stringResource(R.string.sign_up),
+                                        fontFamily = InterFont,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = HomeColors.ForestPrimary
+                                    )
+                                }
                             }
                         }
-                    }
                     }
                 }
             } else if (state.isGoogleAccount) {
@@ -737,7 +774,7 @@ fun ProfileSection(
     }
 }
 
-// ─── Google Profile ───────────────────────────────────────────────────────────
+// ─── Google Profile ──────────────────────────────────────────────────────────
 @Composable
 fun GoogleProfileSection(
     displayName: String,
@@ -750,8 +787,8 @@ fun GoogleProfileSection(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(SoftGreen.copy(alpha = 0.35f))
-            .padding(horizontal = 16.dp, vertical = 18.dp),
+            .background(SoftGreen.copy(alpha = 0.45f))
+            .padding(horizontal = 16.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (!photoUrl.isNullOrBlank()) {
@@ -766,7 +803,7 @@ fun GoogleProfileSection(
                 },
                 contentDescription = stringResource(R.string.profile),
                 modifier = Modifier
-                    .size(58.dp)
+                    .size(56.dp)
                     .clip(CircleShape)
                     .border(2.dp, PrimaryGreen.copy(alpha = 0.25f), CircleShape),
                 contentScale = ContentScale.Crop
@@ -774,7 +811,7 @@ fun GoogleProfileSection(
         } else {
             Box(
                 modifier = Modifier
-                    .size(58.dp)
+                    .size(56.dp)
                     .clip(CircleShape)
                     .background(PrimaryGreen),
                 contentAlignment = Alignment.Center
@@ -782,38 +819,51 @@ fun GoogleProfileSection(
                 Icon(
                     imageVector = Icons.Outlined.Person,
                     contentDescription = stringResource(R.string.profile),
-                    modifier = Modifier.size(28.dp),
+                    modifier = Modifier.size(26.dp),
                     tint = Color.White
                 )
             }
         }
         Spacer(modifier = Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = displayName.ifBlank { email.substringBefore("@") },
-                fontFamily = InterFont,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.Bold,
-                color = TextDark
-            )
-            Text(
-                text = email,
-                fontSize = 13.sp,
-                color = TextMedium
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = SoftGreen
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(
-                    text = "Google Account",
-                    fontSize = 11.sp,
-                    color = PrimaryGreen,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+                    text = displayName.ifBlank { email.substringBefore("@") },
+                    fontFamily = InterFont,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = TextDark,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
                 )
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = SurfaceWhite,
+                    border = BorderStroke(1.dp, CardBorder)
+                ) {
+                    Text(
+                        text = "Google",
+                        fontFamily = InterFont,
+                        fontSize = 10.sp,
+                        color = PrimaryGreen,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                    )
+                }
             }
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = email,
+                fontFamily = InterFont,
+                fontSize = 12.sp,
+                color = TextMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 
@@ -822,6 +872,7 @@ fun GoogleProfileSection(
     SettingsMenuItem(
         icon = Icons.Outlined.Edit,
         title = stringResource(R.string.edit_profile_name),
+        showArrow = true,
         onClick = onEditNameClick
     )
     HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 66.dp, end = 16.dp))
@@ -830,8 +881,8 @@ fun GoogleProfileSection(
         icon = Icons.Outlined.Lock,
         title = stringResource(R.string.change_password),
         onClick = { },
-        titleColor = TextLight.copy(alpha = 0.6f),
-        iconTint = TextLight.copy(alpha = 0.4f),
+        titleColor = TextLight,
+        iconTint = TextLight,
         enabled = false,
         subtitle = stringResource(R.string.google_password_disabled)
     )
@@ -846,7 +897,7 @@ fun GoogleProfileSection(
     )
 }
 
-// ─── Email/Password Profile ───────────────────────────────────────────────────
+// ─── Email/Password Profile ──────────────────────────────────────────────────
 @Composable
 fun EmailProfileSection(
     displayName: String,
@@ -860,13 +911,13 @@ fun EmailProfileSection(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(SoftGreen.copy(alpha = 0.35f))
-            .padding(horizontal = 16.dp, vertical = 18.dp),
+            .background(SoftGreen.copy(alpha = 0.45f))
+            .padding(horizontal = 16.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
             modifier = Modifier
-                .size(58.dp)
+                .size(56.dp)
                 .clip(CircleShape)
                 .background(PrimaryGreen),
             contentAlignment = Alignment.Center
@@ -874,24 +925,50 @@ fun EmailProfileSection(
             Text(
                 text = firstLetter,
                 fontFamily = InterFont,
-                fontSize = 22.sp,
+                fontSize = 21.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color.White
             )
         }
         Spacer(modifier = Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = displayName.ifBlank { email.substringBefore("@") },
-                fontFamily = InterFont,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.Bold,
-                color = TextDark
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = displayName.ifBlank { email.substringBefore("@") },
+                    fontFamily = InterFont,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = TextDark,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = SurfaceWhite,
+                    border = BorderStroke(1.dp, CardBorder)
+                ) {
+                    Text(
+                        text = "Verified",
+                        fontFamily = InterFont,
+                        fontSize = 10.sp,
+                        color = PrimaryGreen,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = email,
-                fontSize = 13.sp,
-                color = TextMedium
+                fontFamily = InterFont,
+                fontSize = 12.sp,
+                color = TextMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
@@ -901,6 +978,7 @@ fun EmailProfileSection(
     SettingsMenuItem(
         icon = Icons.Outlined.Edit,
         title = stringResource(R.string.edit_profile_name),
+        showArrow = true,
         onClick = onEditNameClick
     )
     HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 66.dp, end = 16.dp))
@@ -908,6 +986,7 @@ fun EmailProfileSection(
     SettingsMenuItem(
         icon = Icons.Outlined.Lock,
         title = stringResource(R.string.change_password),
+        showArrow = true,
         onClick = onChangePasswordClick
     )
     HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 66.dp, end = 16.dp))
@@ -921,27 +1000,29 @@ fun EmailProfileSection(
     )
 }
 
-// ─── Language Section ─────────────────────────────────────────────────────────
+// ─── Language & Storage Section (Unified System Preferences Card) ────────────
 @Composable
-fun LanguageSection(
+fun LanguageAndStorageSection(
     currentLanguage: String,
-    onClick: () -> Unit
+    onLanguageClick: () -> Unit,
+    cacheSize: String,
+    onClearCache: () -> Unit
 ) {
     Column {
-        SectionTitle(stringResource(R.string.language).uppercase())
+        SectionTitle("Language & Storage")
         Spacer(modifier = Modifier.height(8.dp))
         SettingsCard {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { onClick() }
-                    .padding(16.dp),
+                    .clickable { onLanguageClick() }
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(
                     modifier = Modifier
-                        .size(36.dp)
-                        .clip(RoundedCornerShape(10.dp))
+                        .size(38.dp)
+                        .clip(RoundedCornerShape(11.dp))
                         .background(SoftGreen),
                     contentAlignment = Alignment.Center
                 ) {
@@ -956,27 +1037,99 @@ fun LanguageSection(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = stringResource(R.string.language),
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Medium,
+                        fontFamily = InterFont,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
                         color = TextDark
                     )
                     Text(
-                        text = currentLanguage,
-                        fontSize = 13.sp,
+                        text = "Display language across the app",
+                        fontFamily = InterFont,
+                        fontSize = 12.sp,
                         color = TextMedium
                     )
                 }
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = SoftGreen
+                ) {
+                    Text(
+                        text = currentLanguage,
+                        fontFamily = InterFont,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = PrimaryGreen,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(6.dp))
                 Icon(
                     imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
                     contentDescription = stringResource(R.string.arrow),
-                    tint = TextLight.copy(alpha = 0.7f)
+                    tint = TextLight
                 )
+            }
+
+            HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 68.dp, end = 16.dp))
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(RoundedCornerShape(11.dp))
+                        .background(SoftGreen),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.CleaningServices,
+                        contentDescription = null,
+                        tint = PrimaryGreen,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(14.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "App Image & Temp Cache",
+                        fontFamily = InterFont,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = HomeColors.TextPrimary
+                    )
+                    Text(
+                        text = "Current usage: $cacheSize",
+                        fontFamily = InterFont,
+                        fontSize = 12.sp,
+                        color = HomeColors.TextSecondary
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                OutlinedButton(
+                    onClick = onClearCache,
+                    shape = RoundedCornerShape(11.dp),
+                    border = BorderStroke(1.dp, HomeColors.ForestPrimary),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                    modifier = Modifier.height(38.dp)
+                ) {
+                    Text(
+                        text = "Clear",
+                        fontFamily = InterFont,
+                        color = HomeColors.ForestPrimary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
     }
 }
 
-// ─── Notification Section ─────────────────────────────────────────────────────
+// ─── Notification Section ────────────────────────────────────────────────────
 @Composable
 fun NotificationSection(
     morningReminder: Boolean,
@@ -993,52 +1146,47 @@ fun NotificationSection(
     onVibrationChange: (Boolean) -> Unit
 ) {
     Column {
-        SectionTitle(stringResource(R.string.notification_preferences))
-        Spacer(modifier = Modifier.height(2.dp))
-        Text(
-            text = stringResource(R.string.notification_subtitle),
-            fontSize = 12.sp,
-            color = TextMedium,
-            modifier = Modifier.padding(bottom = 8.dp, start = 4.dp)
-        )
+        SectionTitle("Care Reminders & Alerts")
+        Spacer(modifier = Modifier.height(8.dp))
         SettingsCard {
             SettingsSwitchItem(
                 icon = Icons.Outlined.WbSunny,
                 title = stringResource(R.string.morning_reminder),
+                subtitle = "Daily morning plant check notification",
                 isChecked = morningReminder,
                 onCheckedChange = onMorningReminderChange
             )
-            HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 66.dp, end = 16.dp))
+            HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 68.dp, end = 16.dp))
 
-            SettingsSwitchItem(
-                icon = Icons.Outlined.Nightlight,
-                title = stringResource(R.string.evening_reminder),
-                isChecked = eveningReminder,
-                onCheckedChange = onEveningReminderChange
-            )
-            HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 66.dp, end = 16.dp))
-
-            // Morning time row
             NotificationTimeRow(
-                label = stringResource(R.string.morning),
+                label = "${stringResource(R.string.morning)} Schedule",
                 time = formatTime(morningHour, morningMinute),
                 enabled = morningReminder,
                 onClick = onMorningTimeClick
             )
-            HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 66.dp, end = 16.dp))
+            HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 68.dp, end = 16.dp))
 
-            // Evening time row
+            SettingsSwitchItem(
+                icon = Icons.Outlined.Nightlight,
+                title = stringResource(R.string.evening_reminder),
+                subtitle = "Evening care routine follow-up",
+                isChecked = eveningReminder,
+                onCheckedChange = onEveningReminderChange
+            )
+            HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 68.dp, end = 16.dp))
+
             NotificationTimeRow(
-                label = stringResource(R.string.evening),
+                label = "${stringResource(R.string.evening)} Schedule",
                 time = formatTime(eveningHour, eveningMinute),
                 enabled = eveningReminder,
                 onClick = onEveningTimeClick
             )
-            HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 66.dp, end = 16.dp))
+            HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 68.dp, end = 16.dp))
 
             SettingsSwitchItem(
                 icon = Icons.Outlined.Vibration,
                 title = stringResource(R.string.vibration),
+                subtitle = "Vibrate on plant care & device alerts",
                 isChecked = vibrationEnabled,
                 onCheckedChange = onVibrationChange
             )
@@ -1046,31 +1194,32 @@ fun NotificationSection(
     }
 }
 
-// ─── About Section ────────────────────────────────────────────────────────────
+// ─── About Section ───────────────────────────────────────────────────────────
 @Composable
 fun AboutSection(context: android.content.Context) {
     Column {
-        SectionTitle(stringResource(R.string.about_smartplantcare))
+        SectionTitle("About SmartPlantCare")
         Spacer(modifier = Modifier.height(8.dp))
         SettingsCard {
             Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
                 AboutInfoRow(stringResource(R.string.app_version), "1.0.0")
-                AboutInfoRow(stringResource(R.string.ml_model), "On-Device AI")
+                AboutInfoRow(stringResource(R.string.ml_model), "On-Device TFLite AI")
                 AboutInfoRow(stringResource(R.string.disease_classes), "22 Leaf Classes")
                 AboutInfoRow(
                     stringResource(R.string.plantnet_connected),
                     stringResource(R.string.yes),
                     isValueBold = true,
-                    valueColor = HomeColors.ForestPrimary
+                    valueColor = HomeColors.SuccessGreen
                 )
                 AboutInfoRow(stringResource(R.string.framework), "Jetpack Compose")
-                AboutInfoRow(stringResource(R.string.database), "Cloud Sync")
-                AboutInfoRow(stringResource(R.string.hardware), "SmartPlantCare Box")
+                AboutInfoRow(stringResource(R.string.database), "Firebase Realtime Sync")
+                AboutInfoRow(stringResource(R.string.hardware), "SmartPlantCare ESP32 Box")
             }
 
             HorizontalDivider(color = DividerLine, thickness = 1.dp)
 
             SettingsMenuItem(
+                icon = Icons.Outlined.Policy,
                 title = stringResource(R.string.privacy_policy),
                 showArrow = true,
                 onClick = {
@@ -1078,9 +1227,10 @@ fun AboutSection(context: android.content.Context) {
                     try { context.startActivity(intent) } catch (_: Exception) { }
                 }
             )
-            HorizontalDivider(color = DividerLine, thickness = 1.dp)
+            HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 68.dp, end = 16.dp))
 
             SettingsMenuItem(
+                icon = Icons.Outlined.Description,
                 title = stringResource(R.string.terms_of_service),
                 showArrow = true,
                 onClick = {
@@ -1092,7 +1242,7 @@ fun AboutSection(context: android.content.Context) {
     }
 }
 
-// ─── Time Picker Dialog (preserved logic, improved look) ─────────────────────
+// ─── Time Picker Dialog ──────────────────────────────────────────────────────
 @Composable
 fun TimePickerDialog(
     title: String,
@@ -1140,7 +1290,7 @@ fun TimePickerDialog(
                 Box(
                     modifier = Modifier
                         .size(44.dp)
-                        .clip(CircleShape)
+                        .clip(RoundedCornerShape(14.dp))
                         .background(SoftGreen),
                     contentAlignment = Alignment.Center
                 ) {
@@ -1159,14 +1309,15 @@ fun TimePickerDialog(
                     fontWeight = FontWeight.Bold,
                     color = TextDark
                 )
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(20.dp))
 
                 Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = SoftGreen.copy(alpha = 0.5f)
+                    shape = RoundedCornerShape(18.dp),
+                    color = PageBg,
+                    border = BorderStroke(1.dp, CardBorder)
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center
                     ) {
@@ -1177,10 +1328,11 @@ fun TimePickerDialog(
                         )
                         Text(
                             text = ":",
-                            fontSize = 32.sp,
+                            fontFamily = InterFont,
+                            fontSize = 30.sp,
                             fontWeight = FontWeight.Bold,
                             color = PrimaryGreen,
-                            modifier = Modifier.padding(horizontal = 6.dp)
+                            modifier = Modifier.padding(horizontal = 8.dp)
                         )
                         TimeSpinner(
                             value = minute,
@@ -1201,7 +1353,8 @@ fun TimePickerDialog(
                                 ) {
                                     Text(
                                         text = label,
-                                        fontSize = 14.sp,
+                                        fontFamily = InterFont,
+                                        fontSize = 13.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = Color.White,
                                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
@@ -1212,32 +1365,42 @@ fun TimePickerDialog(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(22.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     OutlinedButton(
                         onClick = onDismiss,
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(46.dp),
+                        shape = RoundedCornerShape(13.dp),
                         border = BorderStroke(1.dp, CardBorder)
                     ) {
-                        Text(stringResource(R.string.cancel), color = TextMedium)
+                        Text(
+                            text = stringResource(R.string.cancel),
+                            fontFamily = InterFont,
+                            fontWeight = FontWeight.SemiBold,
+                            color = TextMedium
+                        )
                     }
                     Button(
                         onClick = { onConfirm(get24Hour(), minute) },
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(46.dp),
+                        shape = RoundedCornerShape(13.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = PrimaryGreen,
                             contentColor = Color.White
                         )
                     ) {
                         Text(
-                            stringResource(R.string.save),
+                            text = stringResource(R.string.save),
+                            fontFamily = InterFont,
                             color = Color.White,
-                            fontWeight = FontWeight.SemiBold
+                            fontWeight = FontWeight.Bold
                         )
                     }
                 }
@@ -1246,9 +1409,8 @@ fun TimePickerDialog(
     }
 }
 
-// ─── Reusable Components ──────────────────────────────────────────────────────
+// ─── Reusable Components ─────────────────────────────────────────────────────
 
-/** Generic confirmation dialog with icon badge */
 @Composable
 fun PlantDialog(
     onDismissRequest: () -> Unit,
@@ -1273,7 +1435,7 @@ fun PlantDialog(
                 Box(
                     modifier = Modifier
                         .size(44.dp)
-                        .clip(CircleShape)
+                        .clip(RoundedCornerShape(14.dp))
                         .background(iconBackground),
                     contentAlignment = Alignment.Center
                 ) {
@@ -1295,6 +1457,7 @@ fun PlantDialog(
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     text = body,
+                    fontFamily = InterFont,
                     fontSize = 14.sp,
                     color = TextMedium,
                     lineHeight = 20.sp
@@ -1306,22 +1469,36 @@ fun PlantDialog(
                 ) {
                     OutlinedButton(
                         onClick = onDismiss,
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(46.dp),
+                        shape = RoundedCornerShape(13.dp),
                         border = BorderStroke(1.dp, CardBorder)
                     ) {
-                        Text(dismissText, color = TextMedium)
+                        Text(
+                            text = dismissText,
+                            fontFamily = InterFont,
+                            fontWeight = FontWeight.SemiBold,
+                            color = TextMedium
+                        )
                     }
                     Button(
                         onClick = onConfirm,
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(46.dp),
+                        shape = RoundedCornerShape(13.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = confirmColor,
                             contentColor = Color.White
                         )
                     ) {
-                        Text(confirmText, color = Color.White, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            text = confirmText,
+                            fontFamily = InterFont,
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
             }
@@ -1333,9 +1510,9 @@ fun PlantDialog(
 fun LanguageOption(label: String, isSelected: Boolean, onClick: () -> Unit) {
     Surface(
         onClick = onClick,
-        shape = RoundedCornerShape(12.dp),
-        color = if (isSelected) SoftGreen else Color.Transparent,
-        border = if (isSelected) BorderStroke(1.5.dp, PrimaryGreen.copy(alpha = 0.4f)) else BorderStroke(1.dp, CardBorder),
+        shape = RoundedCornerShape(13.dp),
+        color = if (isSelected) SoftGreen else PageBg,
+        border = if (isSelected) BorderStroke(1.5.dp, PrimaryGreen) else BorderStroke(1.dp, CardBorder),
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
@@ -1346,14 +1523,15 @@ fun LanguageOption(label: String, isSelected: Boolean, onClick: () -> Unit) {
         ) {
             Text(
                 text = label,
+                fontFamily = InterFont,
                 fontSize = 15.sp,
-                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                 color = if (isSelected) PrimaryGreen else TextDark,
                 modifier = Modifier.weight(1f)
             )
             if (isSelected) {
                 Icon(
-                    imageVector = Icons.Outlined.CheckCircle,
+                    imageVector = Icons.Filled.CheckCircle,
                     contentDescription = null,
                     tint = PrimaryGreen,
                     modifier = Modifier.size(20.dp)
@@ -1366,7 +1544,7 @@ fun LanguageOption(label: String, isSelected: Boolean, onClick: () -> Unit) {
 @Composable
 fun TimeSpinner(value: Int, onIncrement: () -> Unit, onDecrement: () -> Unit) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        IconButton(onClick = onIncrement, modifier = Modifier.size(42.dp)) {
+        IconButton(onClick = onIncrement, modifier = Modifier.size(44.dp)) {
             Icon(
                 imageVector = Icons.Filled.KeyboardArrowUp,
                 contentDescription = "Increase",
@@ -1377,11 +1555,11 @@ fun TimeSpinner(value: Int, onIncrement: () -> Unit, onDecrement: () -> Unit) {
         Text(
             text = String.format("%02d", value),
             fontFamily = InterFont,
-            fontSize = 34.sp,
+            fontSize = 32.sp,
             fontWeight = FontWeight.Bold,
             color = TextDark
         )
-        IconButton(onClick = onDecrement, modifier = Modifier.size(42.dp)) {
+        IconButton(onClick = onDecrement, modifier = Modifier.size(44.dp)) {
             Icon(
                 imageVector = Icons.Filled.KeyboardArrowDown,
                 contentDescription = "Decrease",
@@ -1402,8 +1580,9 @@ fun AmPmButton(label: String, selected: Boolean, onClick: () -> Unit) {
     ) {
         Text(
             text = label,
-            fontSize = 13.sp,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+            fontFamily = InterFont,
+            fontSize = 12.sp,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
             color = if (selected) Color.White else TextMedium,
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
         )
@@ -1415,7 +1594,7 @@ fun PasswordField(value: String, onValueChange: (String) -> Unit, label: String)
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
-        label = { Text(label, fontSize = 13.sp, color = TextMedium) },
+        label = { Text(label, fontFamily = InterFont, fontSize = 13.sp, color = TextMedium) },
         singleLine = true,
         visualTransformation = PasswordVisualTransformation(),
         modifier = Modifier.fillMaxWidth(),
@@ -1425,7 +1604,7 @@ fun PasswordField(value: String, onValueChange: (String) -> Unit, label: String)
             unfocusedBorderColor = CardBorder,
             focusedLabelColor = PrimaryGreen,
             focusedContainerColor = Color.White,
-            unfocusedContainerColor = SoftGreen.copy(alpha = 0.3f)
+            unfocusedContainerColor = PageBg
         )
     )
 }
@@ -1446,37 +1625,41 @@ fun NotificationTimeRow(
     ) {
         Box(
             modifier = Modifier
-                .size(36.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(if (enabled) SoftGreen else SoftGreen.copy(alpha = 0.3f)),
+                .size(38.dp)
+                .clip(RoundedCornerShape(11.dp))
+                .background(if (enabled) SoftGreen else MutedIconBg),
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 imageVector = Icons.Outlined.Schedule,
                 contentDescription = label,
-                tint = if (enabled) PrimaryGreen else TextLight.copy(alpha = 0.4f),
+                tint = if (enabled) PrimaryGreen else TextLight,
                 modifier = Modifier.size(20.dp)
             )
         }
         Spacer(modifier = Modifier.width(14.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = label,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Medium,
-                color = if (enabled) TextDark else TextLight.copy(alpha = 0.5f)
-            )
+        Text(
+            text = label,
+            fontFamily = InterFont,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium,
+            color = if (enabled) TextDark else TextLight,
+            modifier = Modifier.weight(1f)
+        )
+        Surface(
+            color = if (enabled) SoftGreen else PageBg,
+            shape = RoundedCornerShape(50),
+            border = BorderStroke(1.dp, if (enabled) PrimaryGreen.copy(alpha = 0.25f) else CardBorder)
+        ) {
             Text(
                 text = time,
-                fontSize = 13.sp,
-                color = if (enabled) PrimaryGreen else TextLight.copy(alpha = 0.35f)
+                fontFamily = InterFont,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (enabled) PrimaryGreen else TextLight,
+                modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp)
             )
         }
-        Icon(
-            imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
-            contentDescription = null,
-            tint = if (enabled) TextLight.copy(alpha = 0.7f) else TextLight.copy(alpha = 0.25f)
-        )
     }
 }
 
@@ -1485,10 +1668,9 @@ fun SectionTitle(title: String) {
     Text(
         text = title,
         fontFamily = InterFont,
-        fontSize = 11.sp,
+        fontSize = 15.sp,
         fontWeight = FontWeight.Bold,
-        letterSpacing = 1.sp,
-        color = HomeColors.TextSecondary,
+        color = HomeColors.TextPrimary,
         modifier = Modifier.padding(start = 2.dp)
     )
 }
@@ -1527,20 +1709,20 @@ fun SettingsMenuItem(
         if (icon != null) {
             Box(
                 modifier = Modifier
-                    .size(36.dp)
-                    .clip(RoundedCornerShape(10.dp))
+                    .size(38.dp)
+                    .clip(RoundedCornerShape(11.dp))
                     .background(
                         if (titleColor == ErrorRed)
-                            ErrorRed.copy(alpha = 0.08f)
+                            HomeColors.AlertBg
                         else if (enabled) SoftGreen
-                        else SoftGreen.copy(alpha = 0.3f)
+                        else MutedIconBg
                     ),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = icon,
                     contentDescription = title,
-                    tint = if (enabled) iconTint else iconTint.copy(alpha = 0.4f),
+                    tint = if (enabled) iconTint else TextLight,
                     modifier = Modifier.size(20.dp)
                 )
             }
@@ -1549,15 +1731,18 @@ fun SettingsMenuItem(
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = title,
-                fontSize = 15.sp,
-                color = if (enabled) titleColor else titleColor.copy(alpha = 0.4f),
-                fontWeight = FontWeight.Normal
+                fontFamily = InterFont,
+                fontSize = 14.sp,
+                color = if (enabled) titleColor else TextLight,
+                fontWeight = FontWeight.SemiBold
             )
             if (subtitle != null) {
                 Text(
                     text = subtitle,
+                    fontFamily = InterFont,
                     fontSize = 12.sp,
-                    color = TextLight.copy(alpha = 0.8f),
+                    color = TextMedium,
+                    lineHeight = 16.sp,
                     modifier = Modifier.padding(top = 2.dp)
                 )
             }
@@ -1566,7 +1751,7 @@ fun SettingsMenuItem(
             Icon(
                 imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
                 contentDescription = null,
-                tint = TextLight.copy(alpha = 0.5f),
+                tint = TextLight,
                 modifier = Modifier.size(20.dp)
             )
         }
@@ -1577,6 +1762,7 @@ fun SettingsMenuItem(
 fun SettingsSwitchItem(
     icon: ImageVector,
     title: String,
+    subtitle: String? = null,
     isChecked: Boolean,
     onCheckedChange: ((Boolean) -> Unit)? = null
 ) {
@@ -1592,14 +1778,14 @@ fun SettingsSwitchItem(
                     )
                 } else Modifier
             )
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
             modifier = Modifier
-                .size(36.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(if (isChecked) SoftGreen else SoftGreen.copy(alpha = 0.35f)),
+                .size(38.dp)
+                .clip(RoundedCornerShape(11.dp))
+                .background(if (isChecked) SoftGreen else MutedIconBg),
             contentAlignment = Alignment.Center
         ) {
             Icon(
@@ -1610,13 +1796,24 @@ fun SettingsSwitchItem(
             )
         }
         Spacer(modifier = Modifier.width(14.dp))
-        Text(
-            text = title,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Normal,
-            color = TextDark,
-            modifier = Modifier.weight(1f)
-        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                fontFamily = InterFont,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = TextDark
+            )
+            if (subtitle != null) {
+                Text(
+                    text = subtitle,
+                    fontFamily = InterFont,
+                    fontSize = 12.sp,
+                    color = TextMedium
+                )
+            }
+        }
+        Spacer(modifier = Modifier.width(8.dp))
         Switch(
             checked = isChecked,
             onCheckedChange = null,
@@ -1635,26 +1832,32 @@ fun AboutInfoRow(
     label: String,
     value: String,
     isValueBold: Boolean = false,
-    valueColor: Color = TextMedium
+    valueColor: Color = TextDark
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 7.dp),
+            .padding(vertical = 6.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(text = label, fontSize = 14.sp, color = TextMedium)
+        Text(
+            text = label,
+            fontFamily = InterFont,
+            fontSize = 13.sp,
+            color = TextMedium
+        )
         Text(
             text = value,
-            fontSize = 14.sp,
+            fontFamily = InterFont,
+            fontSize = 13.sp,
             color = valueColor,
-            fontWeight = if (isValueBold) FontWeight.SemiBold else FontWeight.Medium
+            fontWeight = if (isValueBold) FontWeight.Bold else FontWeight.SemiBold
         )
     }
 }
 
-// ─── Helper ───────────────────────────────────────────────────────────────────
+// ─── Helper ──────────────────────────────────────────────────────────────────
 private fun formatTime(hour: Int, minute: Int): String {
     val amPm = if (hour < 12) "AM" else "PM"
     val displayHour = when {
@@ -1665,7 +1868,7 @@ private fun formatTime(hour: Int, minute: Int): String {
     return String.format("%d:%02d %s", displayHour, minute, amPm)
 }
 
-// ─── SmartPlantCare Box Section ────────────────────────────────────────────────
+// ─── SmartPlantCare Box Section ──────────────────────────────────────────────
 @Composable
 private fun SmartPlantCareBoxSection(
     uiState: com.example.smartplantcare.iot.MyPlantsUiState?,
@@ -1706,9 +1909,10 @@ private fun SmartPlantCareBoxSection(
     } else {
         "--"
     }
+    val isAuto = snapshot?.config?.autoIrrigationEnabled ?: true
 
     Column {
-        SectionTitle("SMARTPLANTCARE BOX")
+        SectionTitle("SmartPlantCare Controller")
         Spacer(modifier = Modifier.height(8.dp))
         SettingsCard {
             Column(modifier = Modifier.padding(16.dp)) {
@@ -1718,8 +1922,8 @@ private fun SmartPlantCareBoxSection(
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(44.dp)
-                            .clip(RoundedCornerShape(12.dp))
+                            .size(46.dp)
+                            .clip(RoundedCornerShape(14.dp))
                             .background(if (isConnected) SoftGreen else MutedIconBg),
                         contentAlignment = Alignment.Center
                     ) {
@@ -1732,31 +1936,61 @@ private fun SmartPlantCareBoxSection(
                     }
                     Spacer(modifier = Modifier.width(14.dp))
                     Column(modifier = Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
                             Text(
-                                text = if (isConnected) boxName else "No Box Paired",
+                                text = if (isConnected) boxName else "No Plant Box Paired",
+                                fontFamily = InterFont,
                                 fontSize = 15.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = TextDark
+                                fontWeight = FontWeight.Bold,
+                                color = TextDark,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false)
                             )
                             if (isConnected) {
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Box(
-                                    modifier = Modifier
-                                        .size(8.dp)
-                                        .clip(CircleShape)
-                                        .background(if (isOnline && isPhoneOnline) HomeColors.SuccessGreen else HomeColors.AlertRed)
-                                )
+                                Surface(
+                                    color = if (isOnline && isPhoneOnline) HomeColors.SuccessBg else HomeColors.AlertBg,
+                                    shape = RoundedCornerShape(50)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(6.dp)
+                                                .clip(CircleShape)
+                                                .background(if (isOnline && isPhoneOnline) HomeColors.SuccessGreen else HomeColors.AlertRed)
+                                        )
+                                        Text(
+                                            text = when {
+                                                isOnline && !isPhoneOnline -> "No Internet"
+                                                isOnline -> "Online"
+                                                else -> "Offline"
+                                            },
+                                            fontFamily = InterFont,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isOnline && isPhoneOnline) HomeColors.SuccessGreen else HomeColors.AlertRed
+                                        )
+                                    }
+                                }
                             }
                         }
+                        Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = if (isConnected) {
                                 when {
-                                    isOnline && !isPhoneOnline -> "No internet connection • Check your internet"
-                                    isOnline -> "Online • Water $reservoirPctText"
-                                    else -> "Offline • Sensors --"
+                                    isOnline && !isPhoneOnline -> "Phone has no internet connection"
+                                    isOnline -> "${if (isAuto) "Auto Care" else "Manual"} • Water Tank $reservoirPctText"
+                                    else -> "ESP32 box offline • Telemetry paused (--)"
                                 }
-                            } else "Connect ESP32 for 3-zone automated care",
+                            } else "Pair your ESP32 controller for 3-zone automated irrigation",
+                            fontFamily = InterFont,
                             fontSize = 12.sp,
                             color = TextMedium
                         )
@@ -1777,11 +2011,18 @@ private fun SmartPlantCareBoxSection(
                     )
                 ) {
                     Text(
-                        text = if (isConnected) "Manage in My Plants" else "Pair / Connect Box",
+                        text = if (isConnected) "Manage in My Plants" else "Pair / Connect Plant Box",
                         fontFamily = InterFont,
                         color = Color.White,
                         fontWeight = FontWeight.Bold,
                         fontSize = 14.sp
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(16.dp)
                     )
                 }
             }
@@ -1789,7 +2030,7 @@ private fun SmartPlantCareBoxSection(
     }
 }
 
-// ─── Units & Hardware Preferences Section ──────────────────────────────────────
+// ─── Units & Hardware Preferences Section ────────────────────────────────────
 @Composable
 private fun UnitsAndPreferencesSection(
     tempUnit: String,
@@ -1799,7 +2040,7 @@ private fun UnitsAndPreferencesSection(
     onOpenGuide: () -> Unit
 ) {
     Column {
-        SectionTitle("PREFERENCES & GUIDE")
+        SectionTitle("Units & Hardware Guide")
         Spacer(modifier = Modifier.height(8.dp))
         SettingsCard {
             // Temperature Unit Row
@@ -1811,8 +2052,8 @@ private fun UnitsAndPreferencesSection(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(36.dp)
-                        .clip(RoundedCornerShape(10.dp))
+                        .size(38.dp)
+                        .clip(RoundedCornerShape(11.dp))
                         .background(SoftGreen),
                     contentAlignment = Alignment.Center
                 ) {
@@ -1825,8 +2066,19 @@ private fun UnitsAndPreferencesSection(
                 }
                 Spacer(modifier = Modifier.width(14.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Temperature Unit", fontFamily = InterFont, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = HomeColors.TextPrimary)
-                    Text("Display weather and sensor temp", fontFamily = InterFont, fontSize = 12.sp, color = HomeColors.TextSecondary)
+                    Text(
+                        text = "Temperature Unit",
+                        fontFamily = InterFont,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = HomeColors.TextPrimary
+                    )
+                    Text(
+                        text = "Weather forecast & ambient sensor",
+                        fontFamily = InterFont,
+                        fontSize = 12.sp,
+                        color = HomeColors.TextSecondary
+                    )
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Row(
@@ -1841,7 +2093,7 @@ private fun UnitsAndPreferencesSection(
                 }
             }
 
-            HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 66.dp, end = 16.dp))
+            HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 68.dp, end = 16.dp))
 
             // Measurement Depth Row
             Row(
@@ -1852,8 +2104,8 @@ private fun UnitsAndPreferencesSection(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(36.dp)
-                        .clip(RoundedCornerShape(10.dp))
+                        .size(38.dp)
+                        .clip(RoundedCornerShape(11.dp))
                         .background(SoftGreen),
                     contentAlignment = Alignment.Center
                 ) {
@@ -1866,8 +2118,19 @@ private fun UnitsAndPreferencesSection(
                 }
                 Spacer(modifier = Modifier.width(14.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Depth Units", fontFamily = InterFont, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = HomeColors.TextPrimary)
-                    Text("Tank depth and soil height", fontFamily = InterFont, fontSize = 12.sp, color = HomeColors.TextSecondary)
+                    Text(
+                        text = "Reservoir Depth Unit",
+                        fontFamily = InterFont,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = HomeColors.TextPrimary
+                    )
+                    Text(
+                        text = "Ultrasonic water tank air gap",
+                        fontFamily = InterFont,
+                        fontSize = 12.sp,
+                        color = HomeColors.TextSecondary
+                    )
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Row(
@@ -1882,13 +2145,13 @@ private fun UnitsAndPreferencesSection(
                 }
             }
 
-            HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 66.dp, end = 16.dp))
+            HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 68.dp, end = 16.dp))
 
             // How It Works & FAQ Guide Row
             SettingsMenuItem(
                 icon = Icons.AutoMirrored.Outlined.MenuBook,
                 title = "How SmartPlantCare Works (FAQ)",
-                subtitle = "Rain guard, auto-watering, sounds & sharing",
+                subtitle = "Rain guard, auto-watering, sounds & family sharing",
                 showArrow = true,
                 onClick = onOpenGuide
             )
@@ -1896,60 +2159,7 @@ private fun UnitsAndPreferencesSection(
     }
 }
 
-// ─── Storage & Cache Section ──────────────────────────────────────────────────
-@Composable
-private fun StorageAndCacheSection(
-    cacheSize: String,
-    onClearCache: () -> Unit
-) {
-    Column {
-        SectionTitle("STORAGE & DATA")
-        Spacer(modifier = Modifier.height(8.dp))
-        SettingsCard {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(SoftGreen),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.CleaningServices,
-                        contentDescription = null,
-                        tint = PrimaryGreen,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-                Spacer(modifier = Modifier.width(14.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("App Image & Temp Cache", fontFamily = InterFont, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = HomeColors.TextPrimary)
-                    Text("Current size: $cacheSize", fontFamily = InterFont, fontSize = 12.sp, color = HomeColors.TextSecondary)
-                }
-                Spacer(modifier = Modifier.width(8.dp))
-                Button(
-                    onClick = onClearCache,
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = HomeColors.ForestPrimary,
-                        contentColor = Color.White
-                    ),
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
-                    modifier = Modifier.height(38.dp)
-                ) {
-                    Text("Clear", fontFamily = InterFont, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                }
-            }
-        }
-    }
-}
-
-// ─── How SmartPlantCare Works (Interactive FAQ Guide Dialog) ──────────────────
+// ─── How SmartPlantCare Works (Interactive FAQ Guide Dialog) ─────────────────
 private data class FaqGuideEntry(
     val question: String,
     val answer: String,

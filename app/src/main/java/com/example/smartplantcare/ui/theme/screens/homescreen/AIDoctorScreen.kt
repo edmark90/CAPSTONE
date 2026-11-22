@@ -26,14 +26,15 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddAPhoto
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Eco
 import androidx.compose.material.icons.filled.HealthAndSafety
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.LocalHospital
 import androidx.compose.material.icons.filled.MedicalServices
-import androidx.compose.material.icons.filled.Plagiarism
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Spa
 import androidx.compose.material.icons.outlined.DeleteOutline
@@ -78,7 +79,7 @@ import java.io.File
 import java.util.concurrent.TimeUnit
 
 private enum class PlanFilter(val label: String) {
-    ALL("All"),
+    ALL("All Plants"),
     IN_CARE("In Care"),
     HEALTHY("Healthy"),
     COMPLETED("Completed")
@@ -113,7 +114,8 @@ fun AIDoctorScreen(
     }
 
     val healthyCount = remember(plans) { plans.count { it.isHealthy } }
-    val inCareCount = remember(plans) { plans.size - healthyCount }
+    val inCareCount = remember(plans) { plans.count { !it.isHealthy && it.completedCount < 7 } }
+    val completedCount = remember(plans) { plans.count { it.completedCount >= 7 } }
 
     LaunchedEffect(Unit) {
         if (plans.isEmpty()) {
@@ -191,15 +193,15 @@ fun AIDoctorScreen(
             .imePadding(),
         contentPadding = PaddingValues(bottom = HomeDimens.BottomBarClearance)
     ) {
-        // ─── Header ────────────────────────────────────────────────────────
+        // ─── Header & Interactive Filter Summary Cards ─────────────────────
         item {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(HomeColors.SurfaceWhite)
                     .statusBarsPadding()
-                    .padding(horizontal = 20.dp)
-                    .padding(top = 16.dp, bottom = 18.dp)
+                    .padding(horizontal = HomeDimens.ScreenHorizontalPadding)
+                    .padding(top = HomeDimens.ScreenTopPadding, bottom = 18.dp)
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -212,8 +214,8 @@ fun AIDoctorScreen(
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(42.dp)
-                                .clip(RoundedCornerShape(12.dp))
+                                .size(46.dp)
+                                .clip(RoundedCornerShape(14.dp))
                                 .background(HomeColors.SoftMint),
                             contentAlignment = Alignment.Center
                         ) {
@@ -225,22 +227,27 @@ fun AIDoctorScreen(
                             )
                         }
                         Spacer(modifier = Modifier.width(12.dp))
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = "AI Doctor",
                                 fontFamily = HomeInterFont,
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 22.sp,
-                                color = HomeColors.TextPrimary
+                                fontSize = 23.sp,
+                                color = HomeColors.TextPrimary,
+                                letterSpacing = (-0.3).sp
                             )
                             Text(
-                                text = "Saved plants & 7-day care plans",
+                                text = "Diagnosed leaves & 7-day care plans",
                                 fontFamily = HomeInterFont,
                                 fontSize = 12.sp,
-                                color = HomeColors.TextSecondary
+                                color = HomeColors.TextSecondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
+
+                    Spacer(modifier = Modifier.width(10.dp))
 
                     Button(
                         onClick = onIdentifyClick,
@@ -248,8 +255,9 @@ fun AIDoctorScreen(
                             containerColor = HomeColors.ForestPrimary,
                             contentColor = Color.White
                         ),
-                        shape = RoundedCornerShape(12.dp),
-                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 9.dp)
+                        shape = RoundedCornerShape(13.dp),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
+                        modifier = Modifier.height(44.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.AddAPhoto,
@@ -262,7 +270,7 @@ fun AIDoctorScreen(
                             text = "Identify",
                             fontFamily = HomeInterFont,
                             fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
+                            fontWeight = FontWeight.Bold,
                             color = Color.White
                         )
                     }
@@ -272,33 +280,50 @@ fun AIDoctorScreen(
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     StatCard(
-                        icon = Icons.Default.Plagiarism,
+                        icon = Icons.Default.Eco,
                         value = "${plans.size}",
-                        label = "Plants",
+                        label = "Total",
+                        isSelected = selectedFilter == PlanFilter.ALL,
                         valueColor = HomeColors.ForestPrimary,
                         iconBg = HomeColors.SoftMint,
                         iconTint = HomeColors.ForestPrimary,
-                        modifier = Modifier.weight(1f)
-                    )
-                    StatCard(
-                        icon = Icons.Default.HealthAndSafety,
-                        value = "$healthyCount",
-                        label = "Healthy",
-                        valueColor = HomeColors.SuccessGreen,
-                        iconBg = HomeColors.SuccessBg,
-                        iconTint = HomeColors.SuccessGreen,
+                        onClick = { selectedFilter = PlanFilter.ALL },
                         modifier = Modifier.weight(1f)
                     )
                     StatCard(
                         icon = Icons.Default.LocalHospital,
                         value = "$inCareCount",
                         label = "In Care",
+                        isSelected = selectedFilter == PlanFilter.IN_CARE,
                         valueColor = HomeColors.AlertRed,
                         iconBg = HomeColors.AlertBg,
                         iconTint = HomeColors.AlertRed,
+                        onClick = { selectedFilter = PlanFilter.IN_CARE },
+                        modifier = Modifier.weight(1f)
+                    )
+                    StatCard(
+                        icon = Icons.Default.HealthAndSafety,
+                        value = "$healthyCount",
+                        label = "Healthy",
+                        isSelected = selectedFilter == PlanFilter.HEALTHY,
+                        valueColor = HomeColors.SuccessGreen,
+                        iconBg = HomeColors.SuccessBg,
+                        iconTint = HomeColors.SuccessGreen,
+                        onClick = { selectedFilter = PlanFilter.HEALTHY },
+                        modifier = Modifier.weight(1f)
+                    )
+                    StatCard(
+                        icon = Icons.Default.CheckCircle,
+                        value = "$completedCount",
+                        label = "Done",
+                        isSelected = selectedFilter == PlanFilter.COMPLETED,
+                        valueColor = HomeColors.WaterBlue,
+                        iconBg = HomeColors.WaterBg,
+                        iconTint = HomeColors.WaterBlue,
+                        onClick = { selectedFilter = PlanFilter.COMPLETED },
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -309,7 +334,7 @@ fun AIDoctorScreen(
         // ─── Search + Filter Chips ──────────────────────────────────────────
         item {
             Column(
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
+                modifier = Modifier.padding(horizontal = HomeDimens.ScreenHorizontalPadding, vertical = 14.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Row(
@@ -318,18 +343,19 @@ fun AIDoctorScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Saved Plants",
+                        text = "Saved Care Plans",
                         fontFamily = HomeInterFont,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 17.sp,
+                        fontSize = 16.sp,
                         color = HomeColors.TextPrimary
                     )
                     if (plans.isNotEmpty()) {
                         Text(
-                            text = "${filteredPlans.size} result${if (filteredPlans.size != 1) "s" else ""}",
+                            text = "${filteredPlans.size} of ${plans.size} shown",
                             fontFamily = HomeInterFont,
                             fontSize = 12.sp,
-                            color = HomeColors.TextMuted
+                            fontWeight = FontWeight.Medium,
+                            color = HomeColors.TextSecondary
                         )
                     }
                 }
@@ -340,7 +366,7 @@ fun AIDoctorScreen(
                     modifier = Modifier.fillMaxWidth(),
                     placeholder = {
                         Text(
-                            text = "Search plant or disease...",
+                            text = "Search plant or diagnosis...",
                             fontFamily = HomeInterFont,
                             color = HomeColors.TextMuted,
                             fontSize = 14.sp
@@ -370,7 +396,7 @@ fun AIDoctorScreen(
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedContainerColor = HomeColors.SurfaceWhite,
                         unfocusedContainerColor = HomeColors.SurfaceWhite,
-                        focusedBorderColor = HomeColors.ForestMedium,
+                        focusedBorderColor = HomeColors.ForestPrimary,
                         unfocusedBorderColor = HomeColors.CardBorder
                     ),
                     singleLine = true
@@ -395,9 +421,9 @@ fun AIDoctorScreen(
                                     text = filter.label,
                                     fontFamily = HomeInterFont,
                                     fontSize = 12.sp,
-                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                                     color = if (selected) Color.White else HomeColors.TextSecondary,
-                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
                                 )
                             }
                         }
@@ -413,41 +439,73 @@ fun AIDoctorScreen(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(300.dp),
+                            .height(280.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        CircularProgressIndicator(color = HomeColors.ForestPrimary, strokeWidth = 3.5.dp)
+                        CircularProgressIndicator(color = HomeColors.ForestPrimary, strokeWidth = 3.dp)
                     }
                 }
             }
 
             plans.isEmpty() -> {
-                item { EmptyPlansState() }
+                item { EmptyPlansState(onIdentifyClick = onIdentifyClick) }
             }
 
             filteredPlans.isEmpty() -> {
                 item {
-                    Box(
+                    Surface(
+                        color = HomeColors.SurfaceWhite,
+                        shape = RoundedCornerShape(20.dp),
+                        border = BorderStroke(1.dp, HomeColors.CardBorder),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(240.dp),
-                        contentAlignment = Alignment.Center
+                            .padding(horizontal = HomeDimens.ScreenHorizontalPadding, vertical = 12.dp)
                     ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Column(
+                            modifier = Modifier.padding(vertical = 36.dp, horizontal = 20.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
                             Icon(
                                 imageVector = Icons.Default.Search,
                                 contentDescription = null,
                                 tint = HomeColors.TextMuted,
-                                modifier = Modifier.size(44.dp)
+                                modifier = Modifier.size(38.dp)
                             )
                             Spacer(modifier = Modifier.height(10.dp))
                             Text(
-                                text = "No matching plants found",
+                                text = "No matching care plans",
                                 fontFamily = HomeInterFont,
                                 fontSize = 15.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = HomeColors.TextSecondary
+                                fontWeight = FontWeight.Bold,
+                                color = HomeColors.TextPrimary
                             )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Try clearing your search or switching the filter above.",
+                                fontFamily = HomeInterFont,
+                                fontSize = 12.sp,
+                                color = HomeColors.TextSecondary,
+                                textAlign = TextAlign.Center
+                            )
+                            if (selectedFilter != PlanFilter.ALL || searchQuery.isNotBlank()) {
+                                Spacer(modifier = Modifier.height(14.dp))
+                                OutlinedButton(
+                                    onClick = {
+                                        selectedFilter = PlanFilter.ALL
+                                        searchQuery = ""
+                                    },
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = BorderStroke(1.dp, HomeColors.CardBorder)
+                                ) {
+                                    Text(
+                                        text = "Reset Filters",
+                                        fontFamily = HomeInterFont,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = HomeColors.ForestPrimary
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -474,43 +532,52 @@ private fun StatCard(
     icon: ImageVector,
     value: String,
     label: String,
+    isSelected: Boolean,
     valueColor: Color,
     iconBg: Color,
     iconTint: Color,
+    onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Card(
-        modifier = modifier,
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick),
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = HomeColors.PageBg),
-        border = BorderStroke(1.dp, HomeColors.CardBorder),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isSelected) iconBg.copy(alpha = 0.65f) else HomeColors.PageBg
+        ),
+        border = BorderStroke(
+            width = if (isSelected) 1.5.dp else 1.dp,
+            color = if (isSelected) valueColor.copy(alpha = 0.45f) else HomeColors.CardBorder
+        ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 12.dp, horizontal = 8.dp),
+                .padding(vertical = 11.dp, horizontal = 6.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Box(
                 modifier = Modifier
-                    .size(32.dp)
+                    .size(28.dp)
                     .clip(CircleShape)
-                    .background(iconBg),
+                    .background(if (isSelected) HomeColors.SurfaceWhite else iconBg),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
                     tint = iconTint,
-                    modifier = Modifier.size(16.dp)
+                    modifier = Modifier.size(15.dp)
                 )
             }
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(5.dp))
             Text(
                 text = value,
                 fontFamily = HomeInterFont,
-                fontSize = 20.sp,
+                fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
                 color = valueColor
             )
@@ -518,52 +585,84 @@ private fun StatCard(
                 text = label,
                 fontFamily = HomeInterFont,
                 fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = HomeColors.TextSecondary
+                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                color = if (isSelected) HomeColors.TextPrimary else HomeColors.TextSecondary,
+                maxLines = 1
             )
         }
     }
 }
 
 @Composable
-private fun EmptyPlansState() {
-    Column(
+private fun EmptyPlansState(onIdentifyClick: () -> Unit) {
+    Surface(
+        color = HomeColors.SurfaceWhite,
+        shape = RoundedCornerShape(22.dp),
+        border = BorderStroke(1.dp, HomeColors.CardBorder),
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 24.dp, vertical = 40.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+            .padding(horizontal = HomeDimens.ScreenHorizontalPadding, vertical = 12.dp)
     ) {
-        Box(
+        Column(
             modifier = Modifier
-                .size(84.dp)
-                .clip(CircleShape)
-                .background(HomeColors.SoftMint),
-            contentAlignment = Alignment.Center
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 36.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Icon(
-                imageVector = Icons.Default.Spa,
-                contentDescription = null,
-                tint = HomeColors.ForestMedium,
-                modifier = Modifier.size(38.dp)
+            Box(
+                modifier = Modifier
+                    .size(72.dp)
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(HomeColors.SoftMint),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Spa,
+                    contentDescription = null,
+                    tint = HomeColors.ForestPrimary,
+                    modifier = Modifier.size(34.dp)
+                )
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "No Saved Care Plans Yet",
+                fontFamily = HomeInterFont,
+                fontWeight = FontWeight.Bold,
+                fontSize = 17.sp,
+                color = HomeColors.TextPrimary
             )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = "Use the center camera button to scan a Tomato, Chili, or Eggplant leaf for disease detection and a 7-day care schedule, or identify a new plant species.",
+                fontFamily = HomeInterFont,
+                fontSize = 13.sp,
+                color = HomeColors.TextSecondary,
+                lineHeight = 19.sp,
+                textAlign = TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(18.dp))
+            OutlinedButton(
+                onClick = onIdentifyClick,
+                shape = RoundedCornerShape(13.dp),
+                border = BorderStroke(1.dp, HomeColors.ForestPrimary),
+                modifier = Modifier.height(44.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.AddAPhoto,
+                    contentDescription = null,
+                    tint = HomeColors.ForestPrimary,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Identify Plant Species",
+                    fontFamily = HomeInterFont,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = HomeColors.ForestPrimary
+                )
+            }
         }
-        Spacer(modifier = Modifier.height(16.dp))
-        Text(
-            text = "No plants saved yet",
-            fontFamily = HomeInterFont,
-            fontWeight = FontWeight.Bold,
-            fontSize = 17.sp,
-            color = HomeColors.TextPrimary
-        )
-        Spacer(modifier = Modifier.height(6.dp))
-        Text(
-            text = "Scan a leaf with the camera to diagnose issues and generate a 7-day care plan.",
-            fontFamily = HomeInterFont,
-            fontSize = 13.sp,
-            color = HomeColors.TextSecondary,
-            lineHeight = 19.sp,
-            textAlign = TextAlign.Center
-        )
     }
 }
 
@@ -578,13 +677,14 @@ private fun TreatmentPlanCard(
     val progress = (plan.completedCount.toFloat() / totalDays).coerceIn(0f, 1f)
     val isHealthy = plan.isHealthy
     val isCompleted = plan.completedCount >= totalDays
+    val currentDayNum = (plan.completedCount + 1).coerceAtMost(totalDays)
 
     val daysAgoText = remember(plan.startDateMillis) {
         val diff = System.currentTimeMillis() - plan.startDateMillis
         val days = TimeUnit.MILLISECONDS.toDays(diff)
         when {
             days <= 0L -> "Saved today"
-            days == 1L -> "Saved 1 day ago"
+            days == 1L -> "Saved yesterday"
             else -> "Saved $days days ago"
         }
     }
@@ -603,9 +703,9 @@ private fun TreatmentPlanCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 6.dp)
+            .padding(horizontal = HomeDimens.ScreenHorizontalPadding, vertical = 6.dp)
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = HomeColors.SurfaceWhite),
         border = BorderStroke(1.dp, HomeColors.CardBorder),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
@@ -617,7 +717,7 @@ private fun TreatmentPlanCard(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(74.dp)
+                        .size(72.dp)
                         .clip(RoundedCornerShape(16.dp))
                         .background(HomeColors.PlaceholderBg),
                     contentAlignment = Alignment.Center
@@ -634,7 +734,7 @@ private fun TreatmentPlanCard(
                             imageVector = Icons.Default.Image,
                             contentDescription = null,
                             tint = HomeColors.TextMuted,
-                            modifier = Modifier.size(30.dp)
+                            modifier = Modifier.size(28.dp)
                         )
                     }
                 }
@@ -655,8 +755,12 @@ private fun TreatmentPlanCard(
                     Spacer(Modifier.height(5.dp))
 
                     Surface(
-                        color = if (isHealthy) HomeColors.SuccessBg else HomeColors.AlertBg,
-                        shape = RoundedCornerShape(99.dp)
+                        color = when {
+                            isHealthy -> HomeColors.SuccessBg
+                            isCompleted -> HomeColors.WaterBg
+                            else -> HomeColors.AlertBg
+                        },
+                        shape = RoundedCornerShape(50)
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
@@ -666,13 +770,23 @@ private fun TreatmentPlanCard(
                                 modifier = Modifier
                                     .size(6.dp)
                                     .clip(CircleShape)
-                                    .background(if (isHealthy) HomeColors.SuccessGreen else HomeColors.AlertRed)
+                                    .background(
+                                        when {
+                                            isHealthy -> HomeColors.SuccessGreen
+                                            isCompleted -> HomeColors.WaterBlue
+                                            else -> HomeColors.AlertRed
+                                        }
+                                    )
                             )
                             Spacer(Modifier.width(6.dp))
                             Text(
-                                text = if (isHealthy) "Healthy" else plan.diseaseName,
+                                text = if (isHealthy) "Healthy Leaf" else plan.diseaseName,
                                 fontFamily = HomeInterFont,
-                                color = if (isHealthy) HomeColors.SuccessGreen else HomeColors.AlertRed,
+                                color = when {
+                                    isHealthy -> HomeColors.SuccessGreen
+                                    isCompleted -> HomeColors.WaterBlue
+                                    else -> HomeColors.AlertRed
+                                },
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 maxLines = 1,
@@ -686,76 +800,64 @@ private fun TreatmentPlanCard(
                     Text(
                         text = daysAgoText,
                         fontFamily = HomeInterFont,
-                        fontSize = 12.sp,
+                        fontSize = 11.sp,
                         color = HomeColors.TextMuted
                     )
                 }
 
-                IconButton(
-                    onClick = onDeleteClick,
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(HomeColors.AlertBg)
+                // Subtle neutral delete button so it doesn't compete with the diagnosis badge
+                Surface(
+                    color = HomeColors.PageBg,
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, HomeColors.CardBorder),
+                    modifier = Modifier.size(40.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Outlined.DeleteOutline,
-                        contentDescription = "Delete Plan",
-                        tint = HomeColors.AlertRed,
-                        modifier = Modifier.size(18.dp)
-                    )
+                    IconButton(onClick = onDeleteClick) {
+                        Icon(
+                            imageVector = Icons.Outlined.DeleteOutline,
+                            contentDescription = "Delete Plan",
+                            tint = HomeColors.TextSecondary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
             }
 
             Spacer(Modifier.height(14.dp))
+            HorizontalDivider(color = HomeColors.DividerLine, thickness = 1.dp)
+            Spacer(Modifier.height(12.dp))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
-                    Text(
-                        text = "TREATMENT PROGRESS",
-                        fontFamily = HomeInterFont,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = HomeColors.TextMuted,
-                        letterSpacing = 0.7.sp
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        text = if (isCompleted) "Plan Completed"
-                        else "Day ${(plan.completedCount + 1).coerceAtMost(totalDays)} of $totalDays · ${plan.completedCount} done",
-                        fontFamily = HomeInterFont,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = HomeColors.ForestPrimary
-                    )
-                }
+                Text(
+                    text = if (isCompleted) "7-Day Care Completed"
+                    else "Day $currentDayNum of $totalDays",
+                    fontFamily = HomeInterFont,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (isCompleted || isHealthy) HomeColors.SuccessGreen else HomeColors.ForestPrimary
+                )
 
-                Box(
-                    modifier = Modifier
-                        .size(32.dp)
-                        .clip(CircleShape)
-                        .background(if (isCompleted) HomeColors.SuccessBg else HomeColors.SoftMint),
-                    contentAlignment = Alignment.Center
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    if (isCompleted) {
-                        Icon(
-                            imageVector = Icons.Default.HealthAndSafety,
-                            contentDescription = null,
-                            tint = HomeColors.SuccessGreen,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Default.ChevronRight,
-                            contentDescription = null,
-                            tint = HomeColors.ForestMedium,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
+                    Text(
+                        text = "${plan.completedCount}/$totalDays steps done",
+                        fontFamily = HomeInterFont,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = HomeColors.TextSecondary
+                    )
+                    Icon(
+                        imageVector = Icons.Default.ChevronRight,
+                        contentDescription = null,
+                        tint = HomeColors.ForestMedium,
+                        modifier = Modifier.size(18.dp)
+                    )
                 }
             }
 
