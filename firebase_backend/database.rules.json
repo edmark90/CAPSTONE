@@ -58,6 +58,16 @@
       ".write": false
     },
 
+    "deviceHistory": {
+      "$deviceId": {
+        ".read": true,
+        ".write": "root.child('devices/' + $deviceId + '/meta/ownershipState').val() === 'OWNED' || (auth != null && !newData.exists())",
+        "days": {
+          ".indexOn": ["dateKey", "updatedAt"]
+        }
+      }
+    },
+
     "devices": {
       ".read": "auth != null",
       "$deviceId": {

@@ -26,7 +26,8 @@ enum class MyPlantsSubPage {
     NONE,
     SHARE_PLANT,
     EVENT_LOG,
-    DEVICE_SETTINGS
+    DEVICE_SETTINGS,
+    HISTORY_MONITORING
 }
 
 data class MyPlantsUiState(
@@ -75,6 +76,12 @@ data class MyPlantsUiState(
 
     // Page 4: Share My Plant
     val latestGeneratedInvite: ShareInvite? = null,
+
+    // Page 7: 7-Day Historical Monitoring & Irrigation Records (Asia/Manila PHT)
+    val selectedHistoryDateKey: String = IotDomainLogic.formatPhDateKey(System.currentTimeMillis()),
+    val historyDaysWindow: List<HistoryDateOption> = IotDomainLogic.generateSevenDayWindowPht(),
+    val historyByDate: Map<String, DailyHistorySnapshot> = emptyMap(),
+    val isLoadingHistory: Boolean = false,
 
     // Network & Phone Connectivity
     val isPhoneOnline: Boolean = true,
@@ -151,6 +158,9 @@ class MyPlantsViewModel(
     private var userDevicesJob: Job? = null
     private var liveDeviceJob: Job? = null
     private var liveWatchdogJob: Job? = null
+    private var historyJob: Job? = null
+    private var lastPrunedHistoryKey: String? = null
+    private var rawCloudHistoryByDate: Map<String, DailyHistorySnapshot> = emptyMap()
     private var espScanJob: Job? = null
     private var lastReportedCmdId: String? = null
     private var lastAutoWeatherSyncDeviceId: String? = null
@@ -163,6 +173,8 @@ class MyPlantsViewModel(
             userDevicesJob?.cancel()
             liveDeviceJob?.cancel()
             liveWatchdogJob?.cancel()
+            historyJob?.cancel()
+            rawCloudHistoryByDate = emptyMap()
             boundUid = null
             _uiState.update {
                 MyPlantsUiState(
@@ -214,9 +226,12 @@ class MyPlantsViewModel(
                 if (chosen != null) {
                     observeLiveDevice(chosen.deviceId)
                     startLiveSyncWatchdog(chosen.deviceId)
+                    startObservingDeviceHistory(chosen.deviceId, forceRefresh = false)
                 } else {
                     liveDeviceJob?.cancel()
                     liveWatchdogJob?.cancel()
+                    historyJob?.cancel()
+                    rawCloudHistoryByDate = emptyMap()
                 }
             }
         }
@@ -324,6 +339,9 @@ class MyPlantsViewModel(
         // for new ESP32 state-transition events (per V3.1 Specification Section 14.2)
         if (snapshot != null) {
             dispatchNewDeviceEventNotifications(snapshot)
+            if (historyJob?.isActive == true || _uiState.value.subPage == MyPlantsSubPage.HISTORY_MONITORING) {
+                recomputeMergedHistoryUiState(deviceId, snapshot.events)
+            }
         }
     }
 
@@ -976,6 +994,7 @@ class MyPlantsViewModel(
             }
             observeLiveDevice(finalDeviceId, forceRestart = true)
             startLiveSyncWatchdog(finalDeviceId)
+            startObservingDeviceHistory(finalDeviceId, forceRefresh = false)
         }
     }
 
@@ -983,15 +1002,19 @@ class MyPlantsViewModel(
 
     fun selectActiveDevice(deviceId: String) {
         val link = _uiState.value.userDevices.firstOrNull { it.deviceId == deviceId } ?: return
+        historyJob?.cancel()
+        rawCloudHistoryByDate = emptyMap()
         _uiState.update {
             it.copy(
                 activeDeviceId = link.deviceId,
                 activeRole = link.role,
-                subPage = MyPlantsSubPage.NONE
+                subPage = MyPlantsSubPage.NONE,
+                historyByDate = emptyMap()
             )
         }
         observeLiveDevice(link.deviceId)
         startLiveSyncWatchdog(link.deviceId)
+        startObservingDeviceHistory(link.deviceId, forceRefresh = false)
     }
 
     fun openAddAnotherDeviceFlow() {
@@ -1014,10 +1037,113 @@ class MyPlantsViewModel(
 
     fun openSubPage(page: MyPlantsSubPage) {
         _uiState.update { it.copy(subPage = page) }
+        if (page == MyPlantsSubPage.HISTORY_MONITORING) {
+            val deviceId = _uiState.value.activeDeviceId ?: return
+            startObservingDeviceHistory(deviceId, forceRefresh = true)
+        }
     }
 
     fun closeSubPage() {
         _uiState.update { it.copy(subPage = MyPlantsSubPage.NONE) }
+    }
+
+    fun selectHistoryDate(dateKey: String) {
+        val validKeys = _uiState.value.historyDaysWindow.map { it.dateKey }.toSet()
+        if (dateKey !in validKeys) return
+        _uiState.update { it.copy(selectedHistoryDateKey = dateKey) }
+    }
+
+    fun refreshHistory(silent: Boolean = false) {
+        val deviceId = _uiState.value.activeDeviceId ?: return
+        if (!NetworkMonitor.refreshOnlineState()) {
+            if (!silent) {
+                showSnackbar("No internet connection. Showing cached 7-day records.")
+            }
+            return
+        }
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoadingHistory = true) }
+            val result = repository.fetchDeviceHistoryViaRest(deviceId)
+            result.onSuccess { daysMap ->
+                rawCloudHistoryByDate = daysMap
+                recomputeMergedHistoryUiState(deviceId, _uiState.value.liveSnapshot?.events.orEmpty())
+                _uiState.update { it.copy(isLoadingHistory = false) }
+                if (!silent) {
+                    showSnackbar("7-day history synced.")
+                }
+            }.onFailure { err ->
+                _uiState.update { it.copy(isLoadingHistory = false) }
+                if (!silent) {
+                    showSnackbar("History refresh failed: ${err.localizedMessage ?: "Check connection"}")
+                }
+            }
+        }
+    }
+
+    private fun startObservingDeviceHistory(deviceId: String, forceRefresh: Boolean = false) {
+        val nowMs = System.currentTimeMillis()
+        val window = IotDomainLogic.generateSevenDayWindowPht(nowMs, rawCloudHistoryByDate)
+        val validKeys = window.map { it.dateKey }.toSet()
+        val currentSelected = _uiState.value.selectedHistoryDateKey
+        val safeSelected = if (currentSelected in validKeys) currentSelected else window.last().dateKey
+
+        _uiState.update {
+            it.copy(
+                historyDaysWindow = window,
+                selectedHistoryDateKey = safeSelected,
+                isLoadingHistory = rawCloudHistoryByDate.isEmpty() || forceRefresh
+            )
+        }
+
+        if (historyJob?.isActive != true) {
+            historyJob = viewModelScope.launch {
+                repository.observeDeviceHistory(deviceId).collect { daysMap ->
+                    rawCloudHistoryByDate = daysMap
+                    recomputeMergedHistoryUiState(deviceId, _uiState.value.liveSnapshot?.events.orEmpty())
+                    _uiState.update { it.copy(isLoadingHistory = false) }
+                }
+            }
+        }
+
+        if (forceRefresh && NetworkMonitor.refreshOnlineState()) {
+            refreshHistory(silent = true)
+        }
+
+        // Enforce 7-day retention pruning once per PHT day for Owners/Operators
+        val todayKey = window.last().dateKey
+        val cutoffKey = window.first().dateKey
+        val pruneToken = "${deviceId}_$todayKey"
+        if (_uiState.value.activeRole.canControl && lastPrunedHistoryKey != pruneToken) {
+            lastPrunedHistoryKey = pruneToken
+            viewModelScope.launch {
+                repository.pruneExpiredHistoryDays(deviceId, cutoffKey)
+            }
+        }
+    }
+
+    private fun recomputeMergedHistoryUiState(deviceId: String, liveEvents: List<DeviceEvent>) {
+        val nowMs = System.currentTimeMillis()
+        val baseWindow = IotDomainLogic.generateSevenDayWindowPht(nowMs)
+        val validKeys = baseWindow.map { it.dateKey }.toSet()
+        val merged = IotDomainLogic.mergeLegacyIrrigationEventsIntoHistory(
+            deviceId = deviceId,
+            historyByDate = rawCloudHistoryByDate.filterKeys { it in validKeys },
+            events = liveEvents,
+            validDateKeys = validKeys
+        )
+        val updatedWindow = IotDomainLogic.generateSevenDayWindowPht(nowMs, merged)
+        _uiState.update { st ->
+            val safeSelected = if (st.selectedHistoryDateKey in validKeys) {
+                st.selectedHistoryDateKey
+            } else {
+                updatedWindow.last().dateKey
+            }
+            st.copy(
+                historyDaysWindow = updatedWindow,
+                selectedHistoryDateKey = safeSelected,
+                historyByDate = merged
+            )
+        }
     }
 
     fun setPulseSecondsForCrop(cropSlug: String, seconds: Int) {
@@ -1451,6 +1577,7 @@ class MyPlantsViewModel(
                 }
                 observeLiveDevice(joinedDeviceId)
                 startLiveSyncWatchdog(joinedDeviceId)
+                startObservingDeviceHistory(joinedDeviceId, forceRefresh = false)
                 onSuccessDismiss()
             }.onFailure { err ->
                 _uiState.update {
@@ -1566,6 +1693,7 @@ class MyPlantsViewModel(
     override fun onCleared() {
         espScanJob?.cancel()
         liveWatchdogJob?.cancel()
+        historyJob?.cancel()
         provClient.disconnectFromEspHotspot()
         super.onCleared()
     }

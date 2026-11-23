@@ -33,6 +33,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ShowChart
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -493,6 +494,13 @@ internal fun MyPlantsDashboardScreen(
                         )
                     }
                 }
+            }
+
+            // 8. 7-Day Historical Monitoring & Irrigation Records Entry Card
+            item(key = "history_records_entry") {
+                HistoryRecordsEntryCard(
+                    onClick = { onOpenSubPage(MyPlantsSubPage.HISTORY_MONITORING) }
+                )
             }
         }
     }
@@ -2146,6 +2154,95 @@ private fun WeatherRainBentoCard(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.fillMaxWidth()
+            )
+        }
+    }
+}
+
+// ─── 7. 7-Day History & Irrigation Records Entry Card ───────────────────────
+
+@Composable
+private fun HistoryRecordsEntryCard(
+    onClick: () -> Unit
+) {
+    Surface(
+        color = HomeColors.SurfaceWhite,
+        shape = RoundedCornerShape(20.dp),
+        border = BorderStroke(1.dp, HomeColors.ForestPrimary.copy(alpha = 0.22f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .clickable(onClick = onClick)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(13.dp))
+                    .background(HomeColors.SoftMint),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ShowChart,
+                    contentDescription = "7-Day History & Records",
+                    tint = HomeColors.ForestPrimary,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = "7-Day History & Records",
+                        fontFamily = HomeInterFont,
+                        fontSize = 14.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = HomeColors.TextPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Surface(
+                        color = HomeColors.SoftMint,
+                        shape = RoundedCornerShape(50)
+                    ) {
+                        Text(
+                            text = "PHT",
+                            fontFamily = HomeInterFont,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = HomeColors.ForestPrimary,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "Hourly sensor line graphs, offline gaps & daily watering logs",
+                    fontFamily = HomeInterFont,
+                    fontSize = 11.5.sp,
+                    color = HomeColors.TextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Spacer(modifier = Modifier.width(6.dp))
+
+            Icon(
+                imageVector = Icons.Filled.ChevronRight,
+                contentDescription = "Open 7-Day History",
+                tint = HomeColors.ForestPrimary,
+                modifier = Modifier.size(20.dp)
             )
         }
     }

@@ -1,6 +1,18 @@
 #include "IrrigationController.h"
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
+
+namespace {
+uint64_t currentWallClockEpochMs(uint32_t nowMs) {
+  time_t nowSec = time(nullptr);
+  if (nowSec > 1700000000L) {
+    return static_cast<uint64_t>(nowSec) * 1000ULL + (nowMs % 1000ULL);
+  }
+  return 0ULL;
+}
+}  // namespace
 
 void IrrigationController::begin(RelayController* relays,
                                  SoilMoistureManager* soil,
@@ -205,9 +217,18 @@ void IrrigationController::advanceStateMachine(uint32_t nowMs,
         break;
       }
 
-      pumpStartedAtMs_  = nowMs;
-      state_            = IrrigationState::PUMP_WATERING;
-      stateEnteredAtMs_ = nowMs;
+      pumpStartedAtMs_      = nowMs;
+      pumpStoppedAtMs_      = 0;
+      pumpStartedEpochMs_   = currentWallClockEpochMs(nowMs);
+      pumpRanThisCycle_     = true;
+      {
+        const SoilZoneStatus& startZs = soil_->zoneStatus(activeZone_);
+        pumpStartMoisturePct_ = (startZs.valid && isfinite(startZs.moisturePct))
+                                    ? startZs.moisturePct
+                                    : NAN;
+      }
+      state_                = IrrigationState::PUMP_WATERING;
+      stateEnteredAtMs_     = nowMs;
 
       if (buzzer_) {
         buzzer_->clearEventLatch(BuzzerEventId::IRRIGATION_START);
@@ -266,6 +287,18 @@ void IrrigationController::advanceStateMachine(uint32_t nowMs,
     case IrrigationState::CLOSING_VALVE: {
       // STEP 5: Valve closed -> record completion & enter soak-settle period
       soil_->recordZoneWatered(activeZone_, nowMs);
+
+      if (pumpRanThisCycle_ && activeZone_ != CropZoneId::NONE) {
+        const uint32_t stopRefMs = (pumpStoppedAtMs_ >= pumpStartedAtMs_) ? pumpStoppedAtMs_ : nowMs;
+        const uint32_t actualDurationMs = uint32_t(stopRefMs - pumpStartedAtMs_);
+        enqueueIrrigationHistory(nowMs,
+                                 activeZone_,
+                                 activeRunIsManual_,
+                                 true,
+                                 lastAbortReason_,
+                                 actualDurationMs);
+        pumpRanThisCycle_ = false;
+      }
 
       if (buzzer_) {
         buzzer_->clearEventLatch(BuzzerEventId::IRRIGATION_DONE);
@@ -472,6 +505,77 @@ bool IrrigationController::popPendingCommandReport(CommandExecutionReport& outRe
   return true;
 }
 
+bool IrrigationController::peekPendingIrrigationHistory(IrrigationHistoryRecord& outRecord) const {
+  if (irrHistoryCount_ == 0) return false;
+  outRecord = irrHistoryQueue_[irrHistoryHead_];
+  return outRecord.occupied;
+}
+
+void IrrigationController::popOldestIrrigationHistory() {
+  if (irrHistoryCount_ == 0) return;
+  irrHistoryQueue_[irrHistoryHead_].occupied = false;
+  irrHistoryHead_ = (irrHistoryHead_ + 1) % Config::IRRIGATION_HISTORY_QUEUE_CAPACITY;
+  --irrHistoryCount_;
+}
+
+void IrrigationController::clearIrrigationHistoryQueue() {
+  for (size_t i = 0; i < Config::IRRIGATION_HISTORY_QUEUE_CAPACITY; ++i) {
+    irrHistoryQueue_[i].occupied = false;
+  }
+  irrHistoryHead_  = 0;
+  irrHistoryTail_  = 0;
+  irrHistoryCount_ = 0;
+}
+
+void IrrigationController::enqueueIrrigationHistory(uint32_t nowMs,
+                                                    CropZoneId zone,
+                                                    bool isManual,
+                                                    bool completed,
+                                                    const char* reason,
+                                                    uint32_t durationMs) {
+  if (zone == CropZoneId::NONE) return;
+  if (irrHistoryCount_ >= Config::IRRIGATION_HISTORY_QUEUE_CAPACITY) {
+    popOldestIrrigationHistory();
+  }
+
+  ++irrHistorySeq_;
+  IrrigationHistoryRecord& rec = irrHistoryQueue_[irrHistoryTail_];
+  rec.occupied          = true;
+  rec.isManual          = isManual;
+  rec.completed         = completed;
+  rec.startedAtUptimeMs = pumpStartedAtMs_;
+  rec.endedAtUptimeMs   = nowMs;
+  rec.durationMs        = durationMs;
+  rec.endedAtEpochMs    = currentWallClockEpochMs(nowMs);
+  if (pumpStartedEpochMs_ > 1700000000000ULL) {
+    rec.startedAtEpochMs = pumpStartedEpochMs_;
+  } else if (rec.endedAtEpochMs > 1700000000000ULL && rec.endedAtEpochMs >= durationMs) {
+    rec.startedAtEpochMs = rec.endedAtEpochMs - durationMs;
+  } else {
+    rec.startedAtEpochMs = 0ULL;
+  }
+  rec.startMoisturePct = pumpStartMoisturePct_;
+  if (soil_) {
+    const SoilZoneStatus& endZs = soil_->zoneStatus(zone);
+    rec.endMoisturePct = (endZs.valid && isfinite(endZs.moisturePct)) ? endZs.moisturePct : NAN;
+  } else {
+    rec.endMoisturePct = NAN;
+  }
+  rec.recordedOffline = !networkOnline_;
+  rec.ownershipEpoch  = ownershipEpoch_;
+
+  snprintf(rec.crop, sizeof(rec.crop), "%s", cropZoneSlug(zone));
+  snprintf(rec.reason, sizeof(rec.reason), "%s",
+           (reason && reason[0] != '\0') ? reason : (completed ? "Completed" : "Aborted"));
+  snprintf(rec.irrigationId, sizeof(rec.irrigationId), "irr_%lu_%s_%lu",
+           static_cast<unsigned long>(nowMs),
+           rec.crop,
+           static_cast<unsigned long>(irrHistorySeq_));
+
+  irrHistoryTail_ = (irrHistoryTail_ + 1) % Config::IRRIGATION_HISTORY_QUEUE_CAPACITY;
+  ++irrHistoryCount_;
+}
+
 void IrrigationController::abortActiveCycle(uint32_t nowMs,
                                             const char* eventType,
                                             const char* reason) {
@@ -482,6 +586,17 @@ void IrrigationController::abortActiveCycle(uint32_t nowMs,
 
   snprintf(lastAbortReason_, sizeof(lastAbortReason_), "%s",
            reason ? reason : "Safety abort");
+
+  if (pumpRanThisCycle_ && activeZone_ != CropZoneId::NONE) {
+    const uint32_t actualDurationMs = uint32_t(nowMs - pumpStartedAtMs_);
+    enqueueIrrigationHistory(nowMs,
+                             activeZone_,
+                             activeRunIsManual_,
+                             false,
+                             lastAbortReason_,
+                             actualDurationMs);
+    pumpRanThisCycle_ = false;
+  }
 
   if (activeRunIsManual_ && activeCommandId_[0] != '\0') {
     queueCommandReport(activeCommandId_, "ABORTED", lastAbortReason_);
@@ -513,6 +628,7 @@ void IrrigationController::beginNormalStopSequence(uint32_t nowMs,
   if (relays_) {
     relays_->setPump(false);
   }
+  pumpStoppedAtMs_ = nowMs;
   snprintf(lastAbortReason_, sizeof(lastAbortReason_), "%s",
            completionReason ? completionReason : "Completed");
   state_            = IrrigationState::PUMP_STOPPING;

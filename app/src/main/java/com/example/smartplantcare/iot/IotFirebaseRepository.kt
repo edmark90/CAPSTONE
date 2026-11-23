@@ -659,6 +659,297 @@ class IotFirebaseRepository {
             runCatching { devRef.child("acl").child("members").child(uid).removeValue().await() }
         }
         runCatching { devRef.child("acl").child("ownerUid").removeValue().await() }
+
+        // 4. Wipe 7-day historical monitoring records on device reset
+        runCatching { rootRef.child("deviceHistory").child(deviceId).removeValue().await() }
+    }
+
+    // ─── 7-Day Historical Monitoring & Irrigation Records RTDB Operations ─────
+
+    fun observeDeviceHistory(deviceId: String): Flow<Map<String, DailyHistorySnapshot>> = callbackFlow {
+        val ref = rootRef.child("deviceHistory").child(deviceId).child("days")
+        val listener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val cutoff = IotDomainLogic.sevenDayCutoffDateKeyPht()
+                val parsed = buildMap {
+                    for (dayChild in snapshot.children) {
+                        val dateKey = dayChild.key ?: continue
+                        if (dateKey.length != 10 || dateKey < cutoff) continue
+                        put(dateKey, parseDailyHistorySnapshot(deviceId, dateKey, dayChild))
+                    }
+                }
+                trySend(parsed)
+            }
+
+            override fun onCancelled(error: DatabaseError) {
+                trySend(emptyMap())
+            }
+        }
+        ref.addValueEventListener(listener)
+        awaitClose { ref.removeEventListener(listener) }
+    }
+
+    suspend fun fetchDeviceHistoryViaRest(deviceId: String): Result<Map<String, DailyHistorySnapshot>> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val idToken = runCatching {
+                    FirebaseAuth.getInstance().currentUser?.getIdToken(false)?.await()?.token
+                }.getOrNull()
+
+                val baseUrl = "$RTDB_URL/deviceHistory/$deviceId/days.json"
+                val url = if (!idToken.isNullOrBlank()) "$baseUrl?auth=$idToken" else baseUrl
+
+                fun executeFetch(targetUrl: String): Pair<Int, String> {
+                    val req = Request.Builder()
+                        .url(targetUrl)
+                        .cacheControl(CacheControl.FORCE_NETWORK)
+                        .header("Cache-Control", "no-cache, no-store, must-revalidate")
+                        .header("Pragma", "no-cache")
+                        .get()
+                        .build()
+                    restClient.newCall(req).execute().use { resp ->
+                        return resp.code to (resp.body?.string().orEmpty())
+                    }
+                }
+
+                var (code, body) = executeFetch(url)
+                if (code == 401 && url != baseUrl) {
+                    val retry = executeFetch(baseUrl)
+                    code = retry.first
+                    body = retry.second
+                }
+                if (code !in 200..299) {
+                    throw IllegalStateException("Firebase History REST returned HTTP $code")
+                }
+                val trimmed = body.trim()
+                if (trimmed.isEmpty() || trimmed == "null") {
+                    emptyMap()
+                } else {
+                    val rootJson = JSONObject(trimmed)
+                    val cutoff = IotDomainLogic.sevenDayCutoffDateKeyPht()
+                    buildMap {
+                        val keys = rootJson.keys()
+                        while (keys.hasNext()) {
+                            val dateKey = keys.next()
+                            if (dateKey.length != 10 || dateKey < cutoff) continue
+                            val dayObj = rootJson.optJSONObject(dateKey) ?: continue
+                            put(dateKey, parseDailyHistoryFromJson(deviceId, dateKey, dayObj))
+                        }
+                    }
+                }
+            }
+        }
+
+    /**
+     * Automatically removes any historical days older than the 7-day Philippine local time window.
+     */
+    suspend fun pruneExpiredHistoryDays(deviceId: String, cutoffDateKey: String): Result<Int> =
+        runCatching {
+            val daysRef = rootRef.child("deviceHistory").child(deviceId).child("days")
+            val snap = daysRef.get().await()
+            var removed = 0
+            for (dayChild in snap.children) {
+                val dateKey = dayChild.key ?: continue
+                if (dateKey.length == 10 && dateKey < cutoffDateKey) {
+                    daysRef.child(dateKey).removeValue().await()
+                    removed++
+                }
+            }
+            removed
+        }
+
+    private fun parseDailyHistorySnapshot(
+        deviceId: String,
+        dateKey: String,
+        node: DataSnapshot
+    ): DailyHistorySnapshot {
+        val hours = buildMap {
+            for (hChild in node.child("hours").children) {
+                val hourNum = hChild.key?.toIntOrNull() ?: hChild.child("hour").asInt(-1)
+                if (hourNum !in 0..23) continue
+                val segs = hChild.child("segments").children.mapNotNull { sChild ->
+                    val segId = sChild.key ?: return@mapNotNull null
+                    HistoricalHourSegment(
+                        segmentId = segId,
+                        startAt = sChild.child("startAt").asLong(0L),
+                        endAt = sChild.child("endAt").asLong(0L),
+                        sampleCount = sChild.child("samples").asInt(0),
+                        tomatoPct = sChild.child("tomatoPct").asFloatOrNull(),
+                        chiliPct = sChild.child("chiliPct").asFloatOrNull(),
+                        eggplantPct = sChild.child("eggplantPct").asFloatOrNull(),
+                        temperatureC = sChild.child("temperatureC").asFloatOrNull(),
+                        humidityPct = sChild.child("humidityPct").asFloatOrNull(),
+                        lightPct = sChild.child("lightPct").asFloatOrNull(),
+                        reservoirPct = sChild.child("reservoirPct").asFloatOrNull(),
+                        reservoirGapIn = sChild.child("reservoirGapIn").asFloatOrNull(),
+                        rainProbPct = sChild.child("rainProbPct").asIntOrNull()
+                    )
+                }.sortedBy { it.startAt }
+
+                put(
+                    hourNum,
+                    HistoricalHourRecord(
+                        hour = hourNum,
+                        firstSeenAt = hChild.child("firstSeenAt").asLong(0L),
+                        lastSeenAt = hChild.child("lastSeenAt").asLong(0L),
+                        sampleCount = hChild.child("sampleCount").asInt(0),
+                        gapCount = hChild.child("gapCount").asInt(0),
+                        tomatoPct = hChild.child("tomatoPct").asFloatOrNull(),
+                        chiliPct = hChild.child("chiliPct").asFloatOrNull(),
+                        eggplantPct = hChild.child("eggplantPct").asFloatOrNull(),
+                        temperatureC = hChild.child("temperatureC").asFloatOrNull(),
+                        humidityPct = hChild.child("humidityPct").asFloatOrNull(),
+                        lightPct = hChild.child("lightPct").asFloatOrNull(),
+                        reservoirPct = hChild.child("reservoirPct").asFloatOrNull(),
+                        reservoirGapIn = hChild.child("reservoirGapIn").asFloatOrNull(),
+                        rainProbPct = hChild.child("rainProbPct").asIntOrNull(),
+                        rainWetSamples = hChild.child("rainWetSamples").asInt(0),
+                        segments = segs
+                    )
+                )
+            }
+        }
+
+        val irrigations = node.child("irrigations").children.mapNotNull { iChild ->
+            val id = iChild.key ?: return@mapNotNull null
+            val startedAt = iChild.child("startedAt").asLong(0L)
+            val endedAt = iChild.child("endedAt").asLong(startedAt)
+            val hour = iChild.child("hour").asInt(
+                if (startedAt >= 1_700_000_000_000L) IotDomainLogic.phHourOfDay(startedAt) else 0
+            )
+            IrrigationHistoryItem(
+                irrigationId = iChild.child("irrigationId").asStr(id),
+                crop = iChild.child("crop").asStr("tomato"),
+                trigger = iChild.child("trigger").asStr("AUTO"),
+                status = iChild.child("status").asStr("COMPLETED"),
+                reason = iChild.child("reason").asStr(""),
+                startedAt = startedAt,
+                endedAt = endedAt,
+                hour = hour.coerceIn(0, 23),
+                durationMs = iChild.child("durationMs").asLong(4000L),
+                startMoisturePct = iChild.child("startMoisturePct").asFloatOrNull(),
+                endMoisturePct = iChild.child("endMoisturePct").asFloatOrNull(),
+                recordedOffline = iChild.child("recordedOffline").asBool(false)
+            )
+        }.sortedByDescending { it.startedAt }
+
+        return DailyHistorySnapshot(
+            deviceId = deviceId,
+            dateKey = dateKey,
+            updatedAt = node.child("updatedAt").asLong(0L),
+            hours = hours,
+            irrigations = irrigations
+        )
+    }
+
+    private fun parseDailyHistoryFromJson(
+        deviceId: String,
+        dateKey: String,
+        node: JSONObject
+    ): DailyHistorySnapshot {
+        val hoursObj = node.optJSONObject("hours")
+        val hours = buildMap {
+            if (hoursObj != null) {
+                val keys = hoursObj.keys()
+                while (keys.hasNext()) {
+                    val hKey = keys.next()
+                    val hObj = hoursObj.optJSONObject(hKey) ?: continue
+                    val hourNum = hKey.toIntOrNull() ?: hObj.intVal("hour", -1)
+                    if (hourNum !in 0..23) continue
+
+                    val segsObj = hObj.optJSONObject("segments")
+                    val segs = buildList {
+                        if (segsObj != null) {
+                            val sKeys = segsObj.keys()
+                            while (sKeys.hasNext()) {
+                                val sId = sKeys.next()
+                                val sObj = segsObj.optJSONObject(sId) ?: continue
+                                add(
+                                    HistoricalHourSegment(
+                                        segmentId = sId,
+                                        startAt = sObj.lng("startAt", 0L),
+                                        endAt = sObj.lng("endAt", 0L),
+                                        sampleCount = sObj.intVal("samples", 0),
+                                        tomatoPct = sObj.fltOrNull("tomatoPct"),
+                                        chiliPct = sObj.fltOrNull("chiliPct"),
+                                        eggplantPct = sObj.fltOrNull("eggplantPct"),
+                                        temperatureC = sObj.fltOrNull("temperatureC"),
+                                        humidityPct = sObj.fltOrNull("humidityPct"),
+                                        lightPct = sObj.fltOrNull("lightPct"),
+                                        reservoirPct = sObj.fltOrNull("reservoirPct"),
+                                        reservoirGapIn = sObj.fltOrNull("reservoirGapIn"),
+                                        rainProbPct = sObj.intOrNull("rainProbPct")
+                                    )
+                                )
+                            }
+                        }
+                    }.sortedBy { it.startAt }
+
+                    put(
+                        hourNum,
+                        HistoricalHourRecord(
+                            hour = hourNum,
+                            firstSeenAt = hObj.lng("firstSeenAt", 0L),
+                            lastSeenAt = hObj.lng("lastSeenAt", 0L),
+                            sampleCount = hObj.intVal("sampleCount", 0),
+                            gapCount = hObj.intVal("gapCount", 0),
+                            tomatoPct = hObj.fltOrNull("tomatoPct"),
+                            chiliPct = hObj.fltOrNull("chiliPct"),
+                            eggplantPct = hObj.fltOrNull("eggplantPct"),
+                            temperatureC = hObj.fltOrNull("temperatureC"),
+                            humidityPct = hObj.fltOrNull("humidityPct"),
+                            lightPct = hObj.fltOrNull("lightPct"),
+                            reservoirPct = hObj.fltOrNull("reservoirPct"),
+                            reservoirGapIn = hObj.fltOrNull("reservoirGapIn"),
+                            rainProbPct = hObj.intOrNull("rainProbPct"),
+                            rainWetSamples = hObj.intVal("rainWetSamples", 0),
+                            segments = segs
+                        )
+                    )
+                }
+            }
+        }
+
+        val irrObj = node.optJSONObject("irrigations")
+        val irrigations = buildList {
+            if (irrObj != null) {
+                val keys = irrObj.keys()
+                while (keys.hasNext()) {
+                    val id = keys.next()
+                    val iObj = irrObj.optJSONObject(id) ?: continue
+                    val startedAt = iObj.lng("startedAt", 0L)
+                    val endedAt = iObj.lng("endedAt", startedAt)
+                    val hour = iObj.intVal(
+                        "hour",
+                        if (startedAt >= 1_700_000_000_000L) IotDomainLogic.phHourOfDay(startedAt) else 0
+                    )
+                    add(
+                        IrrigationHistoryItem(
+                            irrigationId = iObj.str("irrigationId", id),
+                            crop = iObj.str("crop", "tomato"),
+                            trigger = iObj.str("trigger", "AUTO"),
+                            status = iObj.str("status", "COMPLETED"),
+                            reason = iObj.str("reason", ""),
+                            startedAt = startedAt,
+                            endedAt = endedAt,
+                            hour = hour.coerceIn(0, 23),
+                            durationMs = iObj.lng("durationMs", 4000L),
+                            startMoisturePct = iObj.fltOrNull("startMoisturePct"),
+                            endMoisturePct = iObj.fltOrNull("endMoisturePct"),
+                            recordedOffline = iObj.bool("recordedOffline", false)
+                        )
+                    )
+                }
+            }
+        }.sortedByDescending { it.startedAt }
+
+        return DailyHistorySnapshot(
+            deviceId = deviceId,
+            dateKey = dateKey,
+            updatedAt = node.lng("updatedAt", 0L),
+            hours = hours,
+            irrigations = irrigations
+        )
     }
 
     private fun cropConfigToMap(c: CropZoneConfig): Map<String, Any> = mapOf(
@@ -925,6 +1216,13 @@ class IotFirebaseRepository {
             is Number -> v.toInt()
             is String -> v.toIntOrNull() ?: default
             else -> default
+        }
+
+    private fun DataSnapshot.asIntOrNull(): Int? =
+        when (val v = value) {
+            is Number -> v.toInt()
+            is String -> v.toIntOrNull()
+            else -> null
         }
 
     private fun DataSnapshot.asLong(default: Long): Long =
@@ -1220,6 +1518,15 @@ class IotFirebaseRepository {
             is Number -> v.toInt()
             is String -> v.toIntOrNull() ?: default
             else -> default
+        }
+    }
+
+    private fun JSONObject?.intOrNull(key: String): Int? {
+        if (this == null || !has(key) || isNull(key)) return null
+        return when (val v = opt(key)) {
+            is Number -> v.toInt()
+            is String -> v.toIntOrNull()
+            else -> null
         }
     }
 

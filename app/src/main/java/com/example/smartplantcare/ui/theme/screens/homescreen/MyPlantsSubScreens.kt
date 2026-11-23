@@ -28,6 +28,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ShowChart
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.ContentCopy
@@ -409,7 +410,8 @@ private fun RoleChoiceCard(
 @Composable
 internal fun MyPlantsEventLogScreen(
     snapshot: LiveDeviceSnapshot,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onOpenHistory: () -> Unit = {}
 ) {
     var filter by remember { mutableStateOf("ALL") }
     val filtered = remember(snapshot.events, filter) {
@@ -435,6 +437,55 @@ internal fun MyPlantsEventLogScreen(
             subtitle = "${snapshot.meta.displayName} • ${snapshot.events.size} events",
             onBack = onBack
         )
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Surface(
+            color = HomeColors.SoftMint,
+            shape = RoundedCornerShape(14.dp),
+            border = BorderStroke(1.dp, HomeColors.ForestPrimary.copy(alpha = 0.25f)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .clickable(onClick = onOpenHistory)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ShowChart,
+                        contentDescription = null,
+                        tint = HomeColors.ForestPrimary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Text(
+                        text = "View 7-Day Hourly Graphs & Irrigation Records",
+                        fontFamily = HomeInterFont,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = HomeColors.ForestPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Text(
+                    text = "Open →",
+                    fontFamily = HomeInterFont,
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = HomeColors.ForestPrimary
+                )
+            }
+        }
 
         Spacer(modifier = Modifier.height(12.dp))
 

@@ -146,9 +146,18 @@ constexpr uint16_t BEEP_BOOT_ON_MS                   = 150;
 
 // ─── Bounded Queues & Network Backoff ────────────────────────────────────────
 constexpr size_t   EVENT_QUEUE_CAPACITY              = 16;
+constexpr size_t   IRRIGATION_HISTORY_QUEUE_CAPACITY = 16;
 constexpr size_t   PROCESSED_CMD_RING_SIZE           = 12;
 constexpr uint32_t WIFI_RECONNECT_MIN_MS             = 5000;
 constexpr uint32_t WIFI_RECONNECT_MAX_MS             = 60000;
 constexpr uint32_t HTTP_TIMEOUT_MS                   = 4500;   // Fast 4.5s bound (Keep-Alive avoids 2s TLS handshakes)
+
+// ─── 7-Day Hourly Historical Monitoring & Retention (Asia/Manila PHT, UTC+8) ─
+constexpr uint8_t  HISTORY_RETENTION_DAYS            = 7;
+constexpr uint8_t  HISTORY_MAX_SEGMENTS_PER_HOUR     = 4;
+constexpr uint32_t INTERVAL_HISTORY_SERVICE_MS       = 5000;   // Staggered 5s check for irrigation/history flush
+constexpr uint32_t INTERVAL_HISTORY_FLUSH_MS         = 300000; // 5-minute running hourly checkpoint
+constexpr uint32_t HISTORY_INTRA_HOUR_GAP_MS         = 300000; // >=5 min disconnect starts new graph segment
+constexpr int32_t  PHILIPPINES_UTC_OFFSET_SEC        = 8 * 3600;
 
 }  // namespace Config

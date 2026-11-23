@@ -233,4 +233,160 @@ class IotDomainLogicTest {
             )
         )
     }
+
+    @Test
+    fun generateSevenDayWindowPht_returnsExactlySevenDaysEndingTodayInPhilippineTime() {
+        // 2026-11-22T22:15:00+08:00 (2026-11-22T14:15:00Z) -> epoch ms = 1795356900000L
+        val nowMs = 1_795_356_900_000L
+        val window = IotDomainLogic.generateSevenDayWindowPht(nowMs = nowMs)
+
+        assertEquals(7, window.size)
+        assertEquals("2026-11-16", window.first().dateKey)
+        assertEquals("2026-11-22", window.last().dateKey)
+        assertEquals(true, window.last().isToday)
+        assertEquals(false, window.first().isToday)
+        assertEquals("2026-11-16", IotDomainLogic.sevenDayCutoffDateKeyPht(nowMs))
+    }
+
+    @Test
+    fun buildSegmentedHourlySeries_breaksLineOnOfflineHoursBoundaryOutagesAndNullSensors_whilePreservingZero() {
+        // Base hour 08:00 PHT on 2026-11-22 -> 2026-11-22T00:00:00Z = 1795305600000L
+        val h08Start = 1_795_305_600_000L
+        val h09Start = h08Start + 3_600_000L
+        val h10Start = h08Start + 2 * 3_600_000L
+        val h13Start = h08Start + 5 * 3_600_000L
+        val h14Start = h08Start + 6 * 3_600_000L
+
+        val day = DailyHistorySnapshot(
+            deviceId = "spc-unit-0001",
+            dateKey = "2026-11-22",
+            hours = mapOf(
+                // Hours 8 & 9 continuous online (including legitimate 0.0% light value at hour 8!)
+                8 to HistoricalHourRecord(
+                    hour = 8,
+                    firstSeenAt = h08Start + 5_000L,
+                    lastSeenAt = h08Start + 3_590_000L,
+                    sampleCount = 500,
+                    lightPct = 0.0f
+                ),
+                9 to HistoricalHourRecord(
+                    hour = 9,
+                    firstSeenAt = h09Start + 5_000L,
+                    lastSeenAt = h09Start + 300_000L, // went offline at 9:05 AM!
+                    sampleCount = 40,
+                    lightPct = 42.5f
+                ),
+                // Hour 10 reconnected at 10:50 AM (> 15 min boundary gap after 9:05 AM!)
+                10 to HistoricalHourRecord(
+                    hour = 10,
+                    firstSeenAt = h10Start + 3_000_000L,
+                    lastSeenAt = h10Start + 3_590_000L,
+                    sampleCount = 60,
+                    lightPct = 70.0f
+                ),
+                // Hours 11 & 12 completely offline (missing)
+                // Hour 13 has two segments separated by 25-min intra-hour outage
+                13 to HistoricalHourRecord(
+                    hour = 13,
+                    firstSeenAt = h13Start + 60_000L,
+                    lastSeenAt = h13Start + 3_300_000L,
+                    sampleCount = 120,
+                    gapCount = 1,
+                    lightPct = 80.0f,
+                    segments = listOf(
+                        HistoricalHourSegment("s0", h13Start + 60_000L, h13Start + 600_000L, 40, lightPct = 78.0f),
+                        HistoricalHourSegment("s1", h13Start + 2_100_000L, h13Start + 3_300_000L, 80, lightPct = 82.0f)
+                    )
+                ),
+                // Hour 14 sensor fault (lightPct = null) must break and NOT plot 0
+                14 to HistoricalHourRecord(
+                    hour = 14,
+                    firstSeenAt = h14Start + 10_000L,
+                    lastSeenAt = h14Start + 3_590_000L,
+                    sampleCount = 500,
+                    lightPct = null
+                )
+            )
+        )
+
+        val result = IotDomainLogic.buildSegmentedHourlySeries(day = day, isToday = false) { rec, seg ->
+            seg?.lightPct ?: rec.lightPct
+        }
+
+        // Expect 4 disconnected segments:
+        // [0]: hours 8 (0.0f) & 9 (42.5f)
+        // [1]: hour 10 (70.0f) — broken from hour 9 due to 1h45m boundary outage
+        // [2]: hour 13 s0 (78.0f) — broken from hour 10 due to missing hours 11-12
+        // [3]: hour 13 s1 (82.0f) — broken from hour 13 s0 due to 25m intra-hour outage
+        // Hour 14 (null) is omitted completely!
+        assertEquals(4, result.segments.size)
+        assertEquals(2, result.segments[0].size)
+        assertEquals(0.0f, result.segments[0][0].value)
+        assertEquals(42.5f, result.segments[0][1].value)
+        assertEquals(1, result.segments[1].size)
+        assertEquals(70.0f, result.segments[1][0].value)
+        assertEquals(1, result.segments[2].size)
+        assertEquals(78.0f, result.segments[2][0].value)
+        assertEquals(1, result.segments[3].size)
+        assertEquals(82.0f, result.segments[3][0].value)
+        assertEquals(3, result.gaps.size)
+    }
+
+    @Test
+    fun averageValidSoilMoisture_ignoresNullsAndReturnsNullWhenAllInvalid() {
+        assertEquals(30.0f, IotDomainLogic.averageValidSoilMoisture(28f, 30f, 32f)!!, 0.01f)
+        assertEquals(30.0f, IotDomainLogic.averageValidSoilMoisture(28f, null, 32f)!!, 0.01f)
+        assertEquals(0.0f, IotDomainLogic.averageValidSoilMoisture(0f, null, null)!!, 0.01f)
+        assertNull(IotDomainLogic.averageValidSoilMoisture(null, null, null))
+    }
+
+    @Test
+    fun appendLivePointIfFresh_neverBridgesAcrossOfflineOutageAndIgnoresOffline() {
+        // 08:00 PHT on 2026-11-22 -> 1795305600000L
+        val h08Start = 1_795_305_600_000L
+        val base = SegmentedChartSeries(
+            segments = listOf(
+                listOf(
+                    ChartDataPoint(xHour = 8.0f, value = 30.0f, epochMs = h08Start + 60_000L, hour = 8)
+                )
+            ),
+            gaps = emptyList()
+        )
+
+        // When device is offline, series must stay unchanged
+        val offlineRes = IotDomainLogic.appendLivePointIfFresh(
+            base = base,
+            liveValue = 31.2f,
+            liveEpochMs = h08Start + 300_000L,
+            isToday = true,
+            isDeviceOnline = false
+        )
+        assertEquals(1, offlineRes.segments.size)
+        assertEquals(1, offlineRes.segments[0].size)
+
+        // When online within continuity window (5 min later), appends smoothly to same segment
+        val continuousRes = IotDomainLogic.appendLivePointIfFresh(
+            base = base,
+            liveValue = 31.2f,
+            liveEpochMs = h08Start + 360_000L, // 8:06 AM
+            isToday = true,
+            isDeviceOnline = true
+        )
+        assertEquals(1, continuousRes.segments.size)
+        assertEquals(2, continuousRes.segments[0].size)
+        assertEquals(31.2f, continuousRes.segments[0].last().value, 0.01f)
+
+        // When online AFTER a 2-hour outage (10:15 AM), starts a NEW disconnected segment + adds gap
+        val reconnectedRes = IotDomainLogic.appendLivePointIfFresh(
+            base = base,
+            liveValue = 32.5f,
+            liveEpochMs = h08Start + 2 * 3_600_000L + 900_000L,
+            isToday = true,
+            isDeviceOnline = true
+        )
+        assertEquals(2, reconnectedRes.segments.size)
+        assertEquals(1, reconnectedRes.segments[1].size)
+        assertEquals(32.5f, reconnectedRes.segments[1][0].value, 0.01f)
+        assertEquals(1, reconnectedRes.gaps.size)
+    }
 }

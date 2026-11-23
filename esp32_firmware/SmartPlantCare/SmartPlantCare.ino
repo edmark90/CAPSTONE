@@ -74,6 +74,7 @@ uint32_t gLastCommandPollMs = 0;
 uint32_t gLastConfigPollMs  = 0;
 uint32_t gLastMetaPollMs    = 0;
 uint32_t gLastWeatherPollMs = 0;
+uint32_t gLastHistoryMs     = 0;
 uint32_t gLastDiagnosticsMs = 0;
 
 IrrigationState gPrevPublishedIrrState      = IrrigationState::BOOT_SAFE;
@@ -158,6 +159,8 @@ void loop() {
                              gEvents,
                              gLcd);
   gFirebase.serviceNetworkAndTime(nowMs, gDiagnostics.metrics(), gBuzzer);
+  gIrrigation.setNetworkOnline(gFirebase.isWifiConnected());
+  gIrrigation.setOwnershipEpoch(gProvisioning.ownershipEpoch());
 
   // ─── 2. Nonblocking Buzzer Scheduler (15 ms) ───────────────────────────────
   if (nowMs - gLastBuzzerMs >= Config::INTERVAL_BUZZER_MS) {
@@ -280,7 +283,7 @@ void loop() {
     gPrevPublishedRainSuspended = curRain.rainSuspensionLatched;
 
     gDiagnostics.updatePeriodicMetrics(nowMs, gEvents);
-    gFirebase.publishStatusAndTelemetry(nowMs,
+    const bool publishedOk = gFirebase.publishStatusAndTelemetry(nowMs,
                                         gRuntimeConfig,
                                         gEnvSensors.reading(),
                                         gSoil.allStatuses(),
@@ -290,8 +293,24 @@ void loop() {
                                         gIrrigation,
                                         gLcd.detectedAddress(),
                                         gDiagnostics.metrics());
+    if (publishedOk) {
+      gFirebase.recordLiveSampleForHistory(nowMs,
+                                           gEnvSensors.reading(),
+                                           gSoil.allStatuses(),
+                                           gReservoir.reading(),
+                                           gRainWeather.rainStatus(),
+                                           gRainWeather.weather());
+    }
     gFirebase.flushPendingEventsAndReports(
         nowMs, gEvents, gIrrigation, gDiagnostics.metrics());
+  }
+
+  // ─── 11B. Staggered 7-Day Hourly History, Irrigation Records & Retention ───
+  if (initialBootSyncDone &&
+      (nowMs - gLastHistoryMs >= Config::INTERVAL_HISTORY_SERVICE_MS) &&
+      (nowMs - gLastTelemetryMs >= 1800UL)) {
+    gLastHistoryMs = nowMs;
+    gFirebase.serviceHistorySyncAndRetention(nowMs, gIrrigation, gDiagnostics.metrics());
   }
 
   // ─── 12A. Staggered Firebase /config Poll (6 s, always >= 2 s after telemetry) ─

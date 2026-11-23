@@ -293,3 +293,73 @@ struct DiagnosticsMetrics {
   uint32_t droppedEventCount      = 0;
   int8_t   wifiRssiDbm            = 0;
 };
+
+struct IrrigationHistoryRecord {
+  bool     occupied          = false;
+  char     irrigationId[48]  = {0};
+  char     crop[12]          = {0};
+  bool     isManual          = false;
+  bool     completed         = true;
+  char     reason[64]        = {0};
+  uint32_t startedAtUptimeMs = 0;
+  uint32_t endedAtUptimeMs   = 0;
+  uint64_t startedAtEpochMs  = 0;
+  uint64_t endedAtEpochMs    = 0;
+  uint32_t durationMs        = 0;
+  float    startMoisturePct  = NAN;
+  float    endMoisturePct    = NAN;
+  bool     recordedOffline   = false;
+  uint32_t ownershipEpoch    = 0;
+};
+
+struct HourlySensorAccumulator {
+  uint64_t firstSeenAtEpochMs = 0;
+  uint64_t lastSeenAtEpochMs  = 0;
+  uint16_t sampleCount        = 0;
+  uint16_t rainWetSamples     = 0;
+
+  double   tomatoSum          = 0.0;
+  uint16_t tomatoCnt          = 0;
+  double   chiliSum           = 0.0;
+  uint16_t chiliCnt           = 0;
+  double   eggplantSum        = 0.0;
+  uint16_t eggplantCnt        = 0;
+
+  double   tempSum            = 0.0;
+  uint16_t tempCnt            = 0;
+  double   humSum             = 0.0;
+  uint16_t humCnt             = 0;
+  double   lightSum           = 0.0;
+  uint16_t lightCnt           = 0;
+
+  double   reservoirPctSum    = 0.0;
+  double   reservoirGapSum    = 0.0;
+  uint16_t reservoirCnt       = 0;
+
+  double   rainProbSum        = 0.0;
+  uint16_t rainProbCnt        = 0;
+
+  void reset() {
+    firstSeenAtEpochMs = 0;
+    lastSeenAtEpochMs  = 0;
+    sampleCount        = 0;
+    rainWetSamples     = 0;
+    tomatoSum          = 0.0;
+    tomatoCnt          = 0;
+    chiliSum           = 0.0;
+    chiliCnt           = 0;
+    eggplantSum        = 0.0;
+    eggplantCnt        = 0;
+    tempSum            = 0.0;
+    tempCnt            = 0;
+    humSum             = 0.0;
+    humCnt             = 0;
+    lightSum           = 0.0;
+    lightCnt           = 0;
+    reservoirPctSum    = 0.0;
+    reservoirGapSum    = 0.0;
+    reservoirCnt       = 0;
+    rainProbSum        = 0.0;
+    rainProbCnt        = 0;
+  }
+};

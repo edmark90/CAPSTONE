@@ -53,6 +53,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.example.smartplantcare.R
 import com.example.smartplantcare.auth.AuthViewModel
+import com.example.smartplantcare.iot.MyPlantsSubPage
 import com.example.smartplantcare.iot.MyPlantsViewModel
 import com.google.firebase.auth.FirebaseAuth
 import com.example.smartplantcare.data.ClassificationResult
@@ -288,7 +289,15 @@ fun MainScreen(
                             plans = plans,
                             myPlantsUiState = myPlantsUiState,
                             onOpenMyPlants = {
+                                myPlantsViewModel.closeSubPage()
                                 goToTab(tabNavController, BottomTab.MyPlants.route)
+                            },
+                            onOpenHistory = {
+                                myPlantsViewModel.openSubPage(MyPlantsSubPage.HISTORY_MONITORING)
+                                goToTab(tabNavController, BottomTab.MyPlants.route)
+                            },
+                            onSelectHistoryDate = { dateKey ->
+                                myPlantsViewModel.selectHistoryDate(dateKey)
                             },
                             onNotificationClick = {
                                 tabNavController.navigate(ROUTE_NOTIFICATION_HISTORY)

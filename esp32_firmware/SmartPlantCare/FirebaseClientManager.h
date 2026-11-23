@@ -55,6 +55,19 @@ class FirebaseClientManager {
                                     IrrigationController& irrigation,
                                     DiagnosticsMetrics& ioDiag);
 
+  // Accumulate transmitted live telemetry into current Philippine-time hourly bucket
+  void recordLiveSampleForHistory(uint32_t nowMs,
+                                  const EnvironmentReading& env,
+                                  const SoilZoneStatus soil[3],
+                                  const ReservoirReading& reservoir,
+                                  const RainGateStatus& rain,
+                                  const WeatherSnapshot& weather);
+
+  // Staggered history flush, irrigation record upload, and automatic 7-day retention pruning
+  void serviceHistorySyncAndRetention(uint32_t nowMs,
+                                      IrrigationController& irrigation,
+                                      DiagnosticsMetrics& ioDiag);
+
   // Fast 1.5s poll for manual watering & emergency stop commands only
   void pollPendingCommandsOnly(uint32_t nowMs,
                                const RuntimeConfig& cfg,
@@ -128,6 +141,36 @@ class FirebaseClientManager {
                        const String& payload,
                        String& outResponse);
 
+  void syncClockFromServerTimestamp(uint64_t serverEpochMs);
+  bool formatPhDateAndHour(uint64_t epochMs,
+                           char* outDateKey,
+                           size_t dateLen,
+                           uint8_t& outHour) const;
+  bool formatPhCutoffDate(uint64_t epochMs,
+                          uint8_t keepDays,
+                          char* outCutoffKey,
+                          size_t cutoffLen) const;
+  void addSampleToAccumulator(HourlySensorAccumulator& acc,
+                              uint64_t nowEpochMs,
+                              const EnvironmentReading& env,
+                              const SoilZoneStatus soil[3],
+                              const ReservoirReading& reservoir,
+                              const RainGateStatus& rain,
+                              const WeatherSnapshot& weather);
+  void inspectExistingCloudHourOnReconnect(const char* dateKey,
+                                           uint8_t hour,
+                                           uint64_t nowEpochMs);
+  bool flushHourlyAccumulatorToRtdb(const char* dateKey,
+                                    uint8_t hour,
+                                    uint8_t segIdx,
+                                    uint8_t gapCount,
+                                    const HourlySensorAccumulator& segAcc,
+                                    const HourlySensorAccumulator& hourAcc);
+  void flushPendingIrrigationHistory(uint32_t nowMs,
+                                     IrrigationController& irrigation,
+                                     DiagnosticsMetrics& ioDiag);
+  void pruneExpiredHistoryDaysIfDue(uint32_t nowMs, uint64_t nowEpochMs);
+
   ProvisioningPairingManager* provisioning_             = nullptr;
   bool                        wifiAttemptActive_        = false;
   uint8_t                     wifiConnectAttemptNum_    = 0;
@@ -152,6 +195,21 @@ class FirebaseClientManager {
   float                       deviceLat_                = Secrets::DEFAULT_WEATHER_LATITUDE;
   float                       deviceLon_                = Secrets::DEFAULT_WEATHER_LONGITUDE;
   char                        deviceLocationName_[48]   = "";
+
+  // 7-Day Hourly History & Retention State (in RAM, ~250 bytes)
+  HourlySensorAccumulator     hourAcc_;
+  HourlySensorAccumulator     segAcc_;
+  char                        activeHistDateKey_[12]       = {0};
+  uint8_t                     activeHistHour_              = 255;
+  uint8_t                     activeSegIdx_                = 0;
+  uint8_t                     activeHourGapCount_          = 0;
+  bool                        activeHistValid_             = false;
+  bool                        activeHistDirty_             = false;
+  bool                        activeSegNeedsImmediateFlush_ = false;
+  bool                        cloudHourInspectedForBoot_   = false;
+  uint32_t                    lastHistoryFlushAtMs_        = 0;
+  char                        lastPrunedDateKey_[12]       = {0};
+  uint32_t                    lastPruneAttemptAtMs_        = 0;
 
   // Persistent HTTPS Keep-Alive client dedicated to Firebase RTDB (eliminates 1.5-3s TLS handshakes)
   WiFiClientSecure            rtdbClient_;

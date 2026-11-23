@@ -72,9 +72,21 @@ class IrrigationController {
   uint32_t        activePumpElapsedSec(uint32_t nowMs) const;
   uint32_t        activeTargetDurationSec() const { return currentTargetDurationMs_ / 1000; }
 
+  void setNetworkOnline(bool online) { networkOnline_ = online; }
+  void setOwnershipEpoch(uint32_t epoch) { ownershipEpoch_ = epoch; }
+
   bool popPendingCommandReport(CommandExecutionReport& outReport);
+  bool peekPendingIrrigationHistory(IrrigationHistoryRecord& outRecord) const;
+  void popOldestIrrigationHistory();
+  void clearIrrigationHistoryQueue();
 
  private:
+  void enqueueIrrigationHistory(uint32_t nowMs,
+                                CropZoneId zone,
+                                bool isManual,
+                                bool completed,
+                                const char* reason,
+                                uint32_t durationMs);
   void abortActiveCycle(uint32_t nowMs, const char* eventType, const char* reason);
   void beginNormalStopSequence(uint32_t nowMs, const char* completionReason);
   bool isGlobalSafetyOk(const RuntimeConfig& cfg,
@@ -105,14 +117,26 @@ class IrrigationController {
 
   uint32_t                  stateEnteredAtMs_        = 0;
   uint32_t                  pumpStartedAtMs_         = 0;
+  uint32_t                  pumpStoppedAtMs_         = 0;
+  uint64_t                  pumpStartedEpochMs_      = 0;
+  float                     pumpStartMoisturePct_    = NAN;
+  bool                      pumpRanThisCycle_        = false;
   uint32_t                  currentTargetDurationMs_ = Config::DEFAULT_WATER_PULSE_MS;
   uint32_t                  zoneCumulativePumpMs_[3] = {0, 0, 0};
 
   bool                      emergencyStopLatched_    = false;
   bool                      faultLockoutLatched_     = false;
   char                      lastAbortReason_[64]     = "NONE";
+  bool                      networkOnline_           = false;
+  uint32_t                  ownershipEpoch_          = 0;
 
   char                      processedCmdIds_[Config::PROCESSED_CMD_RING_SIZE][40] = {{0}};
   size_t                    processedCmdHead_        = 0;
   CommandExecutionReport    pendingReport_;
+
+  IrrigationHistoryRecord   irrHistoryQueue_[Config::IRRIGATION_HISTORY_QUEUE_CAPACITY];
+  size_t                    irrHistoryHead_          = 0;
+  size_t                    irrHistoryTail_          = 0;
+  size_t                    irrHistoryCount_         = 0;
+  uint32_t                  irrHistorySeq_           = 0;
 };

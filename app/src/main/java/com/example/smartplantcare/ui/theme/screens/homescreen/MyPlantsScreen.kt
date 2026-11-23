@@ -260,6 +260,20 @@ fun MyPlantsScreen(
                     MyPlantsSubPage.EVENT_LOG -> {
                         MyPlantsEventLogScreen(
                             snapshot = snapshot,
+                            onBack = { vm.closeSubPage() },
+                            onOpenHistory = { vm.openSubPage(MyPlantsSubPage.HISTORY_MONITORING) }
+                        )
+                    }
+
+                    MyPlantsSubPage.HISTORY_MONITORING -> {
+                        MyPlantsHistoryScreen(
+                            snapshot = snapshot,
+                            historyDaysWindow = uiState.historyDaysWindow,
+                            selectedDateKey = uiState.selectedHistoryDateKey,
+                            historyByDate = uiState.historyByDate,
+                            isLoadingHistory = uiState.isLoadingHistory,
+                            onSelectDate = { vm.selectHistoryDate(it) },
+                            onRefresh = { vm.refreshHistory(silent = false) },
                             onBack = { vm.closeSubPage() }
                         )
                     }

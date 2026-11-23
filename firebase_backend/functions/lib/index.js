@@ -68,6 +68,18 @@ function timingSafeHexEquals(aHex, bHex) {
     }
     return crypto.timingSafeEqual(Buffer.from(aHex, "utf8"), Buffer.from(bHex, "utf8"));
 }
+/**
+ * Formats a UTC epoch millisecond timestamp into a Philippine Local Time (Asia/Manila, UTC+8)
+ * YYYY-MM-DD calendar date key.
+ */
+function formatPhDateKey(epochMs) {
+    const phMs = epochMs + 8 * 60 * 60 * 1000;
+    const d = new Date(phMs);
+    const yyyy = d.getUTCFullYear();
+    const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const dd = String(d.getUTCDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+}
 // ============================================================================
 // 1. ESP32 DEVICE AUTHENTICATION: mintDeviceCustomToken
 // ============================================================================
@@ -305,11 +317,12 @@ async function buildDeviceResetUpdates(deviceId, updates) {
     updates[`/devices/${deviceId}/meta/ownershipEpoch`] = nextEpoch;
     updates[`/devices/${deviceId}/meta/resetRequired`] = true;
     updates[`/devices/${deviceId}/meta/unclaimedAt`] = Date.now();
-    // Wipe ACL, commands, historical events, and notification outbox
+    // Wipe ACL, commands, historical events, 7-day history, and notification outbox
     updates[`/devices/${deviceId}/acl`] = null;
     updates[`/devices/${deviceId}/commandRequests`] = null;
     updates[`/devices/${deviceId}/commandResults`] = null;
     updates[`/devices/${deviceId}/events`] = null;
+    updates[`/deviceHistory/${deviceId}`] = null;
     updates[`/notificationOutbox/${deviceId}`] = null;
     // Force safe status representation while preserving physical sensor calibration in /config
     updates[`/devices/${deviceId}/status/pumpState`] = "OFF";
@@ -590,6 +603,27 @@ exports.checkDeviceOfflineScheduled = (0, scheduler_1.onSchedule)("every 5 minut
     });
     if (Object.keys(updates).length > 0) {
         await db.ref().update(updates);
+    }
+    // Enforce strict 7-day retention (Asia/Manila PHT) on /deviceHistory/{deviceId}/days
+    const cutoffDateKey = formatPhDateKey(now - 6 * 24 * 60 * 60 * 1000);
+    const historySnap = await db.ref("/deviceHistory").get();
+    if (historySnap.exists()) {
+        const pruneUpdates = {};
+        historySnap.forEach((devHistChild) => {
+            const devId = devHistChild.key;
+            const daysChild = devHistChild.child("days");
+            if (!daysChild.exists())
+                return;
+            daysChild.forEach((dayChild) => {
+                const dayKey = dayChild.key;
+                if (dayKey && dayKey < cutoffDateKey) {
+                    pruneUpdates[`/deviceHistory/${devId}/days/${dayKey}`] = null;
+                }
+            });
+        });
+        if (Object.keys(pruneUpdates).length > 0) {
+            await db.ref().update(pruneUpdates);
+        }
     }
 });
 //# sourceMappingURL=index.js.map
