@@ -14,11 +14,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -88,6 +90,7 @@ import com.example.smartplantcare.iot.IotDomainLogic
 import com.example.smartplantcare.iot.LiveDeviceSnapshot
 import com.example.smartplantcare.iot.MyPlantsSubPage
 import com.example.smartplantcare.iot.MyPlantsUiState
+import com.example.smartplantcare.iot.PendingCommandPhase
 import com.example.smartplantcare.iot.SoilZoneTelemetry
 import com.example.smartplantcare.util.NetworkMonitor
 import kotlinx.coroutines.delay
@@ -166,12 +169,13 @@ internal fun MyPlantsDashboardScreen(
         }
     }
     val isPhoneOnline = uiState.isPhoneOnline
+    val isCachedSnapshot = snapshot.isFromLocalCache
     val evalNowMs = if (!isPhoneOnline && uiState.phoneDisconnectedAtMs != null) {
         uiState.phoneDisconnectedAtMs
     } else {
         nowMs
     }
-    val isDeviceOnline = IotDomainLogic.isDeviceOnlineFresh(
+    val isDeviceOnline = !isCachedSnapshot && IotDomainLogic.isDeviceOnlineFresh(
         status = status,
         nowMs = evalNowMs,
         receivedAtClientMs = snapshot.receivedAtClientMs,
@@ -269,7 +273,27 @@ internal fun MyPlantsDashboardScreen(
             }
 
             // 4. Priority Live Status Banners
-            if (isDeviceOnline && !isPhoneOnline) {
+            if (isCachedSnapshot && isPhoneOnline) {
+                item(key = "banner_cached_syncing") {
+                    InlineStatusBanner(
+                        bg = HomeColors.SoftMint,
+                        accent = HomeColors.ForestPrimary,
+                        icon = Icons.Filled.Refresh,
+                        title = "Showing Cached Snapshot • Syncing Live",
+                        subtitle = "Displaying your last saved readings while verifying live ESP32 telemetry."
+                    )
+                }
+            } else if (isCachedSnapshot && !isPhoneOnline) {
+                item(key = "banner_cached_offline") {
+                    InlineStatusBanner(
+                        bg = HomeColors.WarningBg,
+                        accent = HomeColors.WarningAmber,
+                        icon = Icons.Filled.WifiOff,
+                        title = "Offline • Showing Cached Snapshot",
+                        subtitle = "Connect to Wi-Fi or mobile data and tap Sync to verify live ESP32 readings."
+                    )
+                }
+            } else if (isDeviceOnline && !isPhoneOnline) {
                 item(key = "banner_no_internet") {
                     InlineStatusBanner(
                         bg = HomeColors.AlertBg,
@@ -419,6 +443,7 @@ internal fun MyPlantsDashboardScreen(
                             val cropCfg = config.cropConfig(zone.slug)
                             val baseLockReason = IotDomainLogic.manualWaterLockReason(role, snapshot, zone.slug)
                             val effectiveLockReason = when {
+                                isCachedSnapshot -> "Syncing live ESP32 state"
                                 !isDeviceOnline -> "ESP32 offline"
                                 !isPhoneOnline -> "No internet connection"
                                 else -> baseLockReason
@@ -426,15 +451,22 @@ internal fun MyPlantsDashboardScreen(
                             val isZoneWatering = isDeviceOnline && status.isActivelyIrrigating && status.activeValve == zone.slug
                             val isZoneSoaking = isDeviceOnline && status.isInSoakSettle && status.activeValve == zone.slug
                             val isZoneStarting = isDeviceOnline && !status.isActivelyIrrigating && uiState.pendingWaterCrop == zone.slug
+                            val zoneCommandPhase = if (uiState.pendingWaterCrop == zone.slug) {
+                                uiState.pendingCommandPhase
+                            } else {
+                                PendingCommandPhase.IDLE
+                            }
 
                             ProCropZoneCard(
                                 zone = zone,
                                 cropConfig = cropCfg,
-                                isDeviceOnline = isDeviceOnline,
+                                isDeviceOnline = isDeviceOnline || isCachedSnapshot,
+                                isCachedData = isCachedSnapshot,
                                 isAutoIrrigation = isAutoIrrigation,
                                 isWateringThisZone = isZoneWatering,
                                 isSoakingThisZone = isZoneSoaking,
                                 isStartingThisZone = isZoneStarting,
+                                pendingCommandPhase = zoneCommandPhase,
                                 selectedPulseSec = uiState.selectedPulseSecByCrop[zone.slug] ?: 4,
                                 lockReason = effectiveLockReason,
                                 canControl = role.canControl,
@@ -532,24 +564,26 @@ private fun DashboardTopBar(
             Text(
                 text = "My Plants",
                 fontFamily = HomeInterFont,
-                fontSize = 24.sp,
+                fontSize = 22.sp,
+                lineHeight = 26.sp,
                 fontWeight = FontWeight.Bold,
                 color = HomeColors.TextPrimary,
                 letterSpacing = (-0.4).sp,
-                maxLines = 1,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
             Text(
                 text = "Smart IoT Garden",
                 fontFamily = HomeInterFont,
-                fontSize = 13.sp,
+                fontSize = 12.5.sp,
+                lineHeight = 16.sp,
                 color = HomeColors.TextSecondary,
-                maxLines = 1,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
         }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             TopBarActionButton(
                 icon = Icons.Filled.Add,
                 contentDescription = "Pair New Box",
@@ -633,8 +667,10 @@ private fun BotanicalHeroCard(
 ) {
     val status = snapshot.status
     val telemetry = snapshot.telemetry
+    val isCachedSnapshot = snapshot.isFromLocalCache
+    val canShowValues = isDeviceOnline || isCachedSnapshot
     val latestHeartbeatMs = maxOf(status.lastSeenAt, telemetry.updatedAt)
-    val isOnlineFresh = isDeviceOnline
+    val isOnlineFresh = isDeviceOnline && !isCachedSnapshot
     val isNoInternetWhileOnline = isOnlineFresh && !isPhoneOnline
 
     val pulseAlpha = if (isOnlineFresh && isPhoneOnline) {
@@ -654,6 +690,8 @@ private fun BotanicalHeroCard(
     }
 
     val summaryStatus = when {
+        isCachedSnapshot && isPhoneOnline -> "Syncing Live..."
+        isCachedSnapshot -> "Cached Snapshot"
         isNoInternetWhileOnline -> "No Internet"
         !isOnlineFresh -> "ESP32 Offline"
         status.emergencyStop || status.faultLockout -> "System Locked"
@@ -719,18 +757,18 @@ private fun BotanicalHeroCard(
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Surface(
-                        color = if (isOnlineFresh && isPhoneOnline) {
-                            Color(0xFF10B981).copy(alpha = 0.24f)
-                        } else {
-                            HomeColors.AlertRed.copy(alpha = 0.28f)
+                        color = when {
+                            isCachedSnapshot -> Color(0xFFF59E0B).copy(alpha = 0.24f)
+                            isOnlineFresh && isPhoneOnline -> Color(0xFF10B981).copy(alpha = 0.24f)
+                            else -> HomeColors.AlertRed.copy(alpha = 0.28f)
                         },
                         shape = RoundedCornerShape(50),
                         border = BorderStroke(
                             1.dp,
-                            if (isOnlineFresh && isPhoneOnline) {
-                                HomeColors.MintGlow.copy(alpha = 0.30f)
-                            } else {
-                                Color(0xFFFCA5A5).copy(alpha = 0.35f)
+                            when {
+                                isCachedSnapshot -> Color(0xFFFDE68A).copy(alpha = 0.45f)
+                                isOnlineFresh && isPhoneOnline -> HomeColors.MintGlow.copy(alpha = 0.30f)
+                                else -> Color(0xFFFCA5A5).copy(alpha = 0.35f)
                             }
                         )
                     ) {
@@ -743,16 +781,18 @@ private fun BotanicalHeroCard(
                                     .size(7.dp)
                                     .clip(CircleShape)
                                     .background(
-                                        if (isOnlineFresh && isPhoneOnline) {
-                                            HomeColors.MintGlow.copy(alpha = pulseAlpha)
-                                        } else {
-                                            Color(0xFFFCA5A5)
+                                        when {
+                                            isCachedSnapshot -> Color(0xFFFDE68A)
+                                            isOnlineFresh && isPhoneOnline -> HomeColors.MintGlow.copy(alpha = pulseAlpha)
+                                            else -> Color(0xFFFCA5A5)
                                         }
                                     )
                             )
                             Spacer(modifier = Modifier.width(5.dp))
                             Text(
                                 text = when {
+                                    isCachedSnapshot && isPhoneOnline -> "Cached • Syncing"
+                                    isCachedSnapshot -> "Cached"
                                     isNoInternetWhileOnline -> "No Internet"
                                     isOnlineFresh -> "Online"
                                     else -> "Offline"
@@ -760,28 +800,18 @@ private fun BotanicalHeroCard(
                                 fontFamily = HomeInterFont,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = if (isOnlineFresh && isPhoneOnline) HomeColors.MintGlow else Color(0xFFFCA5A5),
+                                color = when {
+                                    isCachedSnapshot -> Color(0xFFFDE68A)
+                                    isOnlineFresh && isPhoneOnline -> HomeColors.MintGlow
+                                    else -> Color(0xFFFCA5A5)
+                                },
                                 maxLines = 1
                             )
                         }
                     }
-
-                    Surface(
-                        color = Color.White.copy(alpha = 0.14f),
-                        shape = RoundedCornerShape(50),
-                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.16f))
-                    ) {
-                        Text(
-                            text = role.label.uppercase(Locale.US),
-                            fontFamily = HomeInterFont,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White.copy(alpha = 0.94f),
-                            maxLines = 1,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-                        )
-                    }
                 }
+
+                Spacer(modifier = Modifier.width(6.dp))
 
                 // Right Frosted Status Pill ([👆 Manual Ready] / [✨ Auto Ready])
                 Surface(
@@ -790,7 +820,7 @@ private fun BotanicalHeroCard(
                     border = BorderStroke(1.dp, Color.White.copy(alpha = 0.24f))
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp),
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(5.dp)
                     ) {
@@ -806,8 +836,7 @@ private fun BotanicalHeroCard(
                             fontSize = 11.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = Color.White.copy(alpha = 0.94f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                            maxLines = 1
                         )
                     }
                 }
@@ -818,7 +847,7 @@ private fun BotanicalHeroCard(
             // Box Title + Subtitle on Left, [↻ Sync] Capsule on Right
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.Bottom,
+                verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Column(
@@ -830,28 +859,33 @@ private fun BotanicalHeroCard(
                         text = snapshot.meta.displayName.ifBlank { "Chili • Tomato • Eggplant" },
                         fontFamily = HomeInterFont,
                         fontSize = 20.sp,
+                        lineHeight = 24.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color.White,
-                        maxLines = 1,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
                     Spacer(modifier = Modifier.height(3.dp))
                     Text(
                         text = buildString {
-                            append(if (isOutdoor) "Outdoor Garden" else "Indoor Garden")
+                            append(role.label.uppercase(Locale.US))
+                            append(" • ")
+                            append(if (isOutdoor) "Outdoor" else "Indoor")
                             append(" • ")
                             append(
-                                if (latestHeartbeatMs > 0L || snapshot.receivedAtClientMs > 0L) {
-                                    formatRelativeAge(latestHeartbeatMs, snapshot.receivedAtClientMs, nowMs)
-                                } else {
-                                    snapshot.deviceId
+                                when {
+                                    isCachedSnapshot -> "Cached"
+                                    latestHeartbeatMs > 0L || snapshot.receivedAtClientMs > 0L ->
+                                        formatRelativeAge(latestHeartbeatMs, snapshot.receivedAtClientMs, nowMs)
+                                    else -> snapshot.deviceId
                                 }
                             )
                         },
                         fontFamily = HomeInterFont,
                         fontSize = 12.sp,
-                        color = Color.White.copy(alpha = 0.80f),
-                        maxLines = 1,
+                        lineHeight = 16.sp,
+                        color = Color.White.copy(alpha = 0.84f),
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
@@ -923,11 +957,11 @@ private fun BotanicalHeroCard(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                        .padding(horizontal = 14.dp, vertical = 9.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(
-                        modifier = Modifier.weight(1.35f),
+                        modifier = Modifier.weight(1f),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
@@ -941,9 +975,10 @@ private fun BotanicalHeroCard(
                             text = heroLocation,
                             fontFamily = HomeInterFont,
                             fontSize = 11.5.sp,
+                            lineHeight = 15.sp,
                             fontWeight = FontWeight.Medium,
                             color = Color.White.copy(alpha = if (isOnlineFresh) 0.95f else 0.72f),
-                            maxLines = 1,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
@@ -957,7 +992,6 @@ private fun BotanicalHeroCard(
                     )
 
                     Row(
-                        modifier = Modifier.weight(0.85f),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center
                     ) {
@@ -998,7 +1032,7 @@ private fun BotanicalHeroCard(
                     HeroClimateCell(
                         icon = Icons.Filled.Thermostat,
                         label = "Temperature",
-                        value = if (isOnlineFresh && telemetry.dhtValid && telemetry.temperatureC != null) {
+                        value = if (canShowValues && telemetry.dhtValid && telemetry.temperatureC != null) {
                             String.format(Locale.US, "%.1f°C", telemetry.temperatureC)
                         } else "--",
                         dotColor = if (isOnlineFresh) HomeColors.MintGlow else Color.White.copy(alpha = 0.35f),
@@ -1008,7 +1042,7 @@ private fun BotanicalHeroCard(
                     HeroClimateCell(
                         icon = Icons.Filled.WaterDrop,
                         label = "Humidity",
-                        value = if (isOnlineFresh && telemetry.dhtValid && telemetry.humidityPct != null) {
+                        value = if (canShowValues && telemetry.dhtValid && telemetry.humidityPct != null) {
                             String.format(Locale.US, "%.0f%%", telemetry.humidityPct)
                         } else "--",
                         dotColor = if (isOnlineFresh) HomeColors.MintGlow else Color.White.copy(alpha = 0.35f),
@@ -1018,7 +1052,7 @@ private fun BotanicalHeroCard(
                     HeroClimateCell(
                         icon = Icons.Filled.WbSunny,
                         label = "Light",
-                        value = if (isOnlineFresh && telemetry.lightValid && telemetry.lightBrightnessPct != null) {
+                        value = if (canShowValues && telemetry.lightValid && telemetry.lightBrightnessPct != null) {
                             String.format(Locale.US, "%.0f%%", telemetry.lightBrightnessPct)
                         } else "--",
                         dotColor = if (isOnlineFresh) Color(0xFFFACC15) else Color.White.copy(alpha = 0.35f),
@@ -1049,40 +1083,32 @@ private fun HeroClimateCell(
     modifier: Modifier = Modifier
 ) {
     Column(
-        modifier = modifier,
+        modifier = modifier.padding(horizontal = 2.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        Text(
+            text = label,
+            fontFamily = HomeInterFont,
+            fontSize = 11.sp,
+            color = Color.White.copy(alpha = 0.88f),
+            maxLines = 1
+        )
+        Spacer(modifier = Modifier.height(5.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = Color.White.copy(alpha = 0.85f),
-                modifier = Modifier.size(13.dp)
+                tint = dotColor,
+                modifier = Modifier.size(14.dp)
             )
             Spacer(modifier = Modifier.width(4.dp))
             Text(
-                text = label,
-                fontFamily = HomeInterFont,
-                fontSize = 11.sp,
-                color = Color.White.copy(alpha = 0.88f),
-                maxLines = 1
-            )
-        }
-        Spacer(modifier = Modifier.height(4.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(7.dp)
-                    .clip(CircleShape)
-                    .background(dotColor)
-            )
-            Spacer(modifier = Modifier.width(6.dp))
-            Text(
                 text = value,
                 fontFamily = HomeInterFont,
-                fontSize = 17.sp,
+                fontSize = 16.5.sp,
                 fontWeight = FontWeight.Bold,
-                color = Color.White
+                color = Color.White,
+                maxLines = 1
             )
         }
     }
@@ -1152,58 +1178,62 @@ private fun SmartModeHorizontalTile(
             .clip(RoundedCornerShape(18.dp))
             .clickable(enabled = enabled, onClick = onClick)
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 11.dp, vertical = 13.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .padding(horizontal = 13.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.SpaceBetween
         ) {
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(iconBoxBg),
-                contentAlignment = Alignment.Center
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(RoundedCornerShape(11.dp))
+                        .background(iconBoxBg),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = HomeColors.ForestPrimary,
+                        modifier = Modifier.size(19.dp)
+                    )
+                }
+
                 Icon(
-                    imageVector = icon,
+                    imageVector = Icons.Filled.ChevronRight,
                     contentDescription = null,
                     tint = HomeColors.ForestPrimary,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(18.dp)
                 )
             }
 
-            Spacer(modifier = Modifier.width(9.dp))
+            Spacer(modifier = Modifier.height(9.dp))
 
-            Column(modifier = Modifier.weight(1f)) {
+            Column {
                 Text(
                     text = valueTitle,
                     fontFamily = HomeInterFont,
-                    fontSize = 13.sp,
+                    fontSize = 13.5.sp,
+                    lineHeight = 17.sp,
                     fontWeight = FontWeight.Bold,
                     color = HomeColors.TextPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    maxLines = 2
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = subtitle,
                     fontFamily = HomeInterFont,
-                    fontSize = 10.5.sp,
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp,
                     color = HomeColors.TextSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    maxLines = 2
                 )
             }
-
-            Spacer(modifier = Modifier.width(2.dp))
-
-            Icon(
-                imageVector = Icons.Filled.ChevronRight,
-                contentDescription = null,
-                tint = HomeColors.ForestPrimary,
-                modifier = Modifier.size(18.dp)
-            )
         }
     }
 }
@@ -1358,10 +1388,12 @@ private fun ProCropZoneCard(
     zone: SoilZoneTelemetry,
     cropConfig: CropZoneConfig,
     isDeviceOnline: Boolean,
+    isCachedData: Boolean = false,
     isAutoIrrigation: Boolean,
     isWateringThisZone: Boolean,
     isSoakingThisZone: Boolean,
     isStartingThisZone: Boolean,
+    pendingCommandPhase: PendingCommandPhase = PendingCommandPhase.IDLE,
     selectedPulseSec: Int,
     lockReason: String?,
     canControl: Boolean,
@@ -1378,10 +1410,26 @@ private fun ProCropZoneCard(
         label = "soil_ring_${zone.slug}"
     )
 
+    val phaseBadgeLabel = when (pendingCommandPhase) {
+        PendingCommandPhase.SUBMITTING -> "Submitting"
+        PendingCommandPhase.SENT_WAITING_ACK -> "Sent • Waiting ACK"
+        PendingCommandPhase.ACKNOWLEDGED -> "Acknowledged"
+        PendingCommandPhase.EXECUTING -> "Starting"
+        PendingCommandPhase.IDLE -> "Starting"
+    }
+    val phaseButtonLabel = when (pendingCommandPhase) {
+        PendingCommandPhase.SUBMITTING -> "Submitting..."
+        PendingCommandPhase.SENT_WAITING_ACK -> "Waiting ACK..."
+        PendingCommandPhase.ACKNOWLEDGED -> "Acknowledged..."
+        PendingCommandPhase.EXECUTING -> "Opening Valve..."
+        PendingCommandPhase.IDLE -> "Starting..."
+    }
+
     val (statusLabel, badgeBg, badgeFg, accentColor) = when {
         !isDeviceOnline -> Quad("Offline", HomeColors.PlaceholderBg, HomeColors.TextSecondary, HomeColors.NavInactive)
+        isCachedData -> Quad("Cached", HomeColors.WarningBg, HomeColors.WarningAmber, HomeColors.ForestMedium)
         isWateringThisZone -> Quad("Watering", HomeColors.WaterBg, HomeColors.WaterBlue, HomeColors.WaterBlue)
-        isStartingThisZone -> Quad("Starting", HomeColors.WaterBg, HomeColors.WaterBlue, HomeColors.WaterBlue)
+        isStartingThisZone -> Quad(phaseBadgeLabel, HomeColors.WaterBg, HomeColors.WaterBlue, HomeColors.WaterBlue)
         isSoakingThisZone -> Quad("Soaking", HomeColors.SoftMint, HomeColors.ForestPrimary, HomeColors.EmeraldAccent)
         !cropConfig.enabled -> Quad("Disabled", HomeColors.PlaceholderBg, HomeColors.TextMuted, HomeColors.TextMuted)
         !zone.valid -> Quad("Fault", Color(0xFFFEE2E2), HomeColors.AlertRed, HomeColors.AlertRed)
@@ -1481,16 +1529,16 @@ private fun ProCropZoneCard(
 
                     Text(
                         text = if (isAutoIrrigation) {
-                            "Auto dry ≤${cropConfig.startPct.toInt()}% → stop ${cropConfig.stopPct.toInt()}% moisture"
+                            "Auto dry ≤${cropConfig.startPct.toInt()}% → stop ${cropConfig.stopPct.toInt()}%"
                         } else {
                             "Target ${cropConfig.startPct.toInt()}% – ${cropConfig.stopPct.toInt()}% moisture"
                         },
                         fontFamily = HomeInterFont,
-                        fontSize = 12.5.sp,
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp,
                         fontWeight = FontWeight.Medium,
                         color = HomeColors.TextSecondary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        maxLines = 2
                     )
 
                     Spacer(modifier = Modifier.height(8.dp))
@@ -1530,96 +1578,178 @@ private fun ProCropZoneCard(
                 Spacer(modifier = Modifier.height(12.dp))
 
                 if (!isAutoIrrigation) {
-                    // Manual Mode: [ 4s | 8s | 12s ] + Full-Height [ 💧 Water Crop ] Button
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .height(44.dp)
-                                .clip(RoundedCornerShape(13.dp))
-                                .background(HomeColors.PageBg)
-                                .padding(3.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(2.dp)
-                        ) {
-                            listOf(4, 8, 12).forEach { sec ->
-                                val chosen = selectedPulseSec == sec
-                                Surface(
-                                    color = if (chosen) HomeColors.ForestPrimary else Color.Transparent,
-                                    shape = RoundedCornerShape(10.dp),
-                                    modifier = Modifier
-                                        .fillMaxHeight()
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .clickable { onSelectPulseSec(sec) }
-                                ) {
-                                    Box(
-                                        contentAlignment = Alignment.Center,
-                                        modifier = Modifier.padding(horizontal = 13.dp)
-                                    ) {
-                                        Text(
-                                            text = "${sec}s",
-                                            fontFamily = HomeInterFont,
-                                            fontSize = 13.sp,
-                                            fontWeight = if (chosen) FontWeight.Bold else FontWeight.SemiBold,
-                                            color = if (chosen) Color.White else HomeColors.TextSecondary
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
+                    // Manual Mode: Adaptive layout so [4s | 8s | 12s] + [Water Eggplant] never clip
+                    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                        val stackControls = maxWidth < 310.dp
                         val btnBg = when {
                             isWateringThisZone -> HomeColors.AlertRed
                             isStartingThisZone -> HomeColors.WaterBlue
                             else -> HomeColors.ForestPrimary
                         }
 
-                        Button(
-                            onClick = if (isWateringThisZone) onStopClick else onWaterClick,
-                            enabled = canTapWater || isWateringThisZone,
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(44.dp),
-                            shape = RoundedCornerShape(13.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = btnBg,
-                                contentColor = Color.White,
-                                disabledContainerColor = HomeColors.ForestPrimary.copy(alpha = 0.55f),
-                                disabledContentColor = Color.White.copy(alpha = 0.9f)
-                            ),
-                            contentPadding = PaddingValues(horizontal = 14.dp)
-                        ) {
-                            if (isStartingThisZone) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(15.dp),
-                                    strokeWidth = 2.dp,
-                                    color = Color.White
-                                )
-                            } else {
-                                Icon(
-                                    imageVector = Icons.Filled.WaterDrop,
-                                    contentDescription = null,
-                                    tint = Color.White,
-                                    modifier = Modifier.size(16.dp)
-                                )
+                        if (stackControls) {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(42.dp)
+                                        .clip(RoundedCornerShape(13.dp))
+                                        .background(HomeColors.PageBg)
+                                        .padding(3.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                ) {
+                                    listOf(4, 8, 12).forEach { sec ->
+                                        val chosen = selectedPulseSec == sec
+                                        Surface(
+                                            color = if (chosen) HomeColors.ForestPrimary else Color.Transparent,
+                                            shape = RoundedCornerShape(10.dp),
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .fillMaxHeight()
+                                                .clip(RoundedCornerShape(10.dp))
+                                                .clickable { onSelectPulseSec(sec) }
+                                        ) {
+                                            Box(contentAlignment = Alignment.Center) {
+                                                Text(
+                                                    text = "${sec}s",
+                                                    fontFamily = HomeInterFont,
+                                                    fontSize = 13.sp,
+                                                    fontWeight = if (chosen) FontWeight.Bold else FontWeight.SemiBold,
+                                                    color = if (chosen) Color.White else HomeColors.TextSecondary
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                                Button(
+                                    onClick = if (isWateringThisZone) onStopClick else onWaterClick,
+                                    enabled = canTapWater || isWateringThisZone,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .defaultMinSize(minHeight = 44.dp),
+                                    shape = RoundedCornerShape(13.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = btnBg,
+                                        contentColor = Color.White,
+                                        disabledContainerColor = HomeColors.ForestPrimary.copy(alpha = 0.55f),
+                                        disabledContentColor = Color.White.copy(alpha = 0.9f)
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+                                ) {
+                                    if (isStartingThisZone) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(15.dp),
+                                            strokeWidth = 2.dp,
+                                            color = Color.White
+                                        )
+                                    } else {
+                                        Icon(
+                                            imageVector = Icons.Filled.WaterDrop,
+                                            contentDescription = null,
+                                            tint = Color.White,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = when {
+                                            isWateringThisZone -> "Stop Watering"
+                                            isStartingThisZone -> phaseButtonLabel
+                                            else -> "Water ${zone.displayName}"
+                                        },
+                                        fontFamily = HomeInterFont,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White
+                                    )
+                                }
                             }
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = when {
-                                    isWateringThisZone -> "Stop Watering"
-                                    isStartingThisZone -> "Starting..."
-                                    else -> "Water ${zone.displayName}"
-                                },
-                                fontFamily = HomeInterFont,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                        } else {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .height(44.dp)
+                                        .clip(RoundedCornerShape(13.dp))
+                                        .background(HomeColors.PageBg)
+                                        .padding(3.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                ) {
+                                    listOf(4, 8, 12).forEach { sec ->
+                                        val chosen = selectedPulseSec == sec
+                                        Surface(
+                                            color = if (chosen) HomeColors.ForestPrimary else Color.Transparent,
+                                            shape = RoundedCornerShape(10.dp),
+                                            modifier = Modifier
+                                                .fillMaxHeight()
+                                                .clip(RoundedCornerShape(10.dp))
+                                                .clickable { onSelectPulseSec(sec) }
+                                        ) {
+                                            Box(
+                                                contentAlignment = Alignment.Center,
+                                                modifier = Modifier.padding(horizontal = 10.dp)
+                                            ) {
+                                                Text(
+                                                    text = "${sec}s",
+                                                    fontFamily = HomeInterFont,
+                                                    fontSize = 12.5.sp,
+                                                    fontWeight = if (chosen) FontWeight.Bold else FontWeight.SemiBold,
+                                                    color = if (chosen) Color.White else HomeColors.TextSecondary
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Button(
+                                    onClick = if (isWateringThisZone) onStopClick else onWaterClick,
+                                    enabled = canTapWater || isWateringThisZone,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .defaultMinSize(minHeight = 44.dp),
+                                    shape = RoundedCornerShape(13.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = btnBg,
+                                        contentColor = Color.White,
+                                        disabledContainerColor = HomeColors.ForestPrimary.copy(alpha = 0.55f),
+                                        disabledContentColor = Color.White.copy(alpha = 0.9f)
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp)
+                                ) {
+                                    if (isStartingThisZone) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(15.dp),
+                                            strokeWidth = 2.dp,
+                                            color = Color.White
+                                        )
+                                    } else {
+                                        Icon(
+                                            imageVector = Icons.Filled.WaterDrop,
+                                            contentDescription = null,
+                                            tint = Color.White,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(5.dp))
+                                    Text(
+                                        text = when {
+                                            isWateringThisZone -> "Stop Watering"
+                                            isStartingThisZone -> phaseButtonLabel
+                                            else -> "Water ${zone.displayName}"
+                                        },
+                                        fontFamily = HomeInterFont,
+                                        fontSize = 12.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
                         }
                     }
                 } else {
@@ -1637,8 +1767,10 @@ private fun ProCropZoneCard(
                             },
                             fontFamily = HomeInterFont,
                             fontSize = 12.sp,
+                            lineHeight = 16.sp,
                             fontWeight = FontWeight.Medium,
                             color = if (isWateringThisZone) HomeColors.WaterBlue else HomeColors.TextSecondary,
+                            maxLines = 2,
                             modifier = Modifier
                                 .weight(1f)
                                 .padding(end = 10.dp)
@@ -1647,7 +1779,7 @@ private fun ProCropZoneCard(
                         Button(
                             onClick = if (isWateringThisZone) onStopClick else onWaterClick,
                             enabled = canTapWater || isWateringThisZone,
-                            modifier = Modifier.height(40.dp),
+                            modifier = Modifier.defaultMinSize(minHeight = 42.dp),
                             shape = RoundedCornerShape(12.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = if (isWateringThisZone) HomeColors.AlertRed else HomeColors.ForestPrimary,
@@ -1655,7 +1787,7 @@ private fun ProCropZoneCard(
                                 disabledContainerColor = HomeColors.ForestPrimary.copy(alpha = 0.55f),
                                 disabledContentColor = Color.White.copy(alpha = 0.9f)
                             ),
-                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp)
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Filled.WaterDrop,
@@ -1812,28 +1944,20 @@ private fun ReservoirBentoCard(
                     .padding(14.dp),
                 verticalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
                     Text(
                         text = "Water Tank",
                         fontFamily = HomeInterFont,
-                        fontSize = 15.sp,
+                        fontSize = 14.5.sp,
                         fontWeight = FontWeight.Bold,
                         color = HomeColors.TextPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(end = 6.dp)
+                        maxLines = 1
                     )
                     Surface(color = badgeBg, shape = RoundedCornerShape(50)) {
                         Text(
                             text = statusLabel,
                             fontFamily = HomeInterFont,
-                            fontSize = 10.sp,
+                            fontSize = 10.5.sp,
                             fontWeight = FontWeight.Bold,
                             color = badgeFg,
                             maxLines = 1,
@@ -1909,20 +2033,20 @@ private fun ReservoirBentoCard(
                             },
                             fontFamily = HomeInterFont,
                             fontSize = 11.5.sp,
+                            lineHeight = 14.5.sp,
                             fontWeight = FontWeight.Medium,
                             color = HomeColors.TextPrimary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                            maxLines = 2
                         )
-                        Spacer(modifier = Modifier.height(4.dp))
+                        Spacer(modifier = Modifier.height(3.dp))
                         Text(
                             text = if (!isDeviceOnline) "ESP32 offline"
-                            else String.format(Locale.US, "%.0f-inch ultrasonic tank", emptyGapIn),
+                            else String.format(Locale.US, "%.0f-in tank", emptyGapIn),
                             fontFamily = HomeInterFont,
-                            fontSize = 10.sp,
+                            fontSize = 11.sp,
+                            lineHeight = 14.sp,
                             color = HomeColors.TextSecondary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                            maxLines = 2
                         )
                     }
                 }
@@ -2065,20 +2189,21 @@ private fun WeatherRainBentoCard(
                     text = displayLocation,
                     fontFamily = HomeInterFont,
                     fontSize = 11.sp,
+                    lineHeight = 14.5.sp,
                     fontWeight = FontWeight.Medium,
                     color = if (isDeviceOnline) HomeColors.TextPrimary else HomeColors.TextMuted,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
             }
 
-            // Middle Row: Big Rain % + "Rain Chance (3h)" on Left, [● Sensor: Dry] Pill on Right
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
+            // Middle Section: Big Rain % + "Rain Chance (3h)" with dedicated Sensor Pill row below (zero clipping!)
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.Bottom,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
                     Text(
                         text = if (isDeviceOnline && weather.valid && weather.rainProbabilityPct >= 0) {
                             "${weather.rainProbabilityPct}%"
@@ -2094,11 +2219,12 @@ private fun WeatherRainBentoCard(
                         maxLines = 1
                     )
                     Text(
-                        text = "Rain Chance (3h)",
+                        text = "3h rain",
                         fontFamily = HomeInterFont,
-                        fontSize = 10.5.sp,
+                        fontSize = 11.sp,
                         color = HomeColors.TextSecondary,
-                        maxLines = 1
+                        maxLines = 1,
+                        modifier = Modifier.padding(bottom = 3.dp)
                     )
                 }
 
@@ -2107,9 +2233,9 @@ private fun WeatherRainBentoCard(
                     color = sensorBgColor
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
                     ) {
                         Box(
                             modifier = Modifier
@@ -2120,7 +2246,7 @@ private fun WeatherRainBentoCard(
                         Text(
                             text = sensorLabel,
                             fontFamily = HomeInterFont,
-                            fontSize = 10.sp,
+                            fontSize = 10.5.sp,
                             fontWeight = FontWeight.Bold,
                             color = if (isDeviceOnline) sensorDotColor else HomeColors.TextMuted,
                             maxLines = 1
@@ -2129,20 +2255,21 @@ private fun WeatherRainBentoCard(
                 }
             }
 
-            // Bottom Centered Status Footer (matching reference image)
+            // Bottom Status Footer (wraps cleanly on narrow screens)
             val isSensorWetNow = telemetry.rainRawWet || telemetry.rainWetConfirmed
             Text(
                 text = when {
                     !isDeviceOnline -> "ESP32 offline"
                     !isOutdoor -> "Paused in Indoor mode"
-                    status.rainSuspensionActive -> "Raining — Auto-water PAUSED"
+                    status.rainSuspensionActive -> "Raining — Auto-water paused"
                     isSensorWetNow && (telemetry.rainAccidentalWet || !forecastHigh) ->
                         "Weather <$rainThresholdPct% • Accidental wet"
                     forecastHigh -> "Weather ≥$rainThresholdPct% • Waiting sensor"
                     else -> "Active in Outdoor mode"
                 },
                 fontFamily = HomeInterFont,
-                fontSize = 10.sp,
+                fontSize = 11.sp,
+                lineHeight = 14.5.sp,
                 color = when {
                     !isDeviceOnline -> HomeColors.TextMuted
                     status.rainSuspensionActive -> HomeColors.WaterBlue
@@ -2150,9 +2277,7 @@ private fun WeatherRainBentoCard(
                     else -> HomeColors.TextSecondary
                 },
                 fontWeight = if (isDeviceOnline && (status.rainSuspensionActive || isSensorWetNow)) FontWeight.Bold else FontWeight.Medium,
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                maxLines = 2,
                 modifier = Modifier.fillMaxWidth()
             )
         }
@@ -2199,6 +2324,7 @@ private fun HistoryRecordsEntryCard(
 
             Column(modifier = Modifier.weight(1f)) {
                 Row(
+                    modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
@@ -2206,10 +2332,11 @@ private fun HistoryRecordsEntryCard(
                         text = "7-Day History & Records",
                         fontFamily = HomeInterFont,
                         fontSize = 14.5.sp,
+                        lineHeight = 19.sp,
                         fontWeight = FontWeight.Bold,
                         color = HomeColors.TextPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        maxLines = 2,
+                        modifier = Modifier.weight(1f, fill = false)
                     )
                     Surface(
                         color = HomeColors.SoftMint,
@@ -2218,21 +2345,21 @@ private fun HistoryRecordsEntryCard(
                         Text(
                             text = "PHT",
                             fontFamily = HomeInterFont,
-                            fontSize = 9.sp,
+                            fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
                             color = HomeColors.ForestPrimary,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
                         )
                     }
                 }
-                Spacer(modifier = Modifier.height(2.dp))
+                Spacer(modifier = Modifier.height(3.dp))
                 Text(
-                    text = "Hourly sensor line graphs, offline gaps & daily watering logs",
+                    text = "By-hour & by-minute sensor graphs, offline gaps & watering logs",
                     fontFamily = HomeInterFont,
                     fontSize = 11.5.sp,
+                    lineHeight = 16.sp,
                     color = HomeColors.TextSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    maxLines = 2
                 )
             }
 
@@ -2269,9 +2396,10 @@ private fun SectionTitleRow(
             text = title,
             fontFamily = HomeInterFont,
             fontSize = 18.sp,
+            lineHeight = 22.sp,
             fontWeight = FontWeight.Bold,
             color = HomeColors.TextPrimary,
-            maxLines = 1,
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier
                 .weight(1f)

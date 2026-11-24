@@ -104,6 +104,11 @@ class FirebaseClientManager {
   bool     isWifiConnected() const { return WiFi.status() == WL_CONNECTED; }
   bool     isFirebaseAuthenticated() const { return idTokenValid_ || sparkDirectMode_; }
   uint32_t lastSyncUptimeMs() const { return lastSuccessfulSyncMs_; }
+  void     setActuatorBusy(bool busy) { actuatorBusy_ = busy; }
+  bool     hasPendingUrgentWork(const EventNotificationManager& events,
+                                const IrrigationController& irrigation) const {
+    return events.pendingCount() > 0 || irrigation.hasPendingCommandReports();
+  }
   bool     consumeWeatherRefreshRequested() {
     if (!weatherRefreshRequested_) return false;
     weatherRefreshRequested_ = false;
@@ -146,6 +151,11 @@ class FirebaseClientManager {
                            char* outDateKey,
                            size_t dateLen,
                            uint8_t& outHour) const;
+  bool formatPhDateHourAndMinute(uint64_t epochMs,
+                                 char* outDateKey,
+                                 size_t dateLen,
+                                 uint8_t& outHour,
+                                 uint16_t& outMinuteOfDay) const;
   bool formatPhCutoffDate(uint64_t epochMs,
                           uint8_t keepDays,
                           char* outCutoffKey,
@@ -157,6 +167,14 @@ class FirebaseClientManager {
                               const ReservoirReading& reservoir,
                               const RainGateStatus& rain,
                               const WeatherSnapshot& weather);
+  void addSampleToMinuteAccumulator(MinuteSensorAccumulator& acc,
+                                    uint64_t nowEpochMs,
+                                    const EnvironmentReading& env,
+                                    const SoilZoneStatus soil[3],
+                                    const ReservoirReading& reservoir,
+                                    const RainGateStatus& rain,
+                                    const WeatherSnapshot& weather);
+  void populateMinuteJson(JsonObject minObj, const MinuteSensorAccumulator& acc) const;
   void inspectExistingCloudHourOnReconnect(const char* dateKey,
                                            uint8_t hour,
                                            uint64_t nowEpochMs);
@@ -165,7 +183,10 @@ class FirebaseClientManager {
                                     uint8_t segIdx,
                                     uint8_t gapCount,
                                     const HourlySensorAccumulator& segAcc,
-                                    const HourlySensorAccumulator& hourAcc);
+                                    const HourlySensorAccumulator& hourAcc,
+                                    const char* optMinDateKey = nullptr,
+                                    const MinuteSensorAccumulator* optMinAcc = nullptr);
+  bool flushSingleMinuteToRtdb(const char* dateKey, const MinuteSensorAccumulator& minAcc);
   void flushPendingIrrigationHistory(uint32_t nowMs,
                                      IrrigationController& irrigation,
                                      DiagnosticsMetrics& ioDiag);
@@ -183,6 +204,8 @@ class FirebaseClientManager {
 
   bool                        idTokenValid_          = false;
   bool                        sparkDirectMode_       = false;
+  bool                        anonAuthUnsupported_   = false;
+  bool                        actuatorBusy_          = false;
   String                      idToken_;
   uint32_t                    idTokenObtainedAtMs_   = 0;
   uint32_t                    lastAuthAttemptAtMs_   = 0;
@@ -196,20 +219,28 @@ class FirebaseClientManager {
   float                       deviceLon_                = Secrets::DEFAULT_WEATHER_LONGITUDE;
   char                        deviceLocationName_[48]   = "";
 
-  // 7-Day Hourly History & Retention State (in RAM, ~250 bytes)
+  // 7-Day Minute & Hourly History & Retention State (compact static structs, zero heap alloc)
   HourlySensorAccumulator     hourAcc_;
   HourlySensorAccumulator     segAcc_;
-  char                        activeHistDateKey_[12]       = {0};
-  uint8_t                     activeHistHour_              = 255;
-  uint8_t                     activeSegIdx_                = 0;
-  uint8_t                     activeHourGapCount_          = 0;
-  bool                        activeHistValid_             = false;
-  bool                        activeHistDirty_             = false;
+  MinuteSensorAccumulator     minuteAcc_;
+  MinuteSensorAccumulator     completedMinuteAcc_;
+  char                        activeHistDateKey_[12]        = {0};
+  char                        activeMinuteDateKey_[12]      = {0};
+  char                        completedMinuteDateKey_[12]   = {0};
+  uint8_t                     activeHistHour_               = 255;
+  uint16_t                    activeMinuteOfDay_            = 65535;
+  uint8_t                     activeSegIdx_                 = 0;
+  uint8_t                     activeHourGapCount_           = 0;
+  bool                        activeHistValid_              = false;
+  bool                        activeHistDirty_              = false;
+  bool                        activeMinuteValid_            = false;
+  bool                        activeMinuteDirty_            = false;
+  bool                        completedMinutePending_       = false;
   bool                        activeSegNeedsImmediateFlush_ = false;
-  bool                        cloudHourInspectedForBoot_   = false;
-  uint32_t                    lastHistoryFlushAtMs_        = 0;
-  char                        lastPrunedDateKey_[12]       = {0};
-  uint32_t                    lastPruneAttemptAtMs_        = 0;
+  bool                        cloudHourInspectedForBoot_    = false;
+  uint32_t                    lastHistoryFlushAtMs_         = 0;
+  char                        lastPrunedDateKey_[12]        = {0};
+  uint32_t                    lastPruneAttemptAtMs_         = 0;
 
   // Persistent HTTPS Keep-Alive client dedicated to Firebase RTDB (eliminates 1.5-3s TLS handshakes)
   WiFiClientSecure            rtdbClient_;

@@ -42,6 +42,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -226,6 +229,17 @@ fun MainScreen(
         myPlantsViewModel.bindUser(effectiveUid, userProfile.email, userProfile.name, uiState.isGuest)
     }
 
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                myPlantsViewModel.resyncLiveDevice(silent = true)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     LaunchedEffect(Unit) {
         treatmentPlanViewModel.loadPlans()
         notificationHistoryViewModel.loadUnreadCount()
@@ -298,6 +312,18 @@ fun MainScreen(
                             },
                             onSelectHistoryDate = { dateKey ->
                                 myPlantsViewModel.selectHistoryDate(dateKey)
+                            },
+                            onSelectGranularity = { granularity ->
+                                myPlantsViewModel.setHistoryGranularity(granularity)
+                            },
+                            onSelectMinuteHour = { hour ->
+                                myPlantsViewModel.selectMinuteHourFilter(hour)
+                            },
+                            onSyncClick = {
+                                myPlantsViewModel.resyncLiveDevice(silent = false)
+                            },
+                            onClearSnackbar = {
+                                myPlantsViewModel.clearSnackbar()
                             },
                             onNotificationClick = {
                                 tabNavController.navigate(ROUTE_NOTIFICATION_HISTORY)
@@ -522,13 +548,13 @@ private fun FloatingBottomBar(
         modifier = Modifier
             .fillMaxWidth()
             .navigationBarsPadding()
-            .padding(horizontal = HomeDimens.ScreenHorizontalPadding, vertical = 14.dp),
+            .padding(horizontal = 16.dp, vertical = 14.dp),
         contentAlignment = Alignment.BottomCenter
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(68.dp)
+                .defaultMinSize(minHeight = 68.dp)
                 .shadow(
                     elevation    = 6.dp,
                     shape        = RoundedCornerShape(32.dp),
@@ -540,12 +566,13 @@ private fun FloatingBottomBar(
                     width = 1.dp,
                     color = HomeColors.CardBorder,
                     shape = RoundedCornerShape(32.dp)
-                ),
+                )
+                .padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             allTabs.forEach { tab ->
                 if (tab.isCamera) {
-                    Spacer(modifier = Modifier.weight(1.25f))
+                    Spacer(modifier = Modifier.weight(0.95f))
                 } else {
                     val isSelected = currentRoute == tab.route
                     NavTabItem(
@@ -650,10 +677,13 @@ private fun NavTabItem(
             text       = label,
             fontFamily = HomeInterFont,
             fontSize   = 10.sp,
+            lineHeight = 11.5.sp,
             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
             color      = iconTint,
-            maxLines   = 1,
-            overflow   = TextOverflow.Ellipsis
+            textAlign  = androidx.compose.ui.text.style.TextAlign.Center,
+            maxLines   = 2,
+            overflow   = TextOverflow.Ellipsis,
+            modifier   = Modifier.padding(horizontal = 2.dp)
         )
     }
 }

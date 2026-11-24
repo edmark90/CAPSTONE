@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -380,7 +381,10 @@ internal fun MyPlantsScanStepScreen(
                                     )
                                 }
                             },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier
+                                .weight(1f)
+                                .defaultMinSize(minHeight = 44.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp),
                             shape = RoundedCornerShape(12.dp),
                             border = BorderStroke(1.dp, HomeColors.CardBorder)
                         ) {
@@ -389,13 +393,17 @@ internal fun MyPlantsScanStepScreen(
                                 fontFamily = HomeInterFont,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                color = HomeColors.TextPrimary
+                                color = HomeColors.TextPrimary,
+                                textAlign = TextAlign.Center
                             )
                         }
                         Button(
                             onClick = onVerifyManualConnection,
                             enabled = !uiState.isConnectingToEsp,
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier
+                                .weight(1f)
+                                .defaultMinSize(minHeight = 44.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp),
                             shape = RoundedCornerShape(12.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = HomeColors.SoftMint,
@@ -406,7 +414,8 @@ internal fun MyPlantsScanStepScreen(
                                 text = "I'm Connected",
                                 fontFamily = HomeInterFont,
                                 fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center
                             )
                         }
                     }
@@ -493,7 +502,10 @@ internal fun MyPlantsScanStepScreen(
                                     )
                                 }
                             },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier
+                                .weight(1f)
+                                .defaultMinSize(minHeight = 44.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp),
                             shape = RoundedCornerShape(12.dp),
                             border = BorderStroke(1.dp, HomeColors.CardBorder)
                         ) {
@@ -502,13 +514,17 @@ internal fun MyPlantsScanStepScreen(
                                 fontFamily = HomeInterFont,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                color = HomeColors.TextPrimary
+                                color = HomeColors.TextPrimary,
+                                textAlign = TextAlign.Center
                             )
                         }
                         Button(
                             onClick = onVerifyManualConnection,
                             enabled = !uiState.isConnectingToEsp,
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier
+                                .weight(1f)
+                                .defaultMinSize(minHeight = 44.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp),
                             shape = RoundedCornerShape(12.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = HomeColors.SoftMint,
@@ -519,7 +535,8 @@ internal fun MyPlantsScanStepScreen(
                                 text = "I'm Connected",
                                 fontFamily = HomeInterFont,
                                 fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center
                             )
                         }
                     }
@@ -533,7 +550,8 @@ internal fun MyPlantsScanStepScreen(
                 onClick = onStopScan,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(54.dp),
+                    .defaultMinSize(minHeight = 54.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                 shape = RoundedCornerShape(18.dp),
                 border = BorderStroke(1.5.dp, HomeColors.ForestPrimary),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = HomeColors.ForestPrimary)
@@ -542,7 +560,8 @@ internal fun MyPlantsScanStepScreen(
                     text = "Stop Scanning",
                     fontFamily = HomeInterFont,
                     fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Center
                 )
             }
         } else {
@@ -557,7 +576,8 @@ internal fun MyPlantsScanStepScreen(
                 enabled = !uiState.isConnectingToEsp,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(54.dp),
+                    .defaultMinSize(minHeight = 54.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                 shape = RoundedCornerShape(18.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = HomeColors.ForestPrimary,
@@ -717,10 +737,10 @@ private fun NearbyEspCard(
                     text = "SmartPlantCare Box",
                     fontFamily = HomeInterFont,
                     fontSize = 14.sp,
+                    lineHeight = 18.sp,
                     fontWeight = FontWeight.Bold,
                     color = HomeColors.TextPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    maxLines = 2
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Row(
@@ -732,9 +752,9 @@ private fun NearbyEspCard(
                         text = "${device.deviceId} • ${device.rssi} dBm",
                         fontFamily = HomeInterFont,
                         fontSize = 11.sp,
+                        lineHeight = 15.sp,
                         color = HomeColors.TextSecondary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        maxLines = 2
                     )
                 }
                 Spacer(modifier = Modifier.height(6.dp))
@@ -757,8 +777,8 @@ private fun NearbyEspCard(
                 onClick = onConnect,
                 enabled = !isConnecting,
                 shape = RoundedCornerShape(12.dp),
-                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
-                modifier = Modifier.height(42.dp),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
+                modifier = Modifier.defaultMinSize(minHeight = 44.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = HomeColors.ForestPrimary,
                     contentColor = Color.White
@@ -1348,7 +1368,8 @@ internal fun MyPlantsWifiSetupScreen(
             enabled = !uiState.isProvisioning && uiState.selectedWifiSsid.isNotBlank() && uiState.claimCode.isNotBlank(),
             modifier = Modifier
                 .fillMaxWidth()
-                .height(54.dp),
+                .defaultMinSize(minHeight = 54.dp),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
             shape = RoundedCornerShape(18.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = HomeColors.ForestPrimary,
@@ -1360,7 +1381,8 @@ internal fun MyPlantsWifiSetupScreen(
                 fontFamily = HomeInterFont,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
-                color = Color.White
+                color = Color.White,
+                textAlign = TextAlign.Center
             )
         }
     }
@@ -1401,10 +1423,10 @@ private fun WifiNetworkRow(
                     text = network.ssid,
                     fontFamily = HomeInterFont,
                     fontSize = 13.sp,
+                    lineHeight = 17.sp,
                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                     color = HomeColors.TextPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    maxLines = 2
                 )
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -1492,18 +1514,26 @@ private fun JoinSharedDeviceDialog(
                         enabled = !isSubmitting,
                         shape = RoundedCornerShape(14.dp),
                         border = BorderStroke(1.dp, HomeColors.CardBorder),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                         modifier = Modifier
                             .weight(1f)
-                            .height(48.dp)
+                            .defaultMinSize(minHeight = 48.dp)
                     ) {
-                        Text("Cancel", fontFamily = HomeInterFont, fontWeight = FontWeight.SemiBold, color = HomeColors.TextSecondary)
+                        Text(
+                            "Cancel",
+                            fontFamily = HomeInterFont,
+                            fontWeight = FontWeight.SemiBold,
+                            color = HomeColors.TextSecondary,
+                            textAlign = TextAlign.Center
+                        )
                     }
                     Button(
                         onClick = { onSubmit(code) },
                         enabled = !isSubmitting && code.trim().length >= 6,
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                         modifier = Modifier
                             .weight(1f)
-                            .height(48.dp),
+                            .defaultMinSize(minHeight = 48.dp),
                         shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = HomeColors.ForestPrimary,
@@ -1514,7 +1544,8 @@ private fun JoinSharedDeviceDialog(
                             text = if (isSubmitting) "Joining..." else "Join Box",
                             fontFamily = HomeInterFont,
                             fontWeight = FontWeight.SemiBold,
-                            color = Color.White
+                            color = Color.White,
+                            textAlign = TextAlign.Center
                         )
                     }
                 }
@@ -1747,7 +1778,8 @@ internal fun AuthRequiredDialog(
                     onClick = onCreateAccount,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp),
+                        .defaultMinSize(minHeight = 48.dp),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                     shape = RoundedCornerShape(14.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = HomeColors.ForestPrimary,
@@ -1759,7 +1791,8 @@ internal fun AuthRequiredDialog(
                         fontFamily = HomeInterFont,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = Color.White
+                        color = Color.White,
+                        textAlign = TextAlign.Center
                     )
                 }
                 Spacer(modifier = Modifier.height(8.dp))

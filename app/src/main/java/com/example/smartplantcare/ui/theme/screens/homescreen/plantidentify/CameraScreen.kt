@@ -79,6 +79,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -302,7 +303,7 @@ fun CameraScreen(
     }
 
     val configuration = LocalConfiguration.current
-    val overlaySize = if (configuration.screenHeightDp < 640) 210.dp else 260.dp
+    val overlaySize = if (configuration.screenHeightDp < 720) 200.dp else 260.dp
     val hasFlashUnit = camera?.cameraInfo?.hasFlashUnit() == true
 
     Box(
@@ -359,7 +360,7 @@ fun CameraScreen(
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 CircleIconButton(
@@ -368,19 +369,26 @@ fun CameraScreen(
                     onClick = onBack
                 )
 
-                Surface(
-                    color = SemiTransparentBlack,
-                    shape = RoundedCornerShape(50),
-                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.16f))
+                Box(
+                    modifier = Modifier.weight(1f),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = "Plant Species Identifier",
-                        fontFamily = HomeInterFont,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
-                    )
+                    Surface(
+                        color = SemiTransparentBlack,
+                        shape = RoundedCornerShape(50),
+                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.16f))
+                    ) {
+                        Text(
+                            text = "Plant Species Identifier",
+                            fontFamily = HomeInterFont,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.size(44.dp))
@@ -400,9 +408,9 @@ fun CameraScreen(
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
                 .navigationBarsPadding()
-                .padding(bottom = 24.dp, start = 24.dp, end = 24.dp),
+                .padding(bottom = 22.dp, start = 16.dp, end = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(18.dp)
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Surface(
                 color = SemiTransparentBlack,
@@ -414,18 +422,19 @@ fun CameraScreen(
                     fontFamily = HomeInterFont,
                     color = Color.White,
                     fontSize = 12.sp,
+                    lineHeight = 17.sp,
                     fontWeight = FontWeight.Medium,
                     textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp)
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp)
                 )
             }
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(
+                    modifier = Modifier.weight(1f),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
@@ -441,7 +450,9 @@ fun CameraScreen(
                         fontFamily = HomeInterFont,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Medium,
-                        color = Color.White.copy(alpha = 0.85f)
+                        color = Color.White.copy(alpha = 0.85f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
 
@@ -467,6 +478,7 @@ fun CameraScreen(
                 )
 
                 Column(
+                    modifier = Modifier.weight(1f),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
@@ -492,7 +504,9 @@ fun CameraScreen(
                         fontFamily = HomeInterFont,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Medium,
-                        color = if (isFlashOn) Color(0xFFFFEB3B) else Color.White.copy(alpha = 0.85f)
+                        color = if (isFlashOn) Color(0xFFFFEB3B) else Color.White.copy(alpha = 0.85f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }

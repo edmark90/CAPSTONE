@@ -271,6 +271,35 @@ data class CommandResult(
     val updatedAt: Long = 0L
 )
 
+enum class SyncDataOrigin {
+    NONE,
+    LOCAL_CACHE,
+    LIVE_REST,
+    LIVE_WEBSOCKET
+}
+
+enum class PendingCommandPhase {
+    IDLE,
+    SUBMITTING,
+    SENT_WAITING_ACK,
+    ACKNOWLEDGED,
+    EXECUTING
+}
+
+enum class HistoryGranularity(val label: String) {
+    BY_HOURS("By Hours"),
+    BY_MINUTES("By Minutes")
+}
+
+enum class PointInspectionStatus {
+    VALID,
+    FUTURE_TIME,
+    PHONE_OFFLINE,
+    DEVICE_OFFLINE,
+    SENSOR_FAULT,
+    LEGACY_HOURLY_ONLY
+}
+
 @Immutable
 data class LiveDeviceSnapshot(
     val deviceId: String,
@@ -283,7 +312,10 @@ data class LiveDeviceSnapshot(
     val activeInvites: List<ShareInvite> = emptyList(),
     val events: List<DeviceEvent> = emptyList(),
     val commandResults: Map<String, CommandResult> = emptyMap(),
-    val receivedAtClientMs: Long = 0L
+    val receivedAtClientMs: Long = 0L,
+    val isFromLocalCache: Boolean = false,
+    val syncOrigin: SyncDataOrigin = SyncDataOrigin.NONE,
+    val lastSyncLatencyMs: Long = 0L
 )
 
 // ─── 7-Day Historical Monitoring & Irrigation Records Models ─────────────────
@@ -306,6 +338,31 @@ data class HistoricalHourSegment(
 )
 
 @Immutable
+data class HistoricalMinuteRecord(
+    val minuteOfDay: Int, // 0..1439 in Asia/Manila (UTC+8)
+    val firstSeenAt: Long = 0L,
+    val lastSeenAt: Long = 0L,
+    val sampleCount: Int = 0,
+    val tomatoPct: Float? = null,
+    val chiliPct: Float? = null,
+    val eggplantPct: Float? = null,
+    val temperatureC: Float? = null,
+    val humidityPct: Float? = null,
+    val lightPct: Float? = null,
+    val reservoirPct: Float? = null,
+    val reservoirGapIn: Float? = null,
+    val reservoirState: String = "UNKNOWN",
+    val rainProbPct: Int? = null,
+    val rainWet: Boolean = false,
+    val rainConfirmed: Boolean = false,
+    val rainSuspended: Boolean = false,
+    val rainWetSamples: Int = 0
+) {
+    val hour: Int get() = (minuteOfDay / 60).coerceIn(0, 23)
+    val minuteInHour: Int get() = (minuteOfDay % 60).coerceIn(0, 59)
+}
+
+@Immutable
 data class HistoricalHourRecord(
     val hour: Int,
     val firstSeenAt: Long = 0L,
@@ -322,6 +379,7 @@ data class HistoricalHourRecord(
     val reservoirGapIn: Float? = null,
     val rainProbPct: Int? = null,
     val rainWetSamples: Int = 0,
+    val rainSuspendedSamples: Int = 0,
     val segments: List<HistoricalHourSegment> = emptyList()
 )
 
@@ -335,6 +393,7 @@ data class IrrigationHistoryItem(
     val startedAt: Long = 0L,
     val endedAt: Long = 0L,
     val hour: Int = 0,
+    val minuteOfDay: Int = hour * 60,
     val durationMs: Long = 0L,
     val startMoisturePct: Float? = null,
     val endMoisturePct: Float? = null,
@@ -358,9 +417,10 @@ data class DailyHistorySnapshot(
     val dateKey: String, // YYYY-MM-DD in Asia/Manila (PHT)
     val updatedAt: Long = 0L,
     val hours: Map<Int, HistoricalHourRecord> = emptyMap(),
+    val minutes: Map<Int, HistoricalMinuteRecord> = emptyMap(),
     val irrigations: List<IrrigationHistoryItem> = emptyList()
 ) {
-    val hasTelemetry: Boolean get() = hours.isNotEmpty()
+    val hasTelemetry: Boolean get() = hours.isNotEmpty() || minutes.isNotEmpty()
     val hasIrrigation: Boolean get() = irrigations.isNotEmpty()
     val hasAnyRecord: Boolean get() = hasTelemetry || hasIrrigation
 }
@@ -379,10 +439,11 @@ data class HistoryDateOption(
 
 @Immutable
 data class ChartDataPoint(
-    val xHour: Float,    // 0.0f .. 23.98f (12:00 AM .. 11:59 PM PHT)
+    val xHour: Float,    // 0.0f .. 23.98f for 24h views, or 0.0f .. 59.0f for 60-min hour view
     val value: Float,
     val epochMs: Long,
-    val hour: Int
+    val hour: Int,
+    val minuteOfDay: Int = hour * 60
 )
 
 @Immutable
@@ -524,6 +585,16 @@ object IotDomainLogic {
     fun clampPulseDurationMs(requestedMs: Long): Long = requestedMs.coerceIn(MIN_PULSE_MS, MAX_PULSE_MS)
 
     /**
+     * Generates a compact, collision-resistant deterministic command ID strictly <= 36 chars
+     * (fitting ESP32's 40-byte NVS & RAM command ring buffers) so REST + SDK retries are idempotent.
+     */
+    fun generateDeterministicCommandId(uid: String, nowMs: Long, randomNonce: Int): String {
+        val uidHash = (uid.hashCode() and 0xFFFF).toString(16).padStart(4, '0')
+        val nonceHex = (randomNonce and 0xFFFF).toString(16).padStart(4, '0')
+        return "cmd_${nowMs}_${uidHash}_${nonceHex}".take(36)
+    }
+
+    /**
      * Evaluates whether the ESP32 heartbeat is fresh.
      * Uses the most recent of [status.lastSeenAt] and [telemetryUpdatedAt], and handles both
      * real Unix epoch timestamps (>= 1.7e12 ms) and pre-NTP boot uptime values (< 1.7e12 ms)
@@ -607,10 +678,33 @@ object IotDomainLogic {
         return sdf.format(Date(epochMs))
     }
 
+    fun formatPhTimeWithSecondsLabel(epochMs: Long): String {
+        if (epochMs < 1_700_000_000_000L) return "--"
+        val sdf = SimpleDateFormat("h:mm:ss a", Locale.US).apply { timeZone = phTimeZone }
+        return sdf.format(Date(epochMs))
+    }
+
+    fun formatPhStartEndTimeRange(startedAtMs: Long, endedAtMs: Long): String {
+        val validStart = startedAtMs >= 1_700_000_000_000L
+        val validEnd = endedAtMs >= 1_700_000_000_000L
+        return when {
+            validStart && validEnd -> "${formatPhTimeWithSecondsLabel(startedAtMs)} – ${formatPhTimeWithSecondsLabel(endedAtMs)}"
+            validStart -> formatPhTimeWithSecondsLabel(startedAtMs)
+            validEnd -> formatPhTimeWithSecondsLabel(endedAtMs)
+            else -> "--"
+        }
+    }
+
     fun phHourOfDay(epochMs: Long): Int {
         val cal = Calendar.getInstance(phTimeZone, Locale.US)
         cal.timeInMillis = epochMs
         return cal.get(Calendar.HOUR_OF_DAY)
+    }
+
+    fun phMinuteOfDay(epochMs: Long): Int {
+        val cal = Calendar.getInstance(phTimeZone, Locale.US)
+        cal.timeInMillis = epochMs
+        return (cal.get(Calendar.HOUR_OF_DAY) * 60 + cal.get(Calendar.MINUTE)).coerceIn(0, 1439)
     }
 
     fun phHourFloat(epochMs: Long): Float {
@@ -618,7 +712,20 @@ object IotDomainLogic {
         cal.timeInMillis = epochMs
         val h = cal.get(Calendar.HOUR_OF_DAY)
         val m = cal.get(Calendar.MINUTE)
-        return (h + m / 60f).coerceIn(0f, 23.98f)
+        return (h + m / 60f).coerceIn(0f, 23.9834f)
+    }
+
+    fun formatMinuteOfDay12(minuteOfDay: Int): String {
+        val clamped = minuteOfDay.coerceIn(0, 1439)
+        val h24 = clamped / 60
+        val min = clamped % 60
+        val amPm = if (h24 < 12) "AM" else "PM"
+        val h12 = when {
+            h24 == 0 -> 12
+            h24 > 12 -> h24 - 12
+            else -> h24
+        }
+        return String.format(Locale.US, "%d:%02d %s", h12, min, amPm)
     }
 
     fun formatHourRangeLabel(hour: Int): String {
@@ -868,20 +975,23 @@ object IotDomainLogic {
         liveValue: Float?,
         liveEpochMs: Long,
         isToday: Boolean,
-        isDeviceOnline: Boolean
+        isDeviceOnline: Boolean,
+        isFromLocalCache: Boolean = false
     ): SegmentedChartSeries {
-        if (!isToday || !isDeviceOnline || liveValue == null || !liveValue.isFinite()) {
+        if (!isToday || !isDeviceOnline || isFromLocalCache || liveValue == null || !liveValue.isFinite()) {
             return base
         }
         if (liveEpochMs < 1_700_000_000_000L) return base
 
         val liveX = phHourFloat(liveEpochMs)
         val liveHour = phHourOfDay(liveEpochMs)
+        val liveMin = phMinuteOfDay(liveEpochMs)
         val livePt = ChartDataPoint(
             xHour = liveX,
             value = liveValue,
             epochMs = liveEpochMs,
-            hour = liveHour
+            hour = liveHour,
+            minuteOfDay = liveMin
         )
 
         if (base.segments.isEmpty()) {
@@ -902,7 +1012,9 @@ object IotDomainLogic {
         // Ignore if history already has a newer or matching timestamp
         if (elapsedMs < -30_000L) return base
 
-        val withinContinuity = elapsedMs in 0L..MAX_CONTINUITY_GAP_MS && (liveX - lastPt.xHour) <= 1.05f
+        // Strict hourly continuity: only connect if same or immediately adjacent hour without >15m outage
+        val hourDelta = liveHour - lastPt.hour
+        val withinContinuity = hourDelta in 0..1 && elapsedMs in 0L..MAX_CONTINUITY_GAP_MS && (liveX - lastPt.xHour) <= 1.05f
         return if (withinContinuity) {
             val updatedLastSeg = if (liveHour == lastPt.hour && liveX - lastPt.xHour < 0.08f) {
                 lastSeg.dropLast(1) + livePt.copy(xHour = maxOf(lastPt.xHour, liveX))
@@ -932,6 +1044,267 @@ object IotDomainLogic {
         } else {
             base
         }
+    }
+
+    /**
+     * Builds strictly discontinuous 1-minute line segments for a selected day in Philippine Time (UTC+8).
+     *
+     * Modes:
+     * - [selectedHour] in 0..23: plots minutes :00..:59 (x = 0.0f .. 59.0f) of that specific hour.
+     * - [selectedHour] == null: plots All Day minutes 00:00..23:59 (x = 0.0f .. 23.983f).
+     *
+     * Strict Offline & Sensor Accuracy Guarantees:
+     * 1. Breaks the line IMMEDIATELY whenever ANY single expected minute record is missing (never bridges even 1 missing minute).
+     * 2. Breaks the line when adjacent minutes have >90s timestamp outage.
+     * 3. Breaks that sensor's line on null/invalid readings without ever substituting 0.0f.
+     * 4. Preserves legitimate 0.0f finite values accurately.
+     * 5. Never fabricates minute records from hourly summaries.
+     */
+    fun buildSegmentedMinuteSeries(
+        day: DailyHistorySnapshot?,
+        selectedHour: Int? = null,
+        isToday: Boolean = false,
+        nowMs: Long = System.currentTimeMillis(),
+        selector: (HistoricalMinuteRecord) -> Float?
+    ): SegmentedChartSeries {
+        val minutesMap = day?.minutes.orEmpty()
+        if (minutesMap.isEmpty()) {
+            return SegmentedChartSeries(emptyList(), emptyList())
+        }
+
+        val segments = mutableListOf<List<ChartDataPoint>>()
+        val gaps = mutableListOf<OfflineGapWindow>()
+        var current = mutableListOf<ChartDataPoint>()
+
+        var lastValidX = -1f
+        var lastValidMinuteOfDay = -1
+        var lastValidEndAtMs = 0L
+
+        fun flushSegment() {
+            if (current.isNotEmpty()) {
+                segments.add(current.toList())
+                current = mutableListOf()
+            }
+        }
+
+        val startMinuteOfDay = if (selectedHour != null) selectedHour.coerceIn(0, 23) * 60 else 0
+        val endMinuteOfDay = if (selectedHour != null) startMinuteOfDay + 59 else 1439
+
+        for (mOfDay in startMinuteOfDay..endMinuteOfDay) {
+            val rec = minutesMap[mOfDay]
+            val xVal = if (selectedHour != null) {
+                (mOfDay - startMinuteOfDay).toFloat() // 0f .. 59f
+            } else {
+                mOfDay / 60f                          // 0f .. 23.9833f
+            }
+
+            if (rec == null || rec.sampleCount <= 0) {
+                // Break IMMEDIATELY on the very first missing minute!
+                flushSegment()
+                continue
+            }
+
+            val firstTs = rec.firstSeenAt.takeIf { it >= 1_700_000_000_000L } ?: 0L
+            val lastTs = rec.lastSeenAt.takeIf { it >= 1_700_000_000_000L } ?: firstTs
+
+            val missedAtLeastOneMinute =
+                lastValidMinuteOfDay >= 0 && (mOfDay - lastValidMinuteOfDay) > 1
+            val timestampOutage =
+                lastValidEndAtMs >= 1_700_000_000_000L &&
+                    firstTs >= 1_700_000_000_000L &&
+                    firstTs > lastValidEndAtMs &&
+                    (firstTs - lastValidEndAtMs) > 90_000L
+
+            if (missedAtLeastOneMinute || timestampOutage) {
+                flushSegment()
+                if (lastValidX >= 0f && xVal > lastValidX) {
+                    gaps.add(OfflineGapWindow(lastValidX, xVal))
+                }
+            }
+
+            val value = selector(rec)
+            if (value == null || !value.isFinite()) {
+                // Sensor fault during an online minute: break line, never plot fake 0
+                flushSegment()
+                continue
+            }
+
+            current.add(
+                ChartDataPoint(
+                    xHour = xVal,
+                    value = value,
+                    epochMs = lastTs,
+                    hour = mOfDay / 60,
+                    minuteOfDay = mOfDay
+                )
+            )
+            lastValidX = xVal
+            lastValidMinuteOfDay = mOfDay
+            lastValidEndAtMs = lastTs
+        }
+        flushSegment()
+
+        // Mark trailing offline gap on Today if >=1 expected full minute was missed before current PHT minute
+        if (isToday && lastValidMinuteOfDay >= 0 && nowMs >= 1_700_000_000_000L) {
+            val nowMinOfDay = phMinuteOfDay(nowMs)
+            if (nowMinOfDay in (startMinuteOfDay + 1)..endMinuteOfDay &&
+                (nowMinOfDay - lastValidMinuteOfDay) >= 2
+            ) {
+                val nowX = if (selectedHour != null) {
+                    (nowMinOfDay - startMinuteOfDay).toFloat()
+                } else {
+                    nowMinOfDay / 60f
+                }
+                if (nowX > lastValidX) {
+                    gaps.add(OfflineGapWindow(lastValidX, nowX))
+                }
+            }
+        }
+
+        return SegmentedChartSeries(segments = segments, gaps = gaps)
+    }
+
+    /**
+     * Appends a verified live (non-cached!) reading onto Today's minute series ONLY when fresh,
+     * breaking into a new segment whenever >=1 full minute was missed since the last recorded minute.
+     */
+    fun appendLiveMinutePointIfFresh(
+        base: SegmentedChartSeries,
+        selectedHour: Int?,
+        liveValue: Float?,
+        liveEpochMs: Long,
+        isToday: Boolean,
+        isDeviceOnline: Boolean,
+        isFromLocalCache: Boolean = false
+    ): SegmentedChartSeries {
+        if (!isToday || !isDeviceOnline || isFromLocalCache || liveValue == null || !liveValue.isFinite()) {
+            return base
+        }
+        if (liveEpochMs < 1_700_000_000_000L) return base
+
+        val liveMinOfDay = phMinuteOfDay(liveEpochMs)
+        val liveHour = liveMinOfDay / 60
+        if (selectedHour != null && liveHour != selectedHour) {
+            return base
+        }
+
+        val liveX = if (selectedHour != null) {
+            (liveMinOfDay % 60).toFloat()
+        } else {
+            liveMinOfDay / 60f
+        }
+        val livePt = ChartDataPoint(
+            xHour = liveX,
+            value = liveValue,
+            epochMs = liveEpochMs,
+            hour = liveHour,
+            minuteOfDay = liveMinOfDay
+        )
+
+        if (base.segments.isEmpty()) {
+            return SegmentedChartSeries(segments = listOf(listOf(livePt)), gaps = base.gaps)
+        }
+
+        val lastSeg = base.segments.last()
+        val lastPt = lastSeg.lastOrNull() ?: return base
+        val minuteDelta = liveMinOfDay - lastPt.minuteOfDay
+        if (minuteDelta < 0) return base
+
+        val elapsedMs = if (lastPt.epochMs >= 1_700_000_000_000L) {
+            liveEpochMs - lastPt.epochMs
+        } else {
+            0L
+        }
+
+        return when {
+            minuteDelta == 0 -> {
+                // Update active minute's live point in-place
+                val updatedSeg = lastSeg.dropLast(1) + livePt
+                SegmentedChartSeries(
+                    segments = base.segments.dropLast(1) + listOf(updatedSeg),
+                    gaps = base.gaps
+                )
+            }
+            minuteDelta == 1 && elapsedMs <= 90_000L -> {
+                // Immediately consecutive minute with no outage -> extend current segment
+                val updatedSeg = lastSeg + livePt
+                SegmentedChartSeries(
+                    segments = base.segments.dropLast(1) + listOf(updatedSeg),
+                    gaps = base.gaps
+                )
+            }
+            else -> {
+                // >=1 expected minute missing -> start a new disconnected segment and record gap!
+                val gapExists = base.gaps.any {
+                    kotlin.math.abs(it.startXHour - lastPt.xHour) < 0.01f &&
+                        kotlin.math.abs(it.endXHour - liveX) < 0.02f
+                }
+                val nextGaps = if (gapExists || liveX <= lastPt.xHour) {
+                    base.gaps
+                } else {
+                    base.gaps + OfflineGapWindow(lastPt.xHour, liveX)
+                }
+                SegmentedChartSeries(
+                    segments = base.segments + listOf(listOf(livePt)),
+                    gaps = nextGaps
+                )
+            }
+        }
+    }
+
+    /**
+     * Classifies an inspected hour slot so UI accurately distinguishes valid data, future hours,
+     * phone network loss, sensor faults, and ESP32 offline periods.
+     */
+    fun classifyHourlyInspectionStatus(
+        day: DailyHistorySnapshot?,
+        hour: Int,
+        hasSensorValue: Boolean,
+        isToday: Boolean,
+        isPhoneOnline: Boolean,
+        nowMs: Long = System.currentTimeMillis()
+    ): PointInspectionStatus {
+        if (hasSensorValue) return PointInspectionStatus.VALID
+        if (isToday && nowMs >= 1_700_000_000_000L && hour > phHourOfDay(nowMs)) {
+            return PointInspectionStatus.FUTURE_TIME
+        }
+        val rec = day?.hours?.get(hour)
+        if (rec != null && rec.sampleCount > 0) {
+            return PointInspectionStatus.SENSOR_FAULT
+        }
+        if (!isPhoneOnline && isToday) {
+            return PointInspectionStatus.PHONE_OFFLINE
+        }
+        return PointInspectionStatus.DEVICE_OFFLINE
+    }
+
+    /**
+     * Classifies an inspected minute slot (0..1439) without ever fabricating minute records from hourly summaries.
+     */
+    fun classifyMinuteInspectionStatus(
+        day: DailyHistorySnapshot?,
+        minuteOfDay: Int,
+        hasSensorValue: Boolean,
+        isToday: Boolean,
+        isPhoneOnline: Boolean,
+        nowMs: Long = System.currentTimeMillis()
+    ): PointInspectionStatus {
+        if (hasSensorValue) return PointInspectionStatus.VALID
+        if (isToday && nowMs >= 1_700_000_000_000L && minuteOfDay > phMinuteOfDay(nowMs)) {
+            return PointInspectionStatus.FUTURE_TIME
+        }
+        val minRec = day?.minutes?.get(minuteOfDay)
+        if (minRec != null && minRec.sampleCount > 0) {
+            return PointInspectionStatus.SENSOR_FAULT
+        }
+        val hourRec = day?.hours?.get((minuteOfDay / 60).coerceIn(0, 23))
+        if (hourRec != null && hourRec.sampleCount > 0 && day.minutes.none { it.key / 60 == hourRec.hour }) {
+            return PointInspectionStatus.LEGACY_HOURLY_ONLY
+        }
+        if (!isPhoneOnline && isToday) {
+            return PointInspectionStatus.PHONE_OFFLINE
+        }
+        return PointInspectionStatus.DEVICE_OFFLINE
     }
 
     /**
@@ -978,6 +1351,7 @@ object IotDomainLogic {
                 startedAt = (ev.createdAt - 4_000L).coerceAtLeast(0L),
                 endedAt = ev.createdAt,
                 hour = phHourOfDay(ev.createdAt),
+                minuteOfDay = phMinuteOfDay((ev.createdAt - 4_000L).coerceAtLeast(ev.createdAt)),
                 durationMs = 4_000L,
                 startMoisturePct = null,
                 endMoisturePct = null,

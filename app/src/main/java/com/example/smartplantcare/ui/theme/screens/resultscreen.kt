@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -58,7 +59,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -125,7 +128,7 @@ fun ResultScreen(
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(50.dp)
+                                .heightIn(min = 50.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Filled.MedicalServices,
@@ -138,8 +141,10 @@ fun ResultScreen(
                                 text = if (isHealthy) "Save Healthy Record & 7-Day Care" else "Save & View 7-Day Treatment Plan",
                                 fontFamily = HomeInterFont,
                                 fontSize = 14.sp,
+                                lineHeight = 18.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = Color.White
+                                color = Color.White,
+                                textAlign = TextAlign.Center
                             )
                         }
 
@@ -148,9 +153,10 @@ fun ResultScreen(
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = HomeColors.ForestPrimary),
                             border = BorderStroke(1.5.dp, HomeColors.ForestPrimary.copy(alpha = 0.45f)),
                             shape = RoundedCornerShape(14.dp),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(46.dp)
+                                .heightIn(min = 46.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Filled.CameraAlt,
@@ -163,8 +169,10 @@ fun ResultScreen(
                                 text = "Scan Another Leaf",
                                 fontFamily = HomeInterFont,
                                 fontSize = 14.sp,
+                                lineHeight = 18.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                color = HomeColors.ForestPrimary
+                                color = HomeColors.ForestPrimary,
+                                textAlign = TextAlign.Center
                             )
                         }
                     }
@@ -222,7 +230,9 @@ private fun ResultTopBar(onBackClick: () -> Unit) {
                     fontFamily = HomeInterFont,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
-                    color = HomeColors.TextPrimary
+                    color = HomeColors.TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             },
             navigationIcon = {
@@ -231,7 +241,7 @@ private fun ResultTopBar(onBackClick: () -> Unit) {
                     shape = RoundedCornerShape(12.dp),
                     border = BorderStroke(1.dp, HomeColors.CardBorder),
                     modifier = Modifier
-                        .padding(start = 16.dp)
+                        .padding(start = 8.dp)
                         .size(40.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .clickable(onClick = onBackClick)
@@ -413,7 +423,7 @@ private fun MainInfoCard(
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(14.dp)
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Surface(
                     shape = RoundedCornerShape(16.dp),
@@ -421,7 +431,7 @@ private fun MainInfoCard(
                     border = BorderStroke(1.dp, HomeColors.CardBorder)
                 ) {
                     Column(
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Row(verticalAlignment = Alignment.Bottom) {
@@ -430,6 +440,8 @@ private fun MainInfoCard(
                                 fontFamily = HomeInterFont,
                                 fontSize = 26.sp,
                                 fontWeight = FontWeight.Black,
+                                maxLines = 1,
+                                softWrap = false,
                                 color = if (isHealthy) HomeColors.SuccessGreen else HomeColors.ForestPrimary
                             )
                             Text(
@@ -447,6 +459,8 @@ private fun MainInfoCard(
                             fontSize = 9.sp,
                             fontWeight = FontWeight.Bold,
                             letterSpacing = 0.5.sp,
+                            maxLines = 1,
+                            softWrap = false,
                             color = HomeColors.TextMuted
                         )
                     }
@@ -458,12 +472,12 @@ private fun MainInfoCard(
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(34.dp)
-                                .clip(RoundedCornerShape(10.dp))
+                                .size(30.dp)
+                                .clip(RoundedCornerShape(9.dp))
                                 .background(if (isHealthy) HomeColors.SuccessBg else HomeColors.AlertBg),
                             contentAlignment = Alignment.Center
                         ) {
@@ -471,10 +485,10 @@ private fun MainInfoCard(
                                 imageVector = if (isHealthy) Icons.Filled.CheckCircle else Icons.Filled.Shield,
                                 contentDescription = null,
                                 tint = if (isHealthy) HomeColors.SuccessGreen else HomeColors.AlertRed,
-                                modifier = Modifier.size(17.dp)
+                                modifier = Modifier.size(16.dp)
                             )
                         }
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = "Status",
                                 fontFamily = HomeInterFont,
@@ -489,9 +503,10 @@ private fun MainInfoCard(
                                 },
                                 fontFamily = HomeInterFont,
                                 fontSize = 13.sp,
+                                lineHeight = 16.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = HomeColors.TextPrimary,
-                                maxLines = 1,
+                                maxLines = 2,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
@@ -499,12 +514,12 @@ private fun MainInfoCard(
 
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(34.dp)
-                                .clip(RoundedCornerShape(10.dp))
+                                .size(30.dp)
+                                .clip(RoundedCornerShape(9.dp))
                                 .background(HomeColors.SoftMint),
                             contentAlignment = Alignment.Center
                         ) {
@@ -512,10 +527,10 @@ private fun MainInfoCard(
                                 imageVector = Icons.Filled.Eco,
                                 contentDescription = null,
                                 tint = HomeColors.ForestPrimary,
-                                modifier = Modifier.size(17.dp)
+                                modifier = Modifier.size(16.dp)
                             )
                         }
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = "Host Crop",
                                 fontFamily = HomeInterFont,
@@ -526,9 +541,10 @@ private fun MainInfoCard(
                                 text = hostPlantName,
                                 fontFamily = HomeInterFont,
                                 fontSize = 13.sp,
+                                lineHeight = 16.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = HomeColors.TextPrimary,
-                                maxLines = 1,
+                                maxLines = 2,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
@@ -681,9 +697,9 @@ private fun ImmediateActionsCard(
         }
 
         val configuration = LocalConfiguration.current
-        val isSmallScreen = configuration.screenWidthDp < 360
+        val isCompactLayout = configuration.screenWidthDp < 400 || LocalDensity.current.fontScale > 1.15f
 
-        if (isSmallScreen) {
+        if (isCompactLayout) {
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -751,12 +767,13 @@ private fun ActionAdviceCard(
         Column(modifier = Modifier.padding(16.dp)) {
             Surface(
                 color = badgeBg,
-                shape = RoundedCornerShape(50)
+                shape = RoundedCornerShape(10.dp)
             ) {
                 Text(
                     text = title,
                     fontFamily = HomeInterFont,
                     fontSize = 11.sp,
+                    lineHeight = 14.sp,
                     fontWeight = FontWeight.Bold,
                     color = titleColor,
                     modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)

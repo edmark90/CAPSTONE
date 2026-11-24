@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -113,13 +114,17 @@ fun TreatmentPlanDetailScreen(
                     title = {
                         val currentPlan = plan
                         val isHealthy = currentPlan?.isHealthy == true
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
                             Text(
                                 text = currentPlan?.plantName?.ifBlank { "Plant" }
                                     ?: if (isDetailLoading) "Loading..." else "Treatment Plan",
                                 fontFamily = HomeInterFont,
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 17.sp,
+                                fontSize = 16.sp,
+                                lineHeight = 20.sp,
                                 color = when {
                                     currentPlan == null -> HomeColors.TextPrimary
                                     isHealthy -> HomeColors.ForestMedium
@@ -128,7 +133,6 @@ fun TreatmentPlanDetailScreen(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
-                            Spacer(Modifier.height(2.dp))
                             val badgeColor = when {
                                 currentPlan == null -> HomeColors.SoftMint
                                 isHealthy -> HomeColors.SuccessBg
@@ -150,8 +154,11 @@ fun TreatmentPlanDetailScreen(
                                     text = badgeText,
                                     fontFamily = HomeInterFont,
                                     fontSize = 10.sp,
+                                    lineHeight = 12.sp,
                                     color = badgeTextColor,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 1.dp),
                                     fontWeight = FontWeight.SemiBold
                                 )
                             }
@@ -220,16 +227,19 @@ fun TreatmentPlanDetailScreen(
                     item {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(top = 4.dp)
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 4.dp)
                         ) {
                             Text(
                                 text = "Treatment Schedule",
                                 fontFamily = HomeInterFont,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 17.sp,
-                                color = HomeColors.TextPrimary
+                                color = HomeColors.TextPrimary,
+                                modifier = Modifier.weight(1f, fill = false)
                             )
-                            Spacer(Modifier.width(8.dp))
                             Surface(color = HomeColors.SoftMint, shape = RoundedCornerShape(50)) {
                                 Text(
                                     text = "7 Days",
@@ -237,6 +247,8 @@ fun TreatmentPlanDetailScreen(
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     color = HomeColors.ForestMedium,
+                                    maxLines = 1,
+                                    softWrap = false,
                                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
                                 )
                             }
@@ -298,7 +310,8 @@ fun TreatmentPlanDetailScreen(
                             fontFamily = HomeInterFont,
                             fontSize = 17.sp,
                             fontWeight = FontWeight.Bold,
-                            color = HomeColors.TextPrimary
+                            color = HomeColors.TextPrimary,
+                            textAlign = TextAlign.Center
                         )
                         Text(
                             text = "This plan may have been removed or is no longer available.",
@@ -413,7 +426,7 @@ fun ProgressSection(completedCount: Int, currentDayIndex: Int) {
             modifier = Modifier.padding(18.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(contentAlignment = Alignment.Center, modifier = Modifier.size(62.dp)) {
+            Box(contentAlignment = Alignment.Center, modifier = Modifier.size(68.dp)) {
                 CircularProgressIndicator(
                     progress = { progress },
                     modifier = Modifier.fillMaxSize(),
@@ -427,7 +440,9 @@ fun ProgressSection(completedCount: Int, currentDayIndex: Int) {
                     fontFamily = HomeInterFont,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
-                    color = HomeColors.TextPrimary
+                    color = HomeColors.TextPrimary,
+                    maxLines = 1,
+                    softWrap = false
                 )
             }
             Spacer(modifier = Modifier.width(18.dp))
@@ -706,6 +721,7 @@ fun DiseaseInformationSection(diseaseName: String, isHealthy: Boolean) {
         Column(modifier = Modifier.padding(18.dp)) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
@@ -758,6 +774,8 @@ fun DiseaseInformationSection(diseaseName: String, isHealthy: Boolean) {
                             fontFamily = HomeInterFont,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false,
                             color = when {
                                 isSpeaking -> HomeColors.AlertRed
                                 ttsInitialized -> HomeColors.ForestPrimary
@@ -916,7 +934,8 @@ fun TimelineItem(
                             },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(46.dp),
+                                .heightIn(min = 46.dp),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = HomeColors.ForestPrimary,
                                 contentColor = Color.White
@@ -930,7 +949,8 @@ fun TimelineItem(
                                 color = Color.White,
                                 fontFamily = HomeInterFont,
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp
+                                fontSize = 14.sp,
+                                textAlign = TextAlign.Center
                             )
                         }
                     }
@@ -952,16 +972,21 @@ fun TimelineItem(
                     ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
                                 Text(
                                     text = "Day $dayNum",
                                     fontFamily = HomeInterFont,
                                     fontSize = 12.sp,
                                     color = if (isLocked) HomeColors.TextMuted else HomeColors.TextSecondary,
-                                    fontWeight = FontWeight.SemiBold
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                                 if (isCompleted) {
                                     Spacer(modifier = Modifier.width(6.dp))
@@ -972,6 +997,8 @@ fun TimelineItem(
                                             fontSize = 10.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = HomeColors.SuccessGreen,
+                                            maxLines = 1,
+                                            softWrap = false,
                                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                                         )
                                     }
@@ -985,6 +1012,8 @@ fun TimelineItem(
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = HomeColors.AlertRed,
+                                    maxLines = 1,
+                                    softWrap = false,
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(6.dp))
                                         .clickable { onUndo() }

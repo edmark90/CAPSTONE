@@ -604,7 +604,7 @@ exports.checkDeviceOfflineScheduled = (0, scheduler_1.onSchedule)("every 5 minut
     if (Object.keys(updates).length > 0) {
         await db.ref().update(updates);
     }
-    // Enforce strict 7-day retention (Asia/Manila PHT) on /deviceHistory/{deviceId}/days
+    // Enforce strict 7-day retention (Asia/Manila PHT) on /deviceHistory/{deviceId}/days & minuteDays
     const cutoffDateKey = formatPhDateKey(now - 6 * 24 * 60 * 60 * 1000);
     const historySnap = await db.ref("/deviceHistory").get();
     if (historySnap.exists()) {
@@ -612,14 +612,23 @@ exports.checkDeviceOfflineScheduled = (0, scheduler_1.onSchedule)("every 5 minut
         historySnap.forEach((devHistChild) => {
             const devId = devHistChild.key;
             const daysChild = devHistChild.child("days");
-            if (!daysChild.exists())
-                return;
-            daysChild.forEach((dayChild) => {
-                const dayKey = dayChild.key;
-                if (dayKey && dayKey < cutoffDateKey) {
-                    pruneUpdates[`/deviceHistory/${devId}/days/${dayKey}`] = null;
-                }
-            });
+            if (daysChild.exists()) {
+                daysChild.forEach((dayChild) => {
+                    const dayKey = dayChild.key;
+                    if (dayKey && dayKey < cutoffDateKey) {
+                        pruneUpdates[`/deviceHistory/${devId}/days/${dayKey}`] = null;
+                    }
+                });
+            }
+            const minuteDaysChild = devHistChild.child("minuteDays");
+            if (minuteDaysChild.exists()) {
+                minuteDaysChild.forEach((minDayChild) => {
+                    const dayKey = minDayChild.key;
+                    if (dayKey && dayKey < cutoffDateKey) {
+                        pruneUpdates[`/deviceHistory/${devId}/minuteDays/${dayKey}`] = null;
+                    }
+                });
+            }
         });
         if (Object.keys(pruneUpdates).length > 0) {
             await db.ref().update(pruneUpdates);

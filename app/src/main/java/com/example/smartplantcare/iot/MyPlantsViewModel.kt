@@ -1,6 +1,10 @@
 package com.example.smartplantcare.iot
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.os.SystemClock
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.smartplantcare.data.NotificationHistory
@@ -15,6 +19,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.json.JSONArray
+import org.json.JSONObject
 
 enum class MyPlantsStep {
     SCAN_ESP32,
@@ -69,19 +75,25 @@ data class MyPlantsUiState(
     ),
     val pendingCommandId: String? = null,
     val pendingWaterCrop: String? = null,
+    val pendingCommandPhase: PendingCommandPhase = PendingCommandPhase.IDLE,
     val isSubmittingAction: Boolean = false,
     val isRefreshingWeather: Boolean = false,
     val isSyncingDevice: Boolean = false,
+    val lastSyncCompletedAtMs: Long = 0L,
+    val lastSyncLatencyMs: Long = 0L,
     val shouldPromptOwnerLocation: Boolean = false,
 
     // Page 4: Share My Plant
     val latestGeneratedInvite: ShareInvite? = null,
 
-    // Page 7: 7-Day Historical Monitoring & Irrigation Records (Asia/Manila PHT)
+    // Page 7: 7-Day Historical Monitoring & Irrigation Records (Asia/Manila PHT, UTC+8)
     val selectedHistoryDateKey: String = IotDomainLogic.formatPhDateKey(System.currentTimeMillis()),
     val historyDaysWindow: List<HistoryDateOption> = IotDomainLogic.generateSevenDayWindowPht(),
     val historyByDate: Map<String, DailyHistorySnapshot> = emptyMap(),
+    val historyGranularity: HistoryGranularity = HistoryGranularity.BY_HOURS,
+    val selectedMinuteHourFilter: Int? = null, // null = All Day (00:00-23:59), 0..23 = Hour (:00-:59)
     val isLoadingHistory: Boolean = false,
+    val isLoadingMinuteHistory: Boolean = false,
 
     // Network & Phone Connectivity
     val isPhoneOnline: Boolean = true,
@@ -104,6 +116,9 @@ class MyPlantsViewModel(
     }
     private val seenEventsPrefs by lazy {
         appCtx.getSharedPreferences("spc_iot_seen_events", Context.MODE_PRIVATE)
+    }
+    private val fastCachePrefs by lazy {
+        appCtx.getSharedPreferences("spc_iot_fast_cache", Context.MODE_PRIVATE)
     }
     private val notifLock = Any()
     private val seededDevices = mutableSetOf<String>()
@@ -159,14 +174,95 @@ class MyPlantsViewModel(
     private var liveDeviceJob: Job? = null
     private var liveWatchdogJob: Job? = null
     private var historyJob: Job? = null
+    private var minuteHistoryJob: Job? = null
+    private var observedMinuteKeyToken: String? = null
     private var lastPrunedHistoryKey: String? = null
     private var rawCloudHistoryByDate: Map<String, DailyHistorySnapshot> = emptyMap()
+    private val rawCloudMinutesByDate = mutableMapOf<String, Map<Int, HistoricalMinuteRecord>>()
+    private val sessionLiveMinutesByDate = mutableMapOf<String, MutableMap<Int, HistoricalMinuteRecord>>()
+    private var lastRecordedSessionTelemetryTs: Long = 0L
     private var espScanJob: Job? = null
     private var lastReportedCmdId: String? = null
     private var lastAutoWeatherSyncDeviceId: String? = null
     private var lastReconciledEpochKey: String? = null
     private var lastRealtimeDeliveryAtMs: Long = 0L
+    private var lastSocketReconnectAtMs: Long = 0L
     private var pendingFirebaseClaimResult: ProvisionResult? = null
+
+    private fun currentTransportLabel(): String {
+        val cm = appCtx.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            ?: return "UNKNOWN"
+        val caps = runCatching { cm.getNetworkCapabilities(cm.activeNetwork) }.getOrNull()
+            ?: return "OFFLINE"
+        return when {
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "WIFI"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "MOBILE_DATA"
+            else -> "OTHER"
+        }
+    }
+
+    private fun saveDeviceLinksCache(uid: String, links: List<UserDeviceLink>, activeDeviceId: String?) {
+        runCatching {
+            val arr = JSONArray()
+            for (l in links) {
+                arr.put(JSONObject().apply {
+                    put("deviceId", l.deviceId)
+                    put("role", l.role.slug)
+                    put("ownershipEpoch", l.ownershipEpoch)
+                    put("addedAt", l.addedAt)
+                })
+            }
+            fastCachePrefs.edit()
+                .putString("links_$uid", arr.toString())
+                .putString("active_$uid", activeDeviceId.orEmpty())
+                .apply()
+        }
+    }
+
+    private fun loadCachedDeviceLinks(uid: String): Pair<List<UserDeviceLink>, String?> {
+        return runCatching {
+            val raw = fastCachePrefs.getString("links_$uid", null) ?: return@runCatching emptyList<UserDeviceLink>() to null
+            val arr = JSONArray(raw)
+            val list = buildList {
+                for (i in 0 until arr.length()) {
+                    val o = arr.optJSONObject(i) ?: continue
+                    val devId = o.optString("deviceId", "")
+                    if (devId.isBlank()) continue
+                    add(
+                        UserDeviceLink(
+                            deviceId = devId,
+                            role = DeviceRole.fromSlug(o.optString("role", "viewer")),
+                            ownershipEpoch = o.optLong("ownershipEpoch", 1L),
+                            addedAt = o.optLong("addedAt", 0L)
+                        )
+                    )
+                }
+            }
+            val active = fastCachePrefs.getString("active_$uid", null)?.takeIf { it.isNotBlank() }
+            list to active
+        }.getOrDefault(emptyList<UserDeviceLink>() to null)
+    }
+
+    private fun saveSnapshotCache(uid: String, snapshot: LiveDeviceSnapshot) {
+        if (snapshot.isFromLocalCache || uid.isBlank()) return
+        runCatching {
+            val json = repository.serializeSnapshotForLocalCache(snapshot)
+            fastCachePrefs.edit().putString("snap_${uid}_${snapshot.deviceId}", json).apply()
+        }
+    }
+
+    private fun loadCachedSnapshot(uid: String, deviceId: String): LiveDeviceSnapshot? {
+        if (uid.isBlank() || deviceId.isBlank()) return null
+        val raw = fastCachePrefs.getString("snap_${uid}_$deviceId", null) ?: return null
+        return repository.deserializeCachedSnapshot(deviceId, raw)
+    }
+
+    private fun clearCachedDevice(uid: String?, deviceId: String) {
+        if (uid.isNullOrBlank()) return
+        runCatching {
+            fastCachePrefs.edit().remove("snap_${uid}_$deviceId").apply()
+        }
+    }
 
     fun bindUser(uid: String?, email: String, displayName: String, isGuest: Boolean) {
         if (isGuest || uid.isNullOrBlank()) {
@@ -174,7 +270,11 @@ class MyPlantsViewModel(
             liveDeviceJob?.cancel()
             liveWatchdogJob?.cancel()
             historyJob?.cancel()
+            minuteHistoryJob?.cancel()
+            observedMinuteKeyToken = null
             rawCloudHistoryByDate = emptyMap()
+            rawCloudMinutesByDate.clear()
+            sessionLiveMinutesByDate.clear()
             boundUid = null
             _uiState.update {
                 MyPlantsUiState(
@@ -192,79 +292,219 @@ class MyPlantsViewModel(
             return
         }
         boundUid = uid
+
+        // 1. Instant local cache restore (<30ms) clearly tagged with isFromLocalCache = true
+        val (cachedLinks, cachedActiveId) = loadCachedDeviceLinks(uid)
+        if (cachedLinks.isNotEmpty()) {
+            val chosenLink = cachedLinks.firstOrNull { it.deviceId == cachedActiveId } ?: cachedLinks.first()
+            val cachedSnap = loadCachedSnapshot(uid, chosenLink.deviceId)
+            _uiState.update { st ->
+                st.copy(
+                    isLoadingInitialDevices = false,
+                    userDevices = cachedLinks,
+                    activeDeviceId = chosenLink.deviceId,
+                    activeRole = chosenLink.role,
+                    step = MyPlantsStep.LIVE_DASHBOARD,
+                    liveSnapshot = cachedSnap ?: st.liveSnapshot
+                )
+            }
+            observeLiveDevice(chosenLink.deviceId)
+            startLiveSyncWatchdog(chosenLink.deviceId)
+            startObservingDeviceHistory(chosenLink.deviceId, forceRefresh = false)
+        }
+
         observeUserDevices(uid)
+    }
+
+    private fun applyDiscoveredDeviceLinks(uid: String, links: List<UserDeviceLink>) {
+        val currentActive = _uiState.value.activeDeviceId
+        val chosen = links.firstOrNull { it.deviceId == currentActive } ?: links.firstOrNull()
+        saveDeviceLinksCache(uid, links, chosen?.deviceId)
+
+        val cachedFallback = if (chosen != null && _uiState.value.liveSnapshot?.deviceId != chosen.deviceId) {
+            loadCachedSnapshot(uid, chosen.deviceId)
+        } else {
+            _uiState.value.liveSnapshot
+        }
+
+        _uiState.update { st ->
+            val shouldEnterDashboard = chosen != null &&
+                st.step != MyPlantsStep.WIFI_AND_CLAIM &&
+                !st.isProvisioning
+            val shouldReturnToScan = chosen == null &&
+                st.step == MyPlantsStep.LIVE_DASHBOARD
+            st.copy(
+                isLoadingInitialDevices = false,
+                userDevices = links,
+                activeDeviceId = chosen?.deviceId,
+                activeRole = chosen?.role ?: DeviceRole.OWNER,
+                step = when {
+                    shouldEnterDashboard -> MyPlantsStep.LIVE_DASHBOARD
+                    shouldReturnToScan -> MyPlantsStep.SCAN_ESP32
+                    else -> st.step
+                },
+                subPage = if (shouldReturnToScan) MyPlantsSubPage.NONE else st.subPage,
+                liveSnapshot = if (chosen == null) null else cachedFallback
+            )
+        }
+
+        if (chosen != null) {
+            observeLiveDevice(chosen.deviceId)
+            startLiveSyncWatchdog(chosen.deviceId)
+            startObservingDeviceHistory(chosen.deviceId, forceRefresh = false)
+        } else {
+            liveDeviceJob?.cancel()
+            liveWatchdogJob?.cancel()
+            historyJob?.cancel()
+            minuteHistoryJob?.cancel()
+            observedMinuteKeyToken = null
+            rawCloudHistoryByDate = emptyMap()
+            rawCloudMinutesByDate.clear()
+        }
     }
 
     private fun observeUserDevices(uid: String) {
         userDevicesJob?.cancel()
         userDevicesJob = viewModelScope.launch {
-            repository.observeUserDevices(uid).collect { links ->
-                val currentActive = _uiState.value.activeDeviceId
-                val chosen = links.firstOrNull { it.deviceId == currentActive } ?: links.firstOrNull()
-
-                _uiState.update { st ->
-                    val shouldEnterDashboard = chosen != null &&
-                        st.step != MyPlantsStep.WIFI_AND_CLAIM &&
-                        !st.isProvisioning
-                    val shouldReturnToScan = chosen == null &&
-                        st.step == MyPlantsStep.LIVE_DASHBOARD
-                    st.copy(
-                        isLoadingInitialDevices = false,
-                        userDevices = links,
-                        activeDeviceId = chosen?.deviceId,
-                        activeRole = chosen?.role ?: DeviceRole.OWNER,
-                        step = when {
-                            shouldEnterDashboard -> MyPlantsStep.LIVE_DASHBOARD
-                            shouldReturnToScan -> MyPlantsStep.SCAN_ESP32
-                            else -> st.step
-                        },
-                        subPage = if (shouldReturnToScan) MyPlantsSubPage.NONE else st.subPage,
-                        liveSnapshot = if (chosen == null) null else st.liveSnapshot
-                    )
+            // Parallel fast authenticated REST discovery so startup never blocks on slow WebSocket upgrade
+            launch {
+                if (NetworkMonitor.refreshOnlineState()) {
+                    repository.fetchUserDevicesViaRest(uid).onSuccess { restLinks ->
+                        if (boundUid == uid) {
+                            applyDiscoveredDeviceLinks(uid, restLinks)
+                        }
+                    }
                 }
-
-                if (chosen != null) {
-                    observeLiveDevice(chosen.deviceId)
-                    startLiveSyncWatchdog(chosen.deviceId)
-                    startObservingDeviceHistory(chosen.deviceId, forceRefresh = false)
-                } else {
-                    liveDeviceJob?.cancel()
-                    liveWatchdogJob?.cancel()
-                    historyJob?.cancel()
-                    rawCloudHistoryByDate = emptyMap()
+            }
+            repository.observeUserDevices(uid).collect { links ->
+                if (boundUid == uid) {
+                    applyDiscoveredDeviceLinks(uid, links)
                 }
             }
         }
     }
 
-    private fun applyLiveSnapshot(deviceId: String, snapshot: LiveDeviceSnapshot?, fromRealtime: Boolean) {
-        if (fromRealtime) {
-            lastRealtimeDeliveryAtMs = System.currentTimeMillis()
+    private fun recordVerifiedLiveMinuteFallback(snapshot: LiveDeviceSnapshot) {
+        // Strictly record ONLY verified live server snapshots (NEVER cached readings or stale offline data!)
+        if (snapshot.isFromLocalCache) return
+        val telTs = snapshot.telemetry.updatedAt
+        if (telTs < 1_700_000_000_000L || telTs == lastRecordedSessionTelemetryTs) return
+        if (!IotDomainLogic.isDeviceOnlineFresh(snapshot)) return
+
+        lastRecordedSessionTelemetryTs = telTs
+        val dateKey = IotDomainLogic.formatPhDateKey(telTs)
+        val mOfDay = IotDomainLogic.phMinuteOfDay(telTs)
+        val t = snapshot.telemetry
+        val w = snapshot.weather
+
+        val dayMap = sessionLiveMinutesByDate.getOrPut(dateKey) { mutableMapOf() }
+        val prev = dayMap[mOfDay]
+        val nextSamples = (prev?.sampleCount ?: 0) + 1
+        fun blend(oldVal: Float?, newVal: Float?, valid: Boolean): Float? {
+            if (!valid || newVal == null || !newVal.isFinite()) return oldVal
+            return if (oldVal == null || prev == null || prev.sampleCount <= 0) {
+                newVal
+            } else {
+                (oldVal * prev.sampleCount + newVal) / (prev.sampleCount + 1)
+            }
         }
+
+        dayMap[mOfDay] = HistoricalMinuteRecord(
+            minuteOfDay = mOfDay,
+            firstSeenAt = if (prev != null && prev.firstSeenAt > 0L) minOf(prev.firstSeenAt, telTs) else telTs,
+            lastSeenAt = maxOf(prev?.lastSeenAt ?: 0L, telTs),
+            sampleCount = nextSamples,
+            tomatoPct = blend(prev?.tomatoPct, t.tomato.pct, t.tomato.valid),
+            chiliPct = blend(prev?.chiliPct, t.chili.pct, t.chili.valid),
+            eggplantPct = blend(prev?.eggplantPct, t.eggplant.pct, t.eggplant.valid),
+            temperatureC = blend(prev?.temperatureC, t.temperatureC, t.dhtValid),
+            humidityPct = blend(prev?.humidityPct, t.humidityPct, t.dhtValid),
+            lightPct = blend(prev?.lightPct, t.lightBrightnessPct, t.lightValid),
+            reservoirPct = blend(prev?.reservoirPct, t.reservoirPct, t.reservoirValid),
+            reservoirGapIn = blend(prev?.reservoirGapIn, t.reservoirAirGapInches, t.reservoirValid),
+            reservoirState = t.reservoirState,
+            rainProbPct = if (w.valid && w.rainProbabilityPct in 0..100) w.rainProbabilityPct else prev?.rainProbPct,
+            rainWet = (prev?.rainWet == true) || t.rainRawWet || t.rainWetConfirmed,
+            rainConfirmed = (prev?.rainConfirmed == true) || t.rainWetConfirmed,
+            rainSuspended = (prev?.rainSuspended == true) || snapshot.status.rainSuspensionActive,
+            rainWetSamples = (prev?.rainWetSamples ?: 0) + if (t.rainRawWet || t.rainWetConfirmed) 1 else 0
+        )
+    }
+
+    private fun applyLiveSnapshot(deviceId: String, snapshot: LiveDeviceSnapshot?, fromRealtime: Boolean) {
+        val nowMs = System.currentTimeMillis()
+        if (fromRealtime && snapshot != null && !snapshot.isFromLocalCache) {
+            lastRealtimeDeliveryAtMs = nowMs
+        }
+        if (snapshot != null && !snapshot.isFromLocalCache) {
+            boundUid?.let { uid -> saveSnapshotCache(uid, snapshot) }
+            recordVerifiedLiveMinuteFallback(snapshot)
+        }
+
         _uiState.update { st ->
             var nextSnackbar = st.snackbarMessage
             var nextPendingCmd = st.pendingCommandId
             var nextPendingCrop = st.pendingWaterCrop
+            var nextPhase = st.pendingCommandPhase
             val trackedId = st.pendingCommandId
-            if (trackedId != null && snapshot != null) {
+
+            if (trackedId != null && snapshot != null && !snapshot.isFromLocalCache) {
                 val res = snapshot.commandResults[trackedId]
-                if (res != null && lastReportedCmdId != "${trackedId}_${res.state}") {
-                    lastReportedCmdId = "${trackedId}_${res.state}"
-                    nextSnackbar = "${res.state}: ${res.reason}"
-                    if (res.state in setOf("DONE", "REJECTED", "ABORTED")) {
-                        nextPendingCmd = null
-                        nextPendingCrop = null
+                if (res != null) {
+                    val stateUpper = res.state.uppercase()
+                    val reportToken = "${trackedId}_$stateUpper"
+                    when (stateUpper) {
+                        "ACCEPTED" -> {
+                            nextPhase = PendingCommandPhase.ACKNOWLEDGED
+                            if (lastReportedCmdId != reportToken) {
+                                lastReportedCmdId = reportToken
+                                nextSnackbar = "Acknowledged by ESP32: ${res.reason}"
+                            }
+                        }
+                        "RUNNING" -> {
+                            nextPhase = PendingCommandPhase.EXECUTING
+                            lastReportedCmdId = reportToken
+                        }
+                        "DONE" -> {
+                            if (lastReportedCmdId != reportToken) {
+                                lastReportedCmdId = reportToken
+                                nextSnackbar = "Completed: ${res.reason}"
+                            }
+                            nextPendingCmd = null
+                            nextPendingCrop = null
+                            nextPhase = PendingCommandPhase.IDLE
+                        }
+                        "REJECTED", "ABORTED" -> {
+                            if (lastReportedCmdId != reportToken) {
+                                lastReportedCmdId = reportToken
+                                nextSnackbar = "${stateUpper}: ${res.reason}"
+                            }
+                            nextPendingCmd = null
+                            nextPendingCrop = null
+                            nextPhase = PendingCommandPhase.IDLE
+                        }
                     }
                 }
             }
-            if (snapshot != null && (snapshot.status.isActivelyIrrigating || snapshot.status.isInSoakSettle)) {
-                nextPendingCrop = null
+            if (snapshot != null && !snapshot.isFromLocalCache) {
+                if (snapshot.status.isActivelyIrrigating) {
+                    if (nextPendingCrop != null && snapshot.status.activeValve.equals(nextPendingCrop, ignoreCase = true)) {
+                        nextPhase = PendingCommandPhase.EXECUTING
+                    }
+                } else if (snapshot.status.isInSoakSettle && nextPhase == PendingCommandPhase.EXECUTING) {
+                    nextPendingCrop = null
+                    nextPendingCmd = null
+                    nextPhase = PendingCommandPhase.IDLE
+                }
             }
 
-            // Keep role synchronized with /acl/members
+            // Keep role synchronized with /acl/members when full ACL is present
             val uid = boundUid
-            val aclRole = snapshot?.members?.firstOrNull { it.uid == uid }?.role
-                ?: st.activeRole
+            val aclRole = if (snapshot != null && snapshot.members.isNotEmpty()) {
+                snapshot.members.firstOrNull { it.uid == uid }?.role ?: st.activeRole
+            } else {
+                st.activeRole
+            }
 
             // Filter latest generated invite if older than 24 hours or expired
             val validInvite = st.latestGeneratedInvite?.takeIf { invite ->
@@ -280,6 +520,9 @@ class MyPlantsViewModel(
                 latestGeneratedInvite = validInvite,
                 pendingCommandId = nextPendingCmd,
                 pendingWaterCrop = nextPendingCrop,
+                pendingCommandPhase = nextPhase,
+                lastSyncCompletedAtMs = if (snapshot != null && !snapshot.isFromLocalCache) nowMs else st.lastSyncCompletedAtMs,
+                lastSyncLatencyMs = if (snapshot != null && snapshot.lastSyncLatencyMs > 0L) snapshot.lastSyncLatencyMs else st.lastSyncLatencyMs,
                 snackbarMessage = nextSnackbar
             )
         }
@@ -336,12 +579,10 @@ class MyPlantsViewModel(
         }
 
         // Dispatch deduplicated Android system notifications & NotificationHistory entries
-        // for new ESP32 state-transition events (per V3.1 Specification Section 14.2)
-        if (snapshot != null) {
+        // ONLY for verified live server snapshots (never for locally restored cache!)
+        if (snapshot != null && !snapshot.isFromLocalCache) {
             dispatchNewDeviceEventNotifications(snapshot)
-            if (historyJob?.isActive == true || _uiState.value.subPage == MyPlantsSubPage.HISTORY_MONITORING) {
-                recomputeMergedHistoryUiState(deviceId, snapshot.events)
-            }
+            recomputeMergedHistoryUiState(deviceId, snapshot.events)
         }
     }
 
@@ -474,7 +715,7 @@ class MyPlantsViewModel(
     }
 
     private fun isNewerSnapshot(candidate: LiveDeviceSnapshot, current: LiveDeviceSnapshot?): Boolean {
-        if (current == null) return true
+        if (current == null || current.isFromLocalCache) return true
         return candidate.status.lastSeenAt != current.status.lastSeenAt ||
             candidate.telemetry.updatedAt != current.telemetry.updatedAt ||
             candidate.status.bootId != current.status.bootId ||
@@ -486,44 +727,86 @@ class MyPlantsViewModel(
             candidate.telemetry.rainWetConfirmed != current.telemetry.rainWetConfirmed ||
             candidate.telemetry.rainAccidentalWet != current.telemetry.rainAccidentalWet ||
             candidate.config != current.config ||
-            candidate.weather.fetchedAt != current.weather.fetchedAt
+            candidate.weather.fetchedAt != current.weather.fetchedAt ||
+            candidate.commandResults != current.commandResults
     }
 
     /**
-     * Background safety-net watchdog: if Firebase SDK's WebSocket silently stalls (e.g. after
-     * SoftAP->Wi-Fi switching or ESP32 power-cycling), polls Firebase directly via no-cache HTTPS REST
-     * every 6s (when offline/stale) or 10s (when healthy). Whenever newer ESP32 data is found on the
-     * server, it updates the Dashboard immediately AND resets the Firebase WebSocket stream!
+     * Background safety-net watchdog (active across BOTH Home and My Plants tabs):
+     * - Immediately promotes cached cold-start state to verified live data via authenticated REST.
+     * - NEVER tears down a healthy WebSocket (previously `>= 5_000L` collided with ESP32's 6,000ms cadence!).
+     * - Only reconnects the Firebase WebSocket when genuinely stalled (`>= 24s` without realtime delivery
+     *   while REST proves newer ESP32 server data exists, with a 30s cooldown between socket resets).
      */
     private fun startLiveSyncWatchdog(deviceId: String) {
+        if (liveWatchdogJob?.isActive == true && _uiState.value.activeDeviceId == deviceId) {
+            return
+        }
         liveWatchdogJob?.cancel()
         liveWatchdogJob = viewModelScope.launch {
-            // Immediate direct REST check 1.2s after entering dashboard so stale cache never sticks
-            delay(1200L)
+            delay(150L)
             while (true) {
                 val phoneOnlineNow = NetworkMonitor.refreshOnlineState()
                 val st = _uiState.value
                 val currentSnap = st.liveSnapshot
                 val now = System.currentTimeMillis()
-                val currentStale = currentSnap == null || !IotDomainLogic.isDeviceOnlineFresh(
-                    status = currentSnap.status,
+                val isCachedOrEmpty = currentSnap == null || currentSnap.isFromLocalCache
+                val currentStale = isCachedOrEmpty || !IotDomainLogic.isDeviceOnlineFresh(
+                    status = currentSnap!!.status,
                     nowMs = now,
                     receivedAtClientMs = currentSnap.receivedAtClientMs,
                     telemetryUpdatedAt = currentSnap.telemetry.updatedAt
                 )
-                if (phoneOnlineNow && st.step == MyPlantsStep.LIVE_DASHBOARD && st.activeDeviceId == deviceId && !st.isSyncingDevice) {
-                    val realtimeSilent = (now - lastRealtimeDeliveryAtMs) >= 5_000L
-                    if (realtimeSilent || currentStale) {
-                        val restSnap = repository.fetchDeviceSnapshotViaRest(deviceId).getOrNull()
+                val eligibleScreen = st.activeDeviceId == deviceId &&
+                    st.step != MyPlantsStep.WIFI_AND_CLAIM &&
+                    !st.isProvisioning &&
+                    !st.isSyncingDevice
+
+                if (phoneOnlineNow && eligibleScreen) {
+                    val hasPendingCmd = st.pendingCommandId != null
+                    val wsQuietMs = if (lastRealtimeDeliveryAtMs > 0L) (now - lastRealtimeDeliveryAtMs) else Long.MAX_VALUE
+                    val shouldProbeRest = isCachedOrEmpty ||
+                        hasPendingCmd ||
+                        currentStale ||
+                        wsQuietMs >= 15_000L
+
+                    if (shouldProbeRest) {
+                        val restSnap = repository.fetchDeviceSnapshotViaRest(
+                            deviceId = deviceId,
+                            existingSnapshot = currentSnap,
+                            slimDelta = !isCachedOrEmpty,
+                            pendingCommandId = st.pendingCommandId
+                        ).getOrNull()
+
                         if (restSnap != null && isNewerSnapshot(restSnap, _uiState.value.liveSnapshot)) {
+                            val transport = currentTransportLabel()
+                            Log.d(
+                                "SpcSyncPerf",
+                                "Watchdog REST sync [$transport] device=$deviceId latency=${restSnap.lastSyncLatencyMs}ms wsQuietMs=$wsQuietMs"
+                            )
                             applyLiveSnapshot(deviceId, restSnap, fromRealtime = false)
-                            // WebSocket missed a real server update — reset socket so live streaming recovers!
-                            repository.reconnectRealtimeSocket()
-                            observeLiveDevice(deviceId, forceRestart = true)
+
+                            // Reconnect WebSocket ONLY when genuinely stalled (>=24s silent while server advanced)
+                            val socketGenuinelyStalled = lastRealtimeDeliveryAtMs > 0L &&
+                                wsQuietMs >= 24_000L &&
+                                (now - lastSocketReconnectAtMs) >= 30_000L
+                            if (socketGenuinelyStalled) {
+                                lastSocketReconnectAtMs = now
+                                Log.w("SpcSyncPerf", "WebSocket stalled (${wsQuietMs}ms); reconnecting socket once.")
+                                repository.reconnectRealtimeSocket()
+                                observeLiveDevice(deviceId, forceRestart = true)
+                            }
                         }
                     }
                 }
-                delay(if (!phoneOnlineNow) 2_000L else if (currentStale) 4_000L else 5_000L)
+
+                val nextDelayMs = when {
+                    !phoneOnlineNow -> 2_500L
+                    _uiState.value.pendingCommandId != null -> 1_600L
+                    currentStale -> 4_500L
+                    else -> 6_500L
+                }
+                delay(nextDelayMs)
             }
         }
     }
@@ -807,6 +1090,15 @@ class MyPlantsViewModel(
         }
     }
 
+    private suspend fun awaitValidatedInternet(maxWaitMs: Long = 5_000L): Boolean {
+        val deadline = SystemClock.elapsedRealtime() + maxWaitMs
+        while (SystemClock.elapsedRealtime() < deadline) {
+            if (NetworkMonitor.refreshOnlineState()) return true
+            delay(200L)
+        }
+        return NetworkMonitor.refreshOnlineState()
+    }
+
     /**
      * Strict 2-Stage Provisioning + Firebase Claim:
      * 1. Sends 2.4 GHz Wi-Fi SSID + Password + Custom Box Name + Claim Code to ESP32 (`192.168.4.1/api/provision`).
@@ -859,6 +1151,7 @@ class MyPlantsViewModel(
                     )
                 }
                 provClient.disconnectFromEspHotspot()
+                awaitValidatedInternet(maxWaitMs = 3_500L)
                 cachedProv
             } else {
                 _uiState.update {
@@ -892,7 +1185,8 @@ class MyPlantsViewModel(
                         it.copy(provisioningProgressMessage = "2/3 Checking if ESP32 came online via router...")
                     }
                     provClient.disconnectFromEspHotspot()
-                    delay(3000L)
+                    awaitValidatedInternet(maxWaitMs = 5_000L)
+                    repository.reconnectRealtimeSocket()
                     val targetDeviceId = freshProv.deviceId.ifBlank { espInfo.deviceId }
                     var verifiedInCloud = false
                     for (probe in 1..6) {
@@ -905,7 +1199,7 @@ class MyPlantsViewModel(
                             verifiedInCloud = true
                             break
                         }
-                        delay(2500L)
+                        delay(2000L)
                     }
                     if (verifiedInCloud) {
                         freshProv.copy(success = true, errorMessage = null)
@@ -936,7 +1230,8 @@ class MyPlantsViewModel(
                     it.copy(provisioningProgressMessage = "2/3 Wi-Fi password verified! ESP32 connected — reconnecting phone to internet...")
                 }
                 provClient.disconnectFromEspHotspot()
-                delay(3000L)
+                awaitValidatedInternet(maxWaitMs = 5_000L)
+                repository.reconnectRealtimeSocket()
                 verifiedProv
             }
 
@@ -946,7 +1241,7 @@ class MyPlantsViewModel(
 
             var claimSuccess = false
             var lastError: String? = null
-            // Retry up to 6 times (~18s total) while phone transitions from ESP32 SoftAP back to Wi-Fi/Cellular
+            // Retry up to 6 times while phone transitions from ESP32 SoftAP back to Wi-Fi/Cellular
             for (attempt in 1..6) {
                 val claimRes = repository.completeDeviceClaim(
                     deviceId = provResult.deviceId.ifBlank { espInfo.deviceId },
@@ -961,7 +1256,8 @@ class MyPlantsViewModel(
                     break
                 } else {
                     lastError = claimRes.exceptionOrNull()?.localizedMessage
-                    delay(2500L)
+                    delay(1200L)
+                    awaitValidatedInternet(maxWaitMs = 1_500L)
                 }
             }
 
@@ -978,6 +1274,16 @@ class MyPlantsViewModel(
 
             pendingFirebaseClaimResult = null
             val finalDeviceId = provResult.deviceId.ifBlank { espInfo.deviceId }
+            val updatedLinks = listOf(
+                UserDeviceLink(
+                    deviceId = finalDeviceId,
+                    role = DeviceRole.OWNER,
+                    ownershipEpoch = provResult.ownershipEpoch,
+                    addedAt = System.currentTimeMillis()
+                )
+            ) + _uiState.value.userDevices.filterNot { it.deviceId == finalDeviceId }
+            saveDeviceLinksCache(uid, updatedLinks, finalDeviceId)
+
             _uiState.update {
                 it.copy(
                     isProvisioning = false,
@@ -985,6 +1291,7 @@ class MyPlantsViewModel(
                     provisioningError = null,
                     connectedEspInfo = null,
                     wifiPassword = "",
+                    userDevices = updatedLinks,
                     activeDeviceId = finalDeviceId,
                     activeRole = DeviceRole.OWNER,
                     step = MyPlantsStep.LIVE_DASHBOARD,
@@ -995,6 +1302,20 @@ class MyPlantsViewModel(
             observeLiveDevice(finalDeviceId, forceRestart = true)
             startLiveSyncWatchdog(finalDeviceId)
             startObservingDeviceHistory(finalDeviceId, forceRefresh = false)
+            // Fast post-pairing REST snapshot fetch so dashboard renders immediately without waiting for WebSocket warmup
+            launch {
+                repository.fetchDeviceSnapshotViaRest(
+                    deviceId = finalDeviceId,
+                    existingSnapshot = null,
+                    slimDelta = false
+                ).getOrNull()?.let { snap ->
+                    Log.d(
+                        "SpcSyncPerf",
+                        "Post-pairing fast REST sync [${currentTransportLabel()}] device=$finalDeviceId latency=${snap.lastSyncLatencyMs}ms"
+                    )
+                    applyLiveSnapshot(finalDeviceId, snap, fromRealtime = false)
+                }
+            }
         }
     }
 
@@ -1003,16 +1324,25 @@ class MyPlantsViewModel(
     fun selectActiveDevice(deviceId: String) {
         val link = _uiState.value.userDevices.firstOrNull { it.deviceId == deviceId } ?: return
         historyJob?.cancel()
+        minuteHistoryJob?.cancel()
+        observedMinuteKeyToken = null
         rawCloudHistoryByDate = emptyMap()
+        rawCloudMinutesByDate.clear()
+        val uid = boundUid
+        if (!uid.isNullOrBlank()) {
+            saveDeviceLinksCache(uid, _uiState.value.userDevices, link.deviceId)
+        }
+        val cachedSnap = uid?.let { loadCachedSnapshot(it, link.deviceId) }
         _uiState.update {
             it.copy(
                 activeDeviceId = link.deviceId,
                 activeRole = link.role,
                 subPage = MyPlantsSubPage.NONE,
+                liveSnapshot = cachedSnap ?: it.liveSnapshot?.takeIf { s -> s.deviceId == link.deviceId },
                 historyByDate = emptyMap()
             )
         }
-        observeLiveDevice(link.deviceId)
+        observeLiveDevice(link.deviceId, forceRestart = true)
         startLiveSyncWatchdog(link.deviceId)
         startObservingDeviceHistory(link.deviceId, forceRefresh = false)
     }
@@ -1051,10 +1381,72 @@ class MyPlantsViewModel(
         val validKeys = _uiState.value.historyDaysWindow.map { it.dateKey }.toSet()
         if (dateKey !in validKeys) return
         _uiState.update { it.copy(selectedHistoryDateKey = dateKey) }
+        val deviceId = _uiState.value.activeDeviceId ?: return
+        ensureObservingMinuteDay(
+            deviceId = deviceId,
+            dateKey = dateKey,
+            forceRefresh = _uiState.value.historyGranularity == HistoryGranularity.BY_MINUTES
+        )
+    }
+
+    fun setHistoryGranularity(granularity: HistoryGranularity) {
+        _uiState.update { it.copy(historyGranularity = granularity) }
+        if (granularity == HistoryGranularity.BY_MINUTES) {
+            val deviceId = _uiState.value.activeDeviceId ?: return
+            ensureObservingMinuteDay(
+                deviceId = deviceId,
+                dateKey = _uiState.value.selectedHistoryDateKey,
+                forceRefresh = true
+            )
+        }
+    }
+
+    fun selectMinuteHourFilter(hour: Int?) {
+        val normalized = hour?.coerceIn(0, 23)
+        _uiState.update { it.copy(selectedMinuteHourFilter = normalized) }
+    }
+
+    private fun ensureObservingMinuteDay(
+        deviceId: String,
+        dateKey: String,
+        forceRefresh: Boolean = false
+    ) {
+        if (deviceId.isBlank() || dateKey.isBlank()) return
+        val token = "${deviceId}_$dateKey"
+        if (observedMinuteKeyToken != token || minuteHistoryJob?.isActive != true) {
+            minuteHistoryJob?.cancel()
+            observedMinuteKeyToken = token
+            _uiState.update {
+                it.copy(isLoadingMinuteHistory = rawCloudMinutesByDate[dateKey].isNullOrEmpty())
+            }
+            minuteHistoryJob = viewModelScope.launch {
+                repository.observeDeviceMinuteDay(deviceId, dateKey).collect { mins ->
+                    rawCloudMinutesByDate[dateKey] = mins
+                    recomputeMergedHistoryUiState(deviceId, _uiState.value.liveSnapshot?.events.orEmpty())
+                    _uiState.update { it.copy(isLoadingMinuteHistory = false) }
+                }
+            }
+        }
+
+        if (forceRefresh && NetworkMonitor.refreshOnlineState()) {
+            viewModelScope.launch {
+                _uiState.update { it.copy(isLoadingMinuteHistory = true) }
+                repository.fetchDeviceMinuteDayViaRest(deviceId, dateKey)
+                    .onSuccess { mins ->
+                        rawCloudMinutesByDate[dateKey] = mins
+                        recomputeMergedHistoryUiState(deviceId, _uiState.value.liveSnapshot?.events.orEmpty())
+                        _uiState.update { it.copy(isLoadingMinuteHistory = false) }
+                    }
+                    .onFailure {
+                        _uiState.update { it.copy(isLoadingMinuteHistory = false) }
+                    }
+            }
+        }
     }
 
     fun refreshHistory(silent: Boolean = false) {
         val deviceId = _uiState.value.activeDeviceId ?: return
+        val selectedDate = _uiState.value.selectedHistoryDateKey
         if (!NetworkMonitor.refreshOnlineState()) {
             if (!silent) {
                 showSnackbar("No internet connection. Showing cached 7-day records.")
@@ -1062,17 +1454,22 @@ class MyPlantsViewModel(
             return
         }
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoadingHistory = true) }
+            _uiState.update { it.copy(isLoadingHistory = true, isLoadingMinuteHistory = true) }
+            val minuteRes = repository.fetchDeviceMinuteDayViaRest(deviceId, selectedDate)
+            minuteRes.onSuccess { mins ->
+                rawCloudMinutesByDate[selectedDate] = mins
+            }
             val result = repository.fetchDeviceHistoryViaRest(deviceId)
             result.onSuccess { daysMap ->
                 rawCloudHistoryByDate = daysMap
                 recomputeMergedHistoryUiState(deviceId, _uiState.value.liveSnapshot?.events.orEmpty())
-                _uiState.update { it.copy(isLoadingHistory = false) }
+                _uiState.update { it.copy(isLoadingHistory = false, isLoadingMinuteHistory = false) }
                 if (!silent) {
-                    showSnackbar("7-day history synced.")
+                    showSnackbar("7-day hourly & minute records synced.")
                 }
             }.onFailure { err ->
-                _uiState.update { it.copy(isLoadingHistory = false) }
+                recomputeMergedHistoryUiState(deviceId, _uiState.value.liveSnapshot?.events.orEmpty())
+                _uiState.update { it.copy(isLoadingHistory = false, isLoadingMinuteHistory = false) }
                 if (!silent) {
                     showSnackbar("History refresh failed: ${err.localizedMessage ?: "Check connection"}")
                 }
@@ -1105,6 +1502,8 @@ class MyPlantsViewModel(
             }
         }
 
+        ensureObservingMinuteDay(deviceId, safeSelected, forceRefresh = forceRefresh)
+
         if (forceRefresh && NetworkMonitor.refreshOnlineState()) {
             refreshHistory(silent = true)
         }
@@ -1125,13 +1524,39 @@ class MyPlantsViewModel(
         val nowMs = System.currentTimeMillis()
         val baseWindow = IotDomainLogic.generateSevenDayWindowPht(nowMs)
         val validKeys = baseWindow.map { it.dateKey }.toSet()
-        val merged = IotDomainLogic.mergeLegacyIrrigationEventsIntoHistory(
+
+        // Prune out-of-window in-memory minute caches strictly to 7 PHT calendar days
+        rawCloudMinutesByDate.keys.retainAll(validKeys)
+        sessionLiveMinutesByDate.keys.retainAll(validKeys)
+
+        val baseMerged = IotDomainLogic.mergeLegacyIrrigationEventsIntoHistory(
             deviceId = deviceId,
             historyByDate = rawCloudHistoryByDate.filterKeys { it in validKeys },
             events = liveEvents,
             validDateKeys = validKeys
-        )
-        val updatedWindow = IotDomainLogic.generateSevenDayWindowPht(nowMs, merged)
+        ).toMutableMap()
+
+        // Merge ESP32 cloud minute records over read-only session fallback (ESP32 cloud ALWAYS wins)
+        for (dateKey in validKeys) {
+            val sessionMins = sessionLiveMinutesByDate[dateKey].orEmpty()
+            val cloudMins = rawCloudMinutesByDate[dateKey].orEmpty()
+            if (sessionMins.isNotEmpty() || cloudMins.isNotEmpty()) {
+                val combinedMinutes = sessionMins + cloudMins
+                val existingDay = baseMerged[dateKey]
+                baseMerged[dateKey] = if (existingDay != null) {
+                    existingDay.copy(minutes = combinedMinutes)
+                } else {
+                    DailyHistorySnapshot(
+                        deviceId = deviceId,
+                        dateKey = dateKey,
+                        updatedAt = combinedMinutes.values.maxOfOrNull { it.lastSeenAt } ?: nowMs,
+                        minutes = combinedMinutes
+                    )
+                }
+            }
+        }
+
+        val updatedWindow = IotDomainLogic.generateSevenDayWindowPht(nowMs, baseMerged)
         _uiState.update { st ->
             val safeSelected = if (st.selectedHistoryDateKey in validKeys) {
                 st.selectedHistoryDateKey
@@ -1141,7 +1566,7 @@ class MyPlantsViewModel(
             st.copy(
                 historyDaysWindow = updatedWindow,
                 selectedHistoryDateKey = safeSelected,
-                historyByDate = merged
+                historyByDate = baseMerged
             )
         }
     }
@@ -1201,21 +1626,21 @@ class MyPlantsViewModel(
     }
 
     /**
-     * Tears down any stale Firebase RTDB WebSocket, fetches the latest server state directly
-     * via no-cache HTTPS REST (bypassing local SDK cache), and restarts the live stream.
-     * Automatically called on app resume and available as a 1-tap Sync button on the Hero Card.
+     * Fetches the latest server state directly via authenticated slim HTTPS REST,
+     * reconnecting the Firebase RTDB WebSocket ONLY when genuinely stalled.
+     * Available as a 1-tap Sync button on both Homepage and My Plants, and called on app resume.
      */
     fun resyncLiveDevice(silent: Boolean = false) {
         val st = _uiState.value
         val deviceId = st.activeDeviceId ?: return
-        if (st.step != MyPlantsStep.LIVE_DASHBOARD) return
+        if (st.step == MyPlantsStep.WIFI_AND_CLAIM || st.isProvisioning) return
         if (st.isSyncingDevice) return
 
         if (!NetworkMonitor.refreshOnlineState()) {
             if (!silent) {
                 val snap = st.liveSnapshot
                 val evalMs = NetworkMonitor.disconnectedAtMsFlow.value ?: System.currentTimeMillis()
-                val wasBoxOnline = snap != null && IotDomainLogic.isDeviceOnlineFresh(
+                val wasBoxOnline = snap != null && !snap.isFromLocalCache && IotDomainLogic.isDeviceOnlineFresh(
                     status = snap.status,
                     nowMs = evalMs,
                     receivedAtClientMs = snap.receivedAtClientMs,
@@ -1223,23 +1648,48 @@ class MyPlantsViewModel(
                 )
                 if (wasBoxOnline) {
                     showSnackbar("No internet connection. Please check your internet connection.")
+                } else {
+                    showSnackbar("No internet connection. Showing last cached data.")
                 }
             }
             return
         }
 
         viewModelScope.launch {
+            val nowStart = System.currentTimeMillis()
+            val wsQuietMs = if (lastRealtimeDeliveryAtMs > 0L) (nowStart - lastRealtimeDeliveryAtMs) else 0L
+            val shouldReconnectSocket = lastRealtimeDeliveryAtMs > 0L &&
+                wsQuietMs >= 22_000L &&
+                (nowStart - lastSocketReconnectAtMs) >= 20_000L
+            if (shouldReconnectSocket) {
+                lastSocketReconnectAtMs = nowStart
+            }
+
             _uiState.update { it.copy(isSyncingDevice = true) }
             // Ensure no lingering ESP32 SoftAP network binding blocks normal internet traffic
             provClient.disconnectFromEspHotspot()
-            val refreshRes = repository.forceRefreshDevice(deviceId)
-            // Re-attach live listener AFTER socket reset so real-time updates resume cleanly
-            observeLiveDevice(deviceId, forceRestart = true)
+            val refreshRes = repository.forceRefreshDevice(
+                deviceId = deviceId,
+                reconnectSocket = shouldReconnectSocket,
+                existingSnapshot = st.liveSnapshot,
+                pendingCommandId = st.pendingCommandId
+            )
+            observeLiveDevice(deviceId, forceRestart = shouldReconnectSocket)
             startLiveSyncWatchdog(deviceId)
+            if (_uiState.value.historyGranularity == HistoryGranularity.BY_MINUTES ||
+                _uiState.value.subPage == MyPlantsSubPage.HISTORY_MONITORING
+            ) {
+                ensureObservingMinuteDay(deviceId, _uiState.value.selectedHistoryDateKey, forceRefresh = true)
+            }
 
             refreshRes
                 .onSuccess { fresh ->
                     _uiState.update { it.copy(isSyncingDevice = false) }
+                    val transport = currentTransportLabel()
+                    Log.d(
+                        "SpcSyncPerf",
+                        "Manual/Resume sync [$transport] device=$deviceId silent=$silent reconnectWs=$shouldReconnectSocket latency=${fresh?.lastSyncLatencyMs ?: -1}ms"
+                    )
                     if (fresh != null) {
                         applyLiveSnapshot(deviceId, fresh, fromRealtime = false)
                     }
@@ -1263,7 +1713,7 @@ class MyPlantsViewModel(
                             fresh != null && latestHeartbeat >= 1_700_000_000_000L -> {
                                 val ageMin = ((now - latestHeartbeat) / 60_000L).coerceAtLeast(1L)
                                 val ageText = if (ageMin < 60L) "${ageMin}m ago" else "${ageMin / 60L}h ago"
-                                "Cloud OK, but ESP32 last sent data $ageText — re-upload updated ESP32 sketch & re-pair once if SPC-SETUP is open."
+                                "Cloud OK, but ESP32 last sent data $ageText — check box power or Wi-Fi."
                             }
                             else -> "Cloud connected — waiting for ESP32 Wi-Fi heartbeat..."
                         }
@@ -1392,6 +1842,18 @@ class MyPlantsViewModel(
         val st = _uiState.value
         val uid = boundUid ?: return
         val snapshot = st.liveSnapshot ?: return
+        if (st.isSubmittingAction || st.pendingCommandPhase == PendingCommandPhase.SUBMITTING) {
+            return
+        }
+        if (!NetworkMonitor.refreshOnlineState()) {
+            showSnackbar("Blocked: No internet connection")
+            return
+        }
+        if (snapshot.isFromLocalCache) {
+            showSnackbar("Waiting for live ESP32 verification before sending watering command...")
+            resyncLiveDevice(silent = true)
+            return
+        }
         val lockReason = IotDomainLogic.manualWaterLockReason(st.activeRole, snapshot, cropSlug)
         if (lockReason != null) {
             showSnackbar("Blocked: $lockReason")
@@ -1406,7 +1868,13 @@ class MyPlantsViewModel(
         }
 
         viewModelScope.launch {
-            _uiState.update { it.copy(isSubmittingAction = true, pendingWaterCrop = cropSlug) }
+            _uiState.update {
+                it.copy(
+                    isSubmittingAction = true,
+                    pendingWaterCrop = cropSlug,
+                    pendingCommandPhase = PendingCommandPhase.SUBMITTING
+                )
+            }
             repository.sendCommand(
                 deviceId = snapshot.deviceId,
                 type = "WATER_CROP",
@@ -1415,19 +1883,32 @@ class MyPlantsViewModel(
                 cropSlug = cropSlug,
                 durationMs = durationMs
             ).onSuccess { cmdId ->
+                val prettyCrop = cropSlug.replaceFirstChar { it.uppercase() }
                 _uiState.update {
                     it.copy(
                         isSubmittingAction = false,
                         pendingCommandId = cmdId,
                         pendingWaterCrop = cropSlug,
-                        snackbarMessage = "Sent ${seconds}s watering command for ${cropSlug.uppercase()}..."
+                        pendingCommandPhase = PendingCommandPhase.SENT_WAITING_ACK,
+                        snackbarMessage = "Submitted ${seconds}s watering for $prettyCrop — waiting for ESP32 acknowledgment..."
                     )
                 }
-                // Clear optimistic starting badge after 8s if ESP32 didn't pick it up
+                // Clear unacknowledged pending state after 18s if ESP32 never picked it up
                 launch {
-                    delay(8000L)
+                    delay(18_000L)
                     _uiState.update { cur ->
-                        if (cur.pendingCommandId == cmdId) cur.copy(pendingWaterCrop = null) else cur
+                        if (cur.pendingCommandId == cmdId &&
+                            cur.pendingCommandPhase == PendingCommandPhase.SENT_WAITING_ACK
+                        ) {
+                            cur.copy(
+                                pendingCommandId = null,
+                                pendingWaterCrop = null,
+                                pendingCommandPhase = PendingCommandPhase.IDLE,
+                                snackbarMessage = "ESP32 did not acknowledge the watering request in time. Check box Wi-Fi and tap Sync."
+                            )
+                        } else {
+                            cur
+                        }
                     }
                 }
             }.onFailure { err ->
@@ -1435,7 +1916,8 @@ class MyPlantsViewModel(
                     it.copy(
                         isSubmittingAction = false,
                         pendingWaterCrop = null,
-                        snackbarMessage = "Command failed: ${err.localizedMessage}"
+                        pendingCommandPhase = PendingCommandPhase.IDLE,
+                        snackbarMessage = "Command submission failed: ${err.localizedMessage}"
                     )
                 }
             }
@@ -1454,6 +1936,7 @@ class MyPlantsViewModel(
         }
 
         viewModelScope.launch {
+            _uiState.update { it.copy(pendingCommandPhase = PendingCommandPhase.SUBMITTING) }
             repository.sendCommand(
                 deviceId = snapshot.deviceId,
                 type = "STOP_WATERING",
@@ -1463,10 +1946,15 @@ class MyPlantsViewModel(
                 _uiState.update {
                     it.copy(
                         pendingCommandId = cmdId,
-                        snackbarMessage = "Emergency Stop sent — shutting pump & valves OFF."
+                        pendingWaterCrop = null,
+                        pendingCommandPhase = PendingCommandPhase.SENT_WAITING_ACK,
+                        snackbarMessage = "Emergency Stop submitted — waiting for ESP32 acknowledgment..."
                     )
                 }
-            }.onFailure { showSnackbar("Stop command failed: ${it.localizedMessage}") }
+            }.onFailure {
+                _uiState.update { cur -> cur.copy(pendingCommandPhase = PendingCommandPhase.IDLE) }
+                showSnackbar("Stop command failed: ${it.localizedMessage}")
+            }
         }
     }
 
@@ -1482,6 +1970,7 @@ class MyPlantsViewModel(
         }
 
         viewModelScope.launch {
+            _uiState.update { it.copy(pendingCommandPhase = PendingCommandPhase.SUBMITTING) }
             repository.sendCommand(
                 deviceId = snapshot.deviceId,
                 type = "CLEAR_EMERGENCY",
@@ -1489,9 +1978,16 @@ class MyPlantsViewModel(
                 ownershipEpoch = effectiveEpoch
             ).onSuccess { cmdId ->
                 _uiState.update {
-                    it.copy(pendingCommandId = cmdId, snackbarMessage = "Clear Fault command sent.")
+                    it.copy(
+                        pendingCommandId = cmdId,
+                        pendingCommandPhase = PendingCommandPhase.SENT_WAITING_ACK,
+                        snackbarMessage = "Clear Fault command submitted."
+                    )
                 }
-            }.onFailure { showSnackbar("Failed: ${it.localizedMessage}") }
+            }.onFailure {
+                _uiState.update { cur -> cur.copy(pendingCommandPhase = PendingCommandPhase.IDLE) }
+                showSnackbar("Failed: ${it.localizedMessage}")
+            }
         }
     }
 
@@ -1662,12 +2158,20 @@ class MyPlantsViewModel(
                 memberUids = snapshot.members.map { it.uid },
                 ownerUid = uid
             ).onSuccess {
+                clearCachedDevice(uid, snapshot.deviceId)
+                minuteHistoryJob?.cancel()
+                observedMinuteKeyToken = null
+                rawCloudMinutesByDate.clear()
+                sessionLiveMinutesByDate.clear()
                 _uiState.update {
                     it.copy(
                         isSubmittingAction = false,
                         subPage = MyPlantsSubPage.NONE,
                         step = MyPlantsStep.SCAN_ESP32,
                         liveSnapshot = null,
+                        pendingCommandId = null,
+                        pendingWaterCrop = null,
+                        pendingCommandPhase = PendingCommandPhase.IDLE,
                         snackbarMessage = "Device reset triggered (RESET_PENDING). ESP32 will stop loads, wipe Wi-Fi, and re-open Setup Mode."
                     )
                 }
@@ -1692,8 +2196,11 @@ class MyPlantsViewModel(
 
     override fun onCleared() {
         espScanJob?.cancel()
+        userDevicesJob?.cancel()
+        liveDeviceJob?.cancel()
         liveWatchdogJob?.cancel()
         historyJob?.cancel()
+        minuteHistoryJob?.cancel()
         provClient.disconnectFromEspHotspot()
         super.onCleared()
     }

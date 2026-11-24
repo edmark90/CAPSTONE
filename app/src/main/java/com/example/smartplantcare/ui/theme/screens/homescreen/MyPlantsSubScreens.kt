@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -181,7 +182,8 @@ internal fun MyPlantsShareScreen(
                         enabled = !isBusy,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(48.dp),
+                            .defaultMinSize(minHeight = 48.dp),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
                         shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = HomeColors.ForestPrimary,
@@ -195,7 +197,8 @@ internal fun MyPlantsShareScreen(
                             fontFamily = HomeInterFont,
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Bold,
-                            color = Color.White
+                            color = Color.White,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
                         )
                     }
 
@@ -217,9 +220,9 @@ internal fun MyPlantsShareScreen(
                             Row(
                                 modifier = Modifier.padding(14.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                Column {
+                                Column(modifier = Modifier.weight(1f)) {
                                     Text(
                                         text = "${displayInvite.role.label} INVITE CODE (24H)",
                                         fontFamily = HomeInterFont,
@@ -322,43 +325,50 @@ internal fun MyPlantsShareScreen(
                                     if (isSelf) " (You)" else "",
                                 fontFamily = HomeInterFont,
                                 fontSize = 13.sp,
+                                lineHeight = 17.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = HomeColors.TextPrimary,
-                                maxLines = 1,
+                                maxLines = 2,
                                 overflow = TextOverflow.Ellipsis
                             )
                             if (member.email.isNotBlank()) {
                                 Text(
                                     text = member.email,
                                     fontFamily = HomeInterFont,
-                                    fontSize = 11.sp,
+                                    fontSize = 11.5.sp,
                                     color = HomeColors.TextSecondary,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
                             }
-                        }
-                        Surface(
-                            color = if (member.role == DeviceRole.OWNER) HomeColors.SoftMint else HomeColors.WaterBg,
-                            shape = RoundedCornerShape(50)
-                        ) {
-                            Text(
-                                text = member.role.label,
-                                fontFamily = HomeInterFont,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = if (member.role == DeviceRole.OWNER) HomeColors.ForestPrimary else HomeColors.WaterBlue,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Surface(
+                                color = if (member.role == DeviceRole.OWNER) HomeColors.SoftMint else HomeColors.WaterBg,
+                                shape = RoundedCornerShape(50)
+                            ) {
+                                Text(
+                                    text = member.role.label,
+                                    fontFamily = HomeInterFont,
+                                    fontSize = 10.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (member.role == DeviceRole.OWNER) HomeColors.ForestPrimary else HomeColors.WaterBlue,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.5.dp)
+                                )
+                            }
                         }
                         if (member.role != DeviceRole.OWNER && (currentUserRole.canManageSharing || isSelf)) {
-                            TextButton(onClick = { onRevokeMember(member.uid) }) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            TextButton(
+                                onClick = { onRevokeMember(member.uid) },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
                                 Text(
                                     text = if (isSelf) "Leave" else "Remove",
                                     fontFamily = HomeInterFont,
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = HomeColors.AlertRed
+                                    color = HomeColors.AlertRed,
+                                    maxLines = 1
                                 )
                             }
                         }
@@ -454,7 +464,7 @@ internal fun MyPlantsEventLogScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -468,13 +478,13 @@ internal fun MyPlantsEventLogScreen(
                         modifier = Modifier.size(18.dp)
                     )
                     Text(
-                        text = "View 7-Day Hourly Graphs & Irrigation Records",
+                        text = "7-Day Sensor Graphs & Watering Records",
                         fontFamily = HomeInterFont,
                         fontSize = 12.sp,
+                        lineHeight = 16.sp,
                         fontWeight = FontWeight.Bold,
                         color = HomeColors.ForestPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        maxLines = 2
                     )
                 }
                 Text(
@@ -482,7 +492,8 @@ internal fun MyPlantsEventLogScreen(
                     fontFamily = HomeInterFont,
                     fontSize = 11.5.sp,
                     fontWeight = FontWeight.Bold,
-                    color = HomeColors.ForestPrimary
+                    color = HomeColors.ForestPrimary,
+                    maxLines = 1
                 )
             }
         }
@@ -558,10 +569,10 @@ internal fun MyPlantsEventLogScreen(
                                     text = ev.title,
                                     fontFamily = HomeInterFont,
                                     fontSize = 13.sp,
+                                    lineHeight = 17.5.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = HomeColors.TextPrimary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
+                                    maxLines = 2,
                                     modifier = Modifier
                                         .weight(1f)
                                         .padding(end = 8.dp)
@@ -869,7 +880,8 @@ internal fun MyPlantsSettingsScreen(
                 enabled = canEditSettings && !isBusy,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(52.dp),
+                    .defaultMinSize(minHeight = 52.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                 shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = if (canEditSettings) HomeColors.ForestPrimary else HomeColors.CardBorder,
@@ -899,7 +911,8 @@ internal fun MyPlantsSettingsScreen(
                     fontFamily = HomeInterFont,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
-                    color = if (canEditSettings) Color.White else HomeColors.TextMuted
+                    color = if (canEditSettings) Color.White else HomeColors.TextMuted,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
                 )
             }
         }
@@ -921,7 +934,7 @@ internal fun MyPlantsSettingsScreen(
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
@@ -935,13 +948,15 @@ internal fun MyPlantsSettingsScreen(
                         fontFamily = HomeInterFont,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = HomeColors.TextPrimary
+                        color = HomeColors.TextPrimary,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.End,
+                        modifier = Modifier.weight(1f)
                     )
                 }
                 HorizontalDivider(color = HomeColors.DividerLine, thickness = 1.dp)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
@@ -955,13 +970,15 @@ internal fun MyPlantsSettingsScreen(
                         fontFamily = HomeInterFont,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = HomeColors.ForestPrimary
+                        color = HomeColors.ForestPrimary,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.End,
+                        modifier = Modifier.weight(1f)
                     )
                 }
                 HorizontalDivider(color = HomeColors.DividerLine, thickness = 1.dp)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
@@ -975,7 +992,9 @@ internal fun MyPlantsSettingsScreen(
                         fontFamily = HomeInterFont,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = HomeColors.TextPrimary
+                        color = HomeColors.TextPrimary,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.End,
+                        modifier = Modifier.weight(1f)
                     )
                 }
             }
@@ -1015,7 +1034,8 @@ internal fun MyPlantsSettingsScreen(
                         enabled = !isBusy,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(48.dp),
+                            .defaultMinSize(minHeight = 48.dp),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                         shape = RoundedCornerShape(14.dp),
                         border = BorderStroke(1.5.dp, HomeColors.AlertRed)
                     ) {
@@ -1112,17 +1132,16 @@ private fun CropThresholdEditor(
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
                     color = HomeColors.TextPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    maxLines = 2
                 )
                 Text(
                     text = "Dry ≤ ${cfg.startPct.toInt()}% → Stop ≥ ${cfg.stopPct.toInt()}%",
                     fontFamily = HomeInterFont,
-                    fontSize = 11.sp,
+                    fontSize = 11.5.sp,
+                    lineHeight = 15.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = HomeColors.ForestPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    maxLines = 2
                 )
             }
             Switch(
@@ -1239,17 +1258,18 @@ private fun SubPageHeader(
                 text = title,
                 fontFamily = HomeInterFont,
                 fontSize = 19.sp,
+                lineHeight = 23.sp,
                 fontWeight = FontWeight.Bold,
                 color = HomeColors.TextPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                maxLines = 2
             )
             Text(
                 text = subtitle,
                 fontFamily = HomeInterFont,
                 fontSize = 12.sp,
+                lineHeight = 16.sp,
                 color = HomeColors.TextSecondary,
-                maxLines = 1,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
         }

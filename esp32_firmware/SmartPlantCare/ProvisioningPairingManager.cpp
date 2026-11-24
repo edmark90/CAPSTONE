@@ -1199,6 +1199,23 @@ void ProvisioningPairingManager::loadHardwareCalibration(RuntimeConfig& ioConfig
   ioConfig.ldrBrightRaw        = prefs_.getInt("ldrBrt", Config::DEFAULT_LDR_BRIGHT_RAW);
 }
 
+void ProvisioningPairingManager::loadSparkRefreshToken(char* outToken, size_t maxLen) {
+  if (!outToken || maxLen == 0) return;
+  outToken[0] = '\0';
+  prefs_.begin(NVS_NAMESPACE, true);
+  String tok = prefs_.getString("fbRefTok", "");
+  prefs_.end();
+  if (tok.length() > 0 && tok.length() < maxLen) {
+    snprintf(outToken, maxLen, "%s", tok.c_str());
+  }
+}
+
+void ProvisioningPairingManager::saveSparkRefreshToken(const char* token) {
+  prefs_.begin(NVS_NAMESPACE, false);
+  prefs_.putString("fbRefTok", token ? token : "");
+  prefs_.end();
+}
+
 void ProvisioningPairingManager::handleCloudMetaSnapshot(
     const char* cloudOwnershipStateStr,
     uint32_t cloudOwnershipEpoch,
@@ -1289,6 +1306,8 @@ void ProvisioningPairingManager::initiateResetPendingLifecycle(
 
   relays.emergencyAllOff();
   irrigation.triggerEmergencyStop("RESET_PENDING");
+  irrigation.clearProcessedCommandsForReset();
+  irrigation.clearIrrigationHistoryQueue();
   buzzer.stopImmediately();
   events.clearAllForReset();
 

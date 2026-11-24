@@ -204,7 +204,8 @@ fun NotificationHistoryScreen(
                                     fontSize = 20.sp,
                                     color = HomeColors.TextPrimary,
                                     maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false)
                                 )
                                 if (unreadCount > 0) {
                                     Surface(
@@ -215,8 +216,10 @@ fun NotificationHistoryScreen(
                                             text = "$unreadCount new",
                                             fontFamily = HomeInterFont,
                                             color = Color.White,
-                                            fontSize = 10.sp,
+                                            fontSize = 10.5.sp,
                                             fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            softWrap = false,
                                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                                         )
                                     }
@@ -225,10 +228,10 @@ fun NotificationHistoryScreen(
                             Text(
                                 text = "Plant care alerts & ESP32 updates",
                                 fontFamily = HomeInterFont,
-                                fontSize = 11.sp,
+                                fontSize = 11.5.sp,
+                                lineHeight = 15.sp,
                                 color = HomeColors.TextSecondary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                maxLines = 2
                             )
                         }
                     }
@@ -293,27 +296,26 @@ fun NotificationHistoryScreen(
                         ),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        // Dedicated Filter + Prominent "Mark all read" Action Bar
+                        // Dedicated Filter + Prominent "Mark all read" Action Bar (Adaptive FlowRow)
                         item(key = "filter_and_mark_read_bar") {
-                            Row(
+                            @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                            androidx.compose.foundation.layout.FlowRow(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(bottom = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    NotificationFilterPill(
-                                        label = "All (${notifications.size})",
-                                        selected = selectedFilter == "ALL",
-                                        onClick = { selectedFilter = "ALL" }
-                                    )
-                                    NotificationFilterPill(
-                                        label = "Unread ($unreadCount)",
-                                        selected = selectedFilter == "UNREAD",
-                                        onClick = { selectedFilter = "UNREAD" }
-                                    )
-                                }
+                                NotificationFilterPill(
+                                    label = "All (${notifications.size})",
+                                    selected = selectedFilter == "ALL",
+                                    onClick = { selectedFilter = "ALL" }
+                                )
+                                NotificationFilterPill(
+                                    label = "Unread ($unreadCount)",
+                                    selected = selectedFilter == "UNREAD",
+                                    onClick = { selectedFilter = "UNREAD" }
+                                )
 
                                 if (unreadCount > 0) {
                                     Surface(
@@ -324,7 +326,7 @@ fun NotificationHistoryScreen(
                                             .clickable { viewModel.markAllAsRead() }
                                     ) {
                                         Row(
-                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                                            modifier = Modifier.padding(horizontal = 11.dp, vertical = 7.dp),
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.spacedBy(5.dp)
                                         ) {
@@ -337,10 +339,11 @@ fun NotificationHistoryScreen(
                                             Text(
                                                 text = "Mark all read",
                                                 fontFamily = HomeInterFont,
-                                                fontSize = 11.sp,
+                                                fontSize = 11.5.sp,
                                                 fontWeight = FontWeight.Bold,
                                                 color = Color.White,
-                                                maxLines = 1
+                                                maxLines = 1,
+                                                softWrap = false
                                             )
                                         }
                                     }
@@ -454,7 +457,8 @@ private fun EmptyNotificationsState(isUnreadFilter: Boolean) {
             fontFamily = HomeInterFont,
             fontSize = 17.sp,
             fontWeight = FontWeight.Bold,
-            color = HomeColors.TextPrimary
+            color = HomeColors.TextPrimary,
+            textAlign = TextAlign.Center
         )
         Spacer(modifier = Modifier.height(6.dp))
         Text(
@@ -597,23 +601,24 @@ fun NotificationItem(
             Spacer(modifier = Modifier.width(12.dp))
 
             Column(modifier = Modifier.weight(1f)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
+                Text(
+                    text = notification.plantName.ifBlank { notification.title },
+                    fontFamily = HomeInterFont,
+                    fontSize = 14.sp,
+                    lineHeight = 19.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (isOverdue) HomeColors.AlertRed else HomeColors.TextPrimary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                Spacer(modifier = Modifier.height(5.dp))
+
+                @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                androidx.compose.foundation.layout.FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Text(
-                        text = notification.plantName.ifBlank { notification.title },
-                        fontFamily = HomeInterFont,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = if (isOverdue) HomeColors.AlertRed else HomeColors.TextPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
-
-                    Spacer(modifier = Modifier.width(6.dp))
-
                     if (isGeneralDaily) {
                         Surface(
                             color = HomeColors.SoftMint,
@@ -622,9 +627,10 @@ fun NotificationItem(
                             Text(
                                 text = "Daily",
                                 fontFamily = HomeInterFont,
-                                fontSize = 10.sp,
+                                fontSize = 10.5.sp,
                                 color = HomeColors.ForestPrimary,
                                 fontWeight = FontWeight.Bold,
+                                maxLines = 1,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                             )
                         }
@@ -636,14 +642,13 @@ fun NotificationItem(
                             Text(
                                 text = "Day ${notification.day}",
                                 fontFamily = HomeInterFont,
-                                fontSize = 10.sp,
+                                fontSize = 10.5.sp,
                                 color = HomeColors.ForestPrimary,
                                 fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                                maxLines = 1,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                             )
                         }
-
-                        Spacer(modifier = Modifier.width(5.dp))
 
                         Surface(
                             color = when {
@@ -660,27 +665,28 @@ fun NotificationItem(
                                     else -> "Pending"
                                 },
                                 fontFamily = HomeInterFont,
-                                fontSize = 10.sp,
+                                fontSize = 10.5.sp,
                                 color = when {
                                     isOverdue -> HomeColors.AlertRed
                                     notification.isCompleted -> HomeColors.SuccessGreen
                                     else -> HomeColors.WarningAmber
                                 },
                                 fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                                maxLines = 1,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                             )
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(5.dp))
+                Spacer(modifier = Modifier.height(6.dp))
 
                 Text(
                     text = notification.message,
                     fontFamily = HomeInterFont,
                     fontSize = 13.sp,
                     color = if (notification.isRead) HomeColors.TextSecondary else HomeColors.TextPrimary,
-                    maxLines = 2,
+                    maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
                     lineHeight = 18.sp,
                     fontWeight = if (!notification.isRead) FontWeight.Medium else FontWeight.Normal
@@ -691,9 +697,12 @@ fun NotificationItem(
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
                         Icon(
                             imageVector = Icons.Default.Schedule,
                             contentDescription = null,
@@ -706,7 +715,9 @@ fun NotificationItem(
                             fontFamily = HomeInterFont,
                             fontSize = 11.sp,
                             color = HomeColors.TextMuted,
-                            fontWeight = FontWeight.Medium
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
 

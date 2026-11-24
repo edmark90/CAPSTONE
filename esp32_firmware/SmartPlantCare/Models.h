@@ -306,10 +306,69 @@ struct IrrigationHistoryRecord {
   uint64_t startedAtEpochMs  = 0;
   uint64_t endedAtEpochMs    = 0;
   uint32_t durationMs        = 0;
+  uint16_t minuteOfDay       = 0;
   float    startMoisturePct  = NAN;
   float    endMoisturePct    = NAN;
   bool     recordedOffline   = false;
   uint32_t ownershipEpoch    = 0;
+};
+
+struct MinuteSensorAccumulator {
+  uint64_t firstSeenAtEpochMs   = 0;
+  uint64_t lastSeenAtEpochMs    = 0;
+  float    tomatoSum            = 0.0f;
+  float    chiliSum             = 0.0f;
+  float    eggplantSum          = 0.0f;
+  float    tempSum              = 0.0f;
+  float    humSum               = 0.0f;
+  float    lightSum             = 0.0f;
+  float    reservoirPctSum      = 0.0f;
+  float    reservoirGapSum      = 0.0f;
+  uint32_t rainProbSum          = 0;
+  uint16_t minuteOfDay          = 0;
+  uint16_t sampleCount          = 0;
+  uint8_t  tomatoCnt            = 0;
+  uint8_t  chiliCnt             = 0;
+  uint8_t  eggplantCnt          = 0;
+  uint8_t  tempCnt              = 0;
+  uint8_t  humCnt               = 0;
+  uint8_t  lightCnt             = 0;
+  uint8_t  reservoirCnt         = 0;
+  uint8_t  rainProbCnt          = 0;
+  uint8_t  rainWetSamples       = 0;
+  bool     rainRawWetAny        = false;
+  bool     rainWetConfirmedAny  = false;
+  bool     rainSuspendedAny     = false;
+  ReservoirLevelState reservoirState = ReservoirLevelState::SENSOR_FAULT;
+
+  void reset(uint16_t nextMinuteOfDay = 0) {
+    firstSeenAtEpochMs  = 0;
+    lastSeenAtEpochMs   = 0;
+    tomatoSum           = 0.0f;
+    chiliSum            = 0.0f;
+    eggplantSum         = 0.0f;
+    tempSum             = 0.0f;
+    humSum              = 0.0f;
+    lightSum            = 0.0f;
+    reservoirPctSum     = 0.0f;
+    reservoirGapSum     = 0.0f;
+    rainProbSum         = 0;
+    minuteOfDay         = nextMinuteOfDay;
+    sampleCount         = 0;
+    tomatoCnt           = 0;
+    chiliCnt            = 0;
+    eggplantCnt         = 0;
+    tempCnt             = 0;
+    humCnt              = 0;
+    lightCnt            = 0;
+    reservoirCnt        = 0;
+    rainProbCnt         = 0;
+    rainWetSamples      = 0;
+    rainRawWetAny       = false;
+    rainWetConfirmedAny = false;
+    rainSuspendedAny    = false;
+    reservoirState      = ReservoirLevelState::SENSOR_FAULT;
+  }
 };
 
 struct HourlySensorAccumulator {
@@ -317,6 +376,7 @@ struct HourlySensorAccumulator {
   uint64_t lastSeenAtEpochMs  = 0;
   uint16_t sampleCount        = 0;
   uint16_t rainWetSamples     = 0;
+  uint16_t rainSuspendedSamples = 0;
 
   double   tomatoSum          = 0.0;
   uint16_t tomatoCnt          = 0;
@@ -344,6 +404,7 @@ struct HourlySensorAccumulator {
     lastSeenAtEpochMs  = 0;
     sampleCount        = 0;
     rainWetSamples     = 0;
+    rainSuspendedSamples = 0;
     tomatoSum          = 0.0;
     tomatoCnt          = 0;
     chiliSum           = 0.0;

@@ -6,12 +6,14 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -37,6 +39,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -49,6 +52,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -70,16 +74,55 @@ fun PlantResultScreen(
     usage: PlantIdentificationUsage? = null,
     dailyLimit: Int = 20
 ) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(HomeColors.PageBg)
-    ) {
+    Scaffold(
+        containerColor = HomeColors.PageBg,
+        bottomBar = {
+            Surface(
+                color = HomeColors.SurfaceWhite,
+                shadowElevation = 6.dp
+            ) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    HorizontalDivider(color = HomeColors.DividerLine, thickness = 1.dp)
+                    Button(
+                        onClick = onCaptureAnother,
+                        shape = RoundedCornerShape(14.dp),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = HomeColors.ForestPrimary,
+                            contentColor = Color.White
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .navigationBarsPadding()
+                            .padding(horizontal = 20.dp, vertical = 14.dp)
+                            .heightIn(min = 50.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.CameraAlt,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Identify Another Plant",
+                            fontFamily = HomeInterFont,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+            }
+        }
+    ) { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .padding(bottom = innerPadding.calculateBottomPadding())
                 .verticalScroll(rememberScrollState())
-                .padding(bottom = 112.dp)
+                .padding(bottom = 24.dp)
         ) {
             HeroImageSection(topMatch = topMatch, onBack = onBack)
 
@@ -103,6 +146,7 @@ fun PlantResultScreen(
                     text = topMatch.plantName,
                     fontFamily = HomeInterFont,
                     fontSize = 24.sp,
+                    lineHeight = 30.sp,
                     fontWeight = FontWeight.Bold,
                     color = HomeColors.TextPrimary
                 )
@@ -113,6 +157,7 @@ fun PlantResultScreen(
                     text = topMatch.scientificName,
                     fontFamily = HomeInterFont,
                     fontSize = 15.sp,
+                    lineHeight = 20.sp,
                     fontWeight = FontWeight.Medium,
                     fontStyle = FontStyle.Italic,
                     color = HomeColors.ForestMedium
@@ -121,7 +166,8 @@ fun PlantResultScreen(
                 Spacer(modifier = Modifier.height(18.dp))
 
                 val configuration = LocalConfiguration.current
-                if (configuration.screenWidthDp < 360) {
+                val isCompactInfo = configuration.screenWidthDp < 380 || LocalDensity.current.fontScale > 1.15f
+                if (isCompactInfo) {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         InfoCard(label = "Species", value = topMatch.species, modifier = Modifier.fillMaxWidth())
                         InfoCard(label = "Family", value = topMatch.family, modifier = Modifier.fillMaxWidth())
@@ -175,44 +221,6 @@ fun PlantResultScreen(
                         OtherMatchRow(alt)
                         Spacer(modifier = Modifier.height(8.dp))
                     }
-                }
-            }
-        }
-
-        Surface(
-            color = HomeColors.SurfaceWhite,
-            shadowElevation = 6.dp,
-            modifier = Modifier.align(Alignment.BottomCenter)
-        ) {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                HorizontalDivider(color = HomeColors.DividerLine, thickness = 1.dp)
-                Button(
-                    onClick = onCaptureAnother,
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = HomeColors.ForestPrimary,
-                        contentColor = Color.White
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .navigationBarsPadding()
-                        .padding(horizontal = 20.dp, vertical = 14.dp)
-                        .height(50.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.CameraAlt,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "Identify Another Plant",
-                        fontFamily = HomeInterFont,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
-                    )
                 }
             }
         }
@@ -423,6 +431,8 @@ private fun OtherMatchRow(match: PlantIdentificationSummary) {
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     color = HomeColors.ForestPrimary,
+                    maxLines = 1,
+                    softWrap = false,
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                 )
             }
@@ -463,6 +473,10 @@ fun ErrorScreen(
         }
 
         Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = if (onBack != null) 52.dp else 0.dp)
+                .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
@@ -484,8 +498,10 @@ fun ErrorScreen(
                 text = "Identification Failed",
                 fontFamily = HomeInterFont,
                 fontSize = 19.sp,
+                lineHeight = 25.sp,
                 fontWeight = FontWeight.Bold,
-                color = HomeColors.TextPrimary
+                color = HomeColors.TextPrimary,
+                textAlign = TextAlign.Center
             )
             Text(
                 text = message,
@@ -503,24 +519,26 @@ fun ErrorScreen(
                     contentColor = Color.White
                 ),
                 shape = RoundedCornerShape(14.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(48.dp)
+                    .heightIn(min = 48.dp)
             ) {
                 Icon(imageVector = Icons.Filled.Refresh, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text(text = "Try Again", fontFamily = HomeInterFont, fontWeight = FontWeight.SemiBold, color = Color.White)
+                Text(text = "Try Again", fontFamily = HomeInterFont, fontWeight = FontWeight.SemiBold, color = Color.White, textAlign = TextAlign.Center)
             }
             if (onBack != null) {
                 OutlinedButton(
                     onClick = onBack,
                     shape = RoundedCornerShape(14.dp),
                     border = BorderStroke(1.dp, HomeColors.CardBorder),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp)
+                        .heightIn(min = 48.dp)
                 ) {
-                    Text(text = "Go Back", fontFamily = HomeInterFont, fontWeight = FontWeight.Medium, color = HomeColors.TextSecondary)
+                    Text(text = "Go Back", fontFamily = HomeInterFont, fontWeight = FontWeight.Medium, color = HomeColors.TextSecondary, textAlign = TextAlign.Center)
                 }
             }
         }
@@ -552,8 +570,10 @@ fun UsageBanner(
                 text = "Today's Usage: $usedCount / $dailyLimit",
                 fontFamily = HomeInterFont,
                 fontSize = 13.sp,
+                lineHeight = 18.sp,
                 fontWeight = FontWeight.Bold,
-                color = textColor
+                color = textColor,
+                textAlign = TextAlign.Center
             )
             Spacer(modifier = Modifier.height(2.dp))
             Text(
@@ -561,7 +581,9 @@ fun UsageBanner(
                 else "$remaining scan${if (remaining == 1) "" else "s"} remaining · Resets at 8:00 AM",
                 fontFamily = HomeInterFont,
                 fontSize = 11.sp,
-                color = textColor.copy(alpha = 0.85f)
+                lineHeight = 16.sp,
+                color = textColor.copy(alpha = 0.85f),
+                textAlign = TextAlign.Center
             )
         }
     }

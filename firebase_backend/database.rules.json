@@ -63,7 +63,20 @@
         ".read": true,
         ".write": "root.child('devices/' + $deviceId + '/meta/ownershipState').val() === 'OWNED' || (auth != null && !newData.exists())",
         "days": {
-          ".indexOn": ["dateKey", "updatedAt"]
+          ".indexOn": ["dateKey", "updatedAt"],
+          "$dateKey": {
+            "hours": {
+              ".indexOn": ["hour", "lastSeenAt"]
+            },
+            "irrigations": {
+              ".indexOn": ["startedAt", "hour"]
+            }
+          }
+        },
+        "minuteDays": {
+          "$dateKey": {
+            ".indexOn": ["m", "lastSeenAt"]
+          }
         }
       }
     },
@@ -126,7 +139,7 @@
         "commandRequests": {
           "$cmdId": {
             ".write": "root.child('devices/' + $deviceId + '/meta/ownershipState').val() === 'OWNED'",
-            ".validate": "newData.hasChildren(['type', 'state', 'ownershipEpoch', 'createdAt', 'expiresAt']) && (newData.child('type').val() === 'WATER_CROP' || newData.child('type').val() === 'STOP_WATERING' || newData.child('type').val() === 'CLEAR_EMERGENCY' || newData.child('type').val() === 'MUTE_BUZZER') && (!newData.child('durationMs').exists() || (newData.child('durationMs').isNumber() && newData.child('durationMs').val() >= 1000 && newData.child('durationMs').val() <= 15000))",
+            ".validate": "newData.hasChildren(['type', 'state', 'ownershipEpoch', 'createdAt', 'expiresAt']) && (!data.exists() || data.child('state').val() === 'PENDING' || newData.child('state').val() === 'PROCESSED') && (newData.child('type').val() === 'WATER_CROP' || newData.child('type').val() === 'STOP_WATERING' || newData.child('type').val() === 'CLEAR_EMERGENCY' || newData.child('type').val() === 'MUTE_BUZZER') && (!newData.child('durationMs').exists() || (newData.child('durationMs').isNumber() && newData.child('durationMs').val() >= 1000 && newData.child('durationMs').val() <= 15000))",
             "state": {
               ".write": "root.child('devices/' + $deviceId + '/meta/ownershipState').val() === 'OWNED'",
               ".validate": "newData.val() === 'PENDING' || newData.val() === 'PROCESSED'"
@@ -135,6 +148,7 @@
         },
 
         "commandResults": {
+          ".indexOn": ["updatedAt"],
           "$cmdId": {
             ".write": "root.child('devices/' + $deviceId + '/meta/ownershipState').val() === 'OWNED'",
             ".validate": "newData.hasChildren(['commandId', 'state', 'reason', 'updatedAt', 'ownershipEpoch'])"

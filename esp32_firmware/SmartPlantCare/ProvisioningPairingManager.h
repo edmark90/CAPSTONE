@@ -65,6 +65,10 @@ class ProvisioningPairingManager {
   void saveHardwareCalibration(const RuntimeConfig& cfg);
   void loadHardwareCalibration(RuntimeConfig& ioConfig);
 
+  // Persist optional Spark Firebase Auth refresh token so reboots renew cleanly
+  void loadSparkRefreshToken(char* outToken, size_t maxLen);
+  void saveSparkRefreshToken(const char* token);
+
   // Evaluate cloud /devices/{deviceId}/meta state & epoch
   void handleCloudMetaSnapshot(const char* cloudOwnershipStateStr,
                                uint32_t cloudOwnershipEpoch,

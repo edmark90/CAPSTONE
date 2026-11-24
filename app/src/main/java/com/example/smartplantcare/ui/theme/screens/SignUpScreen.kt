@@ -44,12 +44,14 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.smartplantcare.R
 import com.example.smartplantcare.ui.theme.*
 import com.example.smartplantcare.ui.theme.screens.SystemUiController
 
+@OptIn(ExperimentalLayoutApi::class)
 @SuppressLint("ContextCastToActivity")
 @Composable
 fun SignUpScreen(
@@ -127,7 +129,7 @@ fun SignUpScreen(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .aspectRatio(16f / 10f)
+                    .heightIn(min = 230.dp)
                     .graphicsLayer {
                         // Creates the parallax effect on scroll
                         translationY = scrollState.value * 0.4f
@@ -138,7 +140,7 @@ fun SignUpScreen(
                     painter            = painterResource(id = R.drawable.signup ), // Use your plant image
                     contentDescription = null,
                     modifier           = Modifier
-                        .fillMaxSize()
+                        .matchParentSize()
                         .graphicsLayer(scaleX = imageScale, scaleY = imageScale),
                     contentScale       = ContentScale.Crop
                 )
@@ -146,7 +148,7 @@ fun SignUpScreen(
                 // Gradient Overlay
                 Box(
                     modifier = Modifier
-                        .fillMaxSize()
+                        .matchParentSize()
                         .background(
                             Brush.verticalGradient(
                                 colorStops = arrayOf(
@@ -158,11 +160,12 @@ fun SignUpScreen(
                         )
                 )
 
-                // Animated Branding (Optional, kept consistent with login)
+                // Animated Branding (Safe clearance below floating Back button)
                 Column(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
-                        .padding(start = 28.dp, bottom = 40.dp)
+                        .statusBarsPadding()
+                        .padding(start = 28.dp, end = 28.dp, top = 76.dp, bottom = 40.dp)
                         .alpha(heroAlpha)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -172,10 +175,11 @@ fun SignUpScreen(
                             modifier = Modifier.size(34.dp)
                         )
                         Spacer(modifier = Modifier.width(10.dp))
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text       = stringResource(R.string.create_account),
                                 fontSize   = 28.sp,
+                                lineHeight = 34.sp,
                                 fontWeight = FontWeight.ExtraBold,
                                 color      = Color.White,
                                 letterSpacing = (-0.5).sp
@@ -183,6 +187,7 @@ fun SignUpScreen(
                             Text(
                                 text     = stringResource(R.string.sign_up_subtitle),
                                 fontSize = 15.sp,
+                                lineHeight = 20.sp,
                                 color    = Color.White.copy(alpha = 0.85f),
                                 letterSpacing = 0.2.sp
                             )
@@ -228,6 +233,7 @@ fun SignUpScreen(
                         Text(
                             text       = stringResource(R.string.sign_up),
                             fontSize   = 28.sp,
+                            lineHeight = 34.sp,
                             fontWeight = FontWeight.ExtraBold,
                             color      = DarkGreen,
                             letterSpacing = (-0.3).sp
@@ -363,12 +369,13 @@ fun SignUpScreen(
                         enabled   = !isLoading,
                         modifier  = Modifier
                             .fillMaxWidth()
-                            .height(56.dp)
+                            .heightIn(min = 56.dp)
                             .shadow(
                                 elevation   = 12.dp,
                                 shape       = RoundedCornerShape(28.dp),
                                 spotColor   = DarkGreen.copy(alpha = 0.4f)
                             ),
+                        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
                         shape     = RoundedCornerShape(28.dp),
                         colors    = ButtonDefaults.buttonColors(
                             containerColor = DarkGreen,
@@ -395,7 +402,8 @@ fun SignUpScreen(
                                     fontSize      = 16.sp,
                                     fontWeight    = FontWeight.ExtraBold,
                                     color         = Color.White,
-                                    letterSpacing = 1.2.sp
+                                    letterSpacing = 1.2.sp,
+                                    textAlign     = TextAlign.Center
                                 )
                             }
                         }
@@ -412,7 +420,9 @@ fun SignUpScreen(
                             text          = stringResource(R.string.or_continue_with),
                             fontSize      = 13.sp,
                             color         = TextLight,
-                            letterSpacing = 0.5.sp
+                            letterSpacing = 0.5.sp,
+                            textAlign     = TextAlign.Center,
+                            modifier      = Modifier.padding(horizontal = 12.dp)
                         )
                         HorizontalDivider(modifier = Modifier.weight(1f), color = BorderColor)
                     }
@@ -424,7 +434,8 @@ fun SignUpScreen(
                         enabled  = !isLoading,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(56.dp),
+                            .heightIn(min = 56.dp),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                         shape    = RoundedCornerShape(28.dp),
                         border   = BorderStroke(1.5.dp, BorderColor),
                         colors   = ButtonDefaults.outlinedButtonColors(
@@ -445,8 +456,10 @@ fun SignUpScreen(
                             Text(
                                 text       = stringResource(R.string.continue_with_google),
                                 fontSize   = 15.sp,
+                                lineHeight = 20.sp,
                                 fontWeight = FontWeight.Bold,
-                                color      = TextDark
+                                color      = TextDark,
+                                textAlign  = TextAlign.Center
                             )
                         }
                     }
@@ -459,7 +472,8 @@ fun SignUpScreen(
                         enabled  = !isLoading,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(52.dp),
+                            .heightIn(min = 52.dp),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                         shape    = RoundedCornerShape(26.dp),
                         border   = BorderStroke(
                             1.5.dp,
@@ -490,9 +504,11 @@ fun SignUpScreen(
                             Text(
                                 text       = stringResource(R.string.continue_as_guest),
                                 fontSize   = 14.sp,
+                                lineHeight = 19.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color      = DarkGreen,
-                                letterSpacing = 0.2.sp
+                                letterSpacing = 0.2.sp,
+                                textAlign  = TextAlign.Center
                             )
                         }
                     }
@@ -500,23 +516,24 @@ fun SignUpScreen(
                     Spacer(modifier = Modifier.height(24.dp))
 
                     // ── Footer ────────────────────────────────────────────────
-                    Row(
+                    FlowRow(
                         modifier              = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment     = Alignment.CenterVertically
+                        horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
+                        verticalArrangement   = Arrangement.Center
                     ) {
                         Text(
                             text     = stringResource(R.string.have_account),
                             fontSize = 15.sp,
-                            color    = TextMedium
+                            color    = TextMedium,
+                            modifier = Modifier.align(Alignment.CenterVertically)
                         )
-                        Spacer(modifier = Modifier.width(4.dp))
                         Text(
                             text       = stringResource(R.string.log_in_link),
                             fontSize   = 15.sp,
                             fontWeight = FontWeight.ExtraBold,
                             color      = DarkGreen,
                             modifier   = Modifier
+                                .align(Alignment.CenterVertically)
                                 .clip(RoundedCornerShape(4.dp))
                                 .clickable { onLogin() }
                                 .padding(horizontal = 6.dp, vertical = 4.dp)
@@ -571,7 +588,7 @@ fun SignUpScreen(
         Box(
             modifier = Modifier
                 .statusBarsPadding()
-                .padding(top = 48.dp, start = 24.dp) // Adjusted for status bar safe area
+                .padding(top = 16.dp, start = 20.dp)
                 .size(44.dp)
                 .alpha(heroAlpha) // Fades in with the hero content
                 .clip(CircleShape)

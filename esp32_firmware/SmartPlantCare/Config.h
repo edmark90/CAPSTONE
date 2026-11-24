@@ -59,7 +59,7 @@ constexpr uint32_t INTERVAL_LDR_MS          = 5000;   // 5.0 s LDR ADC1 brightne
 constexpr uint32_t INTERVAL_LCD_REFRESH_MS  = 750;    // 750 ms LCD row refresh
 constexpr uint32_t INTERVAL_LCD_PAGE_MS     = 3000;   // 3.0 s normal LCD page rotation
 constexpr uint32_t INTERVAL_TELEMETRY_MS            = 6000;   // 6.0 s Firebase telemetry snapshot (Keep-Alive)
-constexpr uint32_t INTERVAL_COMMAND_POLL_MS         = 1500;   // 1.5 s fast manual/emergency command poll
+constexpr uint32_t INTERVAL_COMMAND_POLL_MS         = 1800;   // 1.8 s fast manual/emergency command poll
 constexpr uint32_t INTERVAL_CONFIG_POLL_MS          = 6000;   // 6.0 s staggered Firebase /config sync
 constexpr uint32_t INTERVAL_META_POLL_MS            = 30000;  // 30.0 s Firebase /meta (ownership & GPS) sync
 constexpr uint32_t INTERVAL_WEATHER_POLL_MS         = 60000;  // 60.0 s Firebase /weather sync (5s until valid)
@@ -148,16 +148,19 @@ constexpr uint16_t BEEP_BOOT_ON_MS                   = 150;
 constexpr size_t   EVENT_QUEUE_CAPACITY              = 16;
 constexpr size_t   IRRIGATION_HISTORY_QUEUE_CAPACITY = 16;
 constexpr size_t   PROCESSED_CMD_RING_SIZE           = 12;
+constexpr size_t   CMD_REPORT_QUEUE_CAPACITY         = 6;
 constexpr uint32_t WIFI_RECONNECT_MIN_MS             = 5000;
 constexpr uint32_t WIFI_RECONNECT_MAX_MS             = 60000;
-constexpr uint32_t HTTP_TIMEOUT_MS                   = 4500;   // Fast 4.5s bound (Keep-Alive avoids 2s TLS handshakes)
+constexpr uint32_t HTTP_TIMEOUT_MS                   = 3500;   // Bounded 3.5s normal HTTP timeout
+constexpr uint32_t HTTP_ACTIVE_WATERING_TIMEOUT_MS   = 1400;   // Tight 1.4s bound while valves/pump active
+constexpr uint32_t TLS_HANDSHAKE_TIMEOUT_SEC         = 3;      // Prevent 30-120s mbedTLS stalls on lossy Wi-Fi
 
-// ─── 7-Day Hourly Historical Monitoring & Retention (Asia/Manila PHT, UTC+8) ─
+// ─── 7-Day Minute & Hourly Historical Monitoring & Retention (Asia/Manila PHT, UTC+8) ─
 constexpr uint8_t  HISTORY_RETENTION_DAYS            = 7;
 constexpr uint8_t  HISTORY_MAX_SEGMENTS_PER_HOUR     = 4;
-constexpr uint32_t INTERVAL_HISTORY_SERVICE_MS       = 5000;   // Staggered 5s check for irrigation/history flush
-constexpr uint32_t INTERVAL_HISTORY_FLUSH_MS         = 300000; // 5-minute running hourly checkpoint
-constexpr uint32_t HISTORY_INTRA_HOUR_GAP_MS         = 300000; // >=5 min disconnect starts new graph segment
+constexpr uint32_t INTERVAL_HISTORY_SERVICE_MS       = 4000;   // Staggered 4s check for minute/hour/irrigation flush
+constexpr uint32_t INTERVAL_HISTORY_FLUSH_MS         = 60000;  // 60s checkpoint so active hour & minute stay live
+constexpr uint32_t HISTORY_INTRA_HOUR_GAP_MS         = 300000; // >=5 min disconnect starts new hour sub-segment
 constexpr int32_t  PHILIPPINES_UTC_OFFSET_SEC        = 8 * 3600;
 
 }  // namespace Config

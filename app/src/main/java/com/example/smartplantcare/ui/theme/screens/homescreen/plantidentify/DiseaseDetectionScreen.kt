@@ -76,6 +76,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -272,7 +273,7 @@ fun DiseaseCameraScreen(onImageReady: (File) -> Unit, onBack: () -> Unit) {
     }
 
     val configuration = LocalConfiguration.current
-    val overlaySize = if (configuration.screenHeightDp < 640) 210.dp else 260.dp
+    val overlaySize = if (configuration.screenHeightDp < 700) 200.dp else 260.dp
     val hasFlashUnit = camera?.cameraInfo?.hasFlashUnit() == true
 
     Box(
@@ -299,7 +300,7 @@ fun DiseaseCameraScreen(onImageReady: (File) -> Unit, onBack: () -> Unit) {
                 .fillMaxWidth()
                 .statusBarsPadding()
                 .padding(horizontal = 20.dp, vertical = 14.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             CircleIconButton(
@@ -308,18 +309,25 @@ fun DiseaseCameraScreen(onImageReady: (File) -> Unit, onBack: () -> Unit) {
                 onClick = onBack
             )
 
-            Surface(
-                color = SemiTransparentBlack,
-                shape = RoundedCornerShape(50)
+            Box(
+                modifier = Modifier.weight(1f),
+                contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = "Leaf Disease Detection",
-                    fontFamily = HomeInterFont,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color.White,
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
-                )
+                Surface(
+                    color = SemiTransparentBlack,
+                    shape = RoundedCornerShape(50)
+                ) {
+                    Text(
+                        text = "Leaf Disease Detection",
+                        fontFamily = HomeInterFont,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.size(44.dp))
@@ -330,9 +338,9 @@ fun DiseaseCameraScreen(onImageReady: (File) -> Unit, onBack: () -> Unit) {
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
                 .navigationBarsPadding()
-                .padding(bottom = 28.dp, start = 28.dp, end = 28.dp),
+                .padding(bottom = 24.dp, start = 16.dp, end = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(18.dp)
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Surface(
                 color = SemiTransparentBlack,
@@ -343,6 +351,7 @@ fun DiseaseCameraScreen(onImageReady: (File) -> Unit, onBack: () -> Unit) {
                     fontFamily = HomeInterFont,
                     color = Color.White,
                     fontSize = 12.sp,
+                    lineHeight = 17.sp,
                     fontWeight = FontWeight.Medium,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)

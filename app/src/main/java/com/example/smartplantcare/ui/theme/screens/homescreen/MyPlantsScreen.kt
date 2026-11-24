@@ -271,8 +271,13 @@ fun MyPlantsScreen(
                             historyDaysWindow = uiState.historyDaysWindow,
                             selectedDateKey = uiState.selectedHistoryDateKey,
                             historyByDate = uiState.historyByDate,
-                            isLoadingHistory = uiState.isLoadingHistory,
+                            historyGranularity = uiState.historyGranularity,
+                            selectedMinuteHourFilter = uiState.selectedMinuteHourFilter,
+                            isLoadingHistory = uiState.isLoadingHistory || uiState.isLoadingMinuteHistory,
+                            isPhoneOnline = uiState.isPhoneOnline,
                             onSelectDate = { vm.selectHistoryDate(it) },
+                            onSelectGranularity = { vm.setHistoryGranularity(it) },
+                            onSelectMinuteHour = { vm.selectMinuteHourFilter(it) },
                             onRefresh = { vm.refreshHistory(silent = false) },
                             onBack = { vm.closeSubPage() }
                         )

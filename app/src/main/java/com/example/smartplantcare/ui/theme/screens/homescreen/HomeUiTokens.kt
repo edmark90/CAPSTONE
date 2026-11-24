@@ -25,8 +25,14 @@ object HomeColors {
     val ForestPrimary = Color(0xFF1B4332)
     val ForestDark = Color(0xFF0F291E)
     val ForestMedium = Color(0xFF2D6A4F)
+    val HeroGradientStart = Color(0xFF0F3524)
+    val HeroGradientMid = Color(0xFF1B4332)
+    val HeroGradientEnd = Color(0xFF133A29)
     val EmeraldAccent = Color(0xFF10B981)
     val MintGlow = Color(0xFF34D399)
+
+    val PillTrackBg = Color(0xFFEDF3EF)
+    val SubtleSurface = Color(0xFFF8FBF9)
 
     val TextPrimary = Color(0xFF111827)
     val TextSecondary = Color(0xFF4B5563)

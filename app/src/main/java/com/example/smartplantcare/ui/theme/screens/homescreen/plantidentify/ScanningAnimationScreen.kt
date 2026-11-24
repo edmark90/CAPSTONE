@@ -13,7 +13,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -39,6 +41,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
@@ -130,10 +133,13 @@ fun ScanningAnimationScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(28.dp)
         ) {
+            val configuration = LocalConfiguration.current
+            val frameSize = if (configuration.screenHeightDp < 640) 180.dp else 240.dp
+            val glowSize = frameSize + 50.dp
             Box(contentAlignment = Alignment.Center) {
                 Canvas(
                     modifier = Modifier
-                        .size(290.dp)
+                        .size(glowSize)
                         .graphicsLayer {
                             scaleX = glowScale
                             scaleY = glowScale
@@ -150,8 +156,6 @@ fun ScanningAnimationScreen(
                     )
                 }
 
-                val configuration = LocalConfiguration.current
-                val frameSize = if (configuration.screenHeightDp < 640) 180.dp else 240.dp
                 Box(
                     modifier = Modifier
                         .size(frameSize)
@@ -221,13 +225,18 @@ fun ScanningAnimationScreen(
                     fontFamily = HomeInterFont,
                     color = Color.White,
                     fontSize = 18.sp,
-                    fontWeight = FontWeight.SemiBold
+                    lineHeight = 24.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Center
                 )
+                Spacer(modifier = Modifier.height(6.dp))
                 Text(
                     text = "Please wait while we identify your plant",
                     fontFamily = HomeInterFont,
                     color = Color.White.copy(alpha = 0.6f),
-                    fontSize = 13.sp
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp,
+                    textAlign = TextAlign.Center
                 )
             }
 

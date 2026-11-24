@@ -18,8 +18,12 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.smartplantcare.ui.theme.screens.SystemUiController
@@ -137,43 +141,68 @@ fun SmartPlantCareSplashScreen(
                 }
             }
 
-            // ─── Phases 1 & 2: S Drop & Text Slide ────────────────────────────
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center
+            // ─── Phases 1 & 2: S Drop & Text Slide (Adaptive Fit) ─────────────
+            val textMeasurer = rememberTextMeasurer()
+            BoxWithConstraints(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp),
+                contentAlignment = Alignment.Center
             ) {
-                // The Giant 'S' that shrinks perfectly to fit
-                Text(
-                    text = "S",
-                    fontSize = 26.sp,
-                    fontFamily = FontFamily.SansSerif,
-                    fontWeight = FontWeight.Black,
-                    letterSpacing = 2.sp,
-                    color = DeepGreen,
-                    modifier = Modifier.graphicsLayer {
-                        scaleX = sScale
-                        scaleY = sScale
-                        alpha = sAlpha
-                    }
-                )
+                val maxWidthPx = with(LocalDensity.current) { maxWidth.toPx() }.coerceAtLeast(1f)
+                val fullMeasuredPx = remember(maxWidthPx, LocalDensity.current.fontScale) {
+                    textMeasurer.measure(
+                        text = "SMART PLANT CARE",
+                        style = TextStyle(
+                            fontSize = 26.sp,
+                            fontFamily = FontFamily.SansSerif,
+                            fontWeight = FontWeight.Black,
+                            letterSpacing = 2.sp
+                        ),
+                        maxLines = 1
+                    ).size.width.toFloat().coerceAtLeast(1f)
+                }
+                val fitScale = (maxWidthPx / fullMeasuredPx).coerceIn(0.65f, 1f)
+                val responsiveFontSize = (26f * fitScale).sp
+                val responsiveTracking = (2f * fitScale).sp
 
-                // The sliding "MART PLANT CARE"
-                AnimatedVisibility(
-                    visible = textVisible,
-                    enter = expandHorizontally(
-                        animationSpec = tween(800, easing = FastOutSlowInEasing),
-                        expandFrom = Alignment.Start
-                    ) + fadeIn(animationSpec = tween(800))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
                 ) {
+                    // The Giant 'S' that shrinks perfectly to fit
                     Text(
-                        text = "MART PLANT CARE",
-                        fontSize = 26.sp,
+                        text = "S",
+                        fontSize = responsiveFontSize,
                         fontFamily = FontFamily.SansSerif,
                         fontWeight = FontWeight.Black,
-                        letterSpacing = 2.sp,
+                        letterSpacing = responsiveTracking,
                         color = DeepGreen,
-                        maxLines = 1
+                        modifier = Modifier.graphicsLayer {
+                            scaleX = sScale
+                            scaleY = sScale
+                            alpha = sAlpha
+                        }
                     )
+
+                    // The sliding "MART PLANT CARE"
+                    AnimatedVisibility(
+                        visible = textVisible,
+                        enter = expandHorizontally(
+                            animationSpec = tween(800, easing = FastOutSlowInEasing),
+                            expandFrom = Alignment.Start
+                        ) + fadeIn(animationSpec = tween(800))
+                    ) {
+                        Text(
+                            text = "MART PLANT CARE",
+                            fontSize = responsiveFontSize,
+                            fontFamily = FontFamily.SansSerif,
+                            fontWeight = FontWeight.Black,
+                            letterSpacing = responsiveTracking,
+                            color = DeepGreen,
+                            maxLines = 1
+                        )
+                    }
                 }
             }
 
@@ -192,8 +221,10 @@ fun SmartPlantCareSplashScreen(
                         fontSize = 11.sp,
                         fontFamily = FontFamily.SansSerif,
                         fontWeight = FontWeight.Bold,
-                        letterSpacing = 8.sp,
-                        color = LeafGreen
+                        letterSpacing = 6.sp,
+                        color = LeafGreen,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 20.dp)
                     )
                 }
             }

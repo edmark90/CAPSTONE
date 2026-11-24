@@ -5,12 +5,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -100,6 +102,7 @@ fun DiseaseResultScreen(
                 Button(
                     onClick = onCaptureAnother,
                     shape = RoundedCornerShape(16.dp),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = HomeColors.ForestPrimary,
                         contentColor = Color.White
@@ -108,7 +111,7 @@ fun DiseaseResultScreen(
                         .fillMaxWidth()
                         .navigationBarsPadding()
                         .padding(horizontal = 20.dp, vertical = 14.dp)
-                        .height(52.dp)
+                        .heightIn(min = 52.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Filled.CameraAlt,
@@ -122,7 +125,8 @@ fun DiseaseResultScreen(
                         fontFamily = HomeInterFont,
                         fontSize = 15.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = Color.White
+                        color = Color.White,
+                        textAlign = TextAlign.Center
                     )
                 }
             }
@@ -179,8 +183,10 @@ private fun PlantRejectedContent(result: DetectionResult.PlantRejected) {
             text = "Unable to identify plant",
             fontFamily = HomeInterFont,
             fontSize = 22.sp,
+            lineHeight = 28.sp,
             fontWeight = FontWeight.Bold,
-            color = HomeColors.TextPrimary
+            color = HomeColors.TextPrimary,
+            textAlign = TextAlign.Center
         )
 
         Spacer(modifier = Modifier.height(10.dp))
@@ -229,8 +235,10 @@ private fun DiseaseRejectedContent(result: DetectionResult.DiseaseRejected) {
             text = "Unable to identify disease",
             fontFamily = HomeInterFont,
             fontSize = 22.sp,
+            lineHeight = 28.sp,
             fontWeight = FontWeight.Bold,
-            color = HomeColors.TextPrimary
+            color = HomeColors.TextPrimary,
+            textAlign = TextAlign.Center
         )
 
         Spacer(modifier = Modifier.height(10.dp))
@@ -280,15 +288,17 @@ private fun PlantIdentificationBadge(plantPrediction: PlantPrediction) {
             Spacer(modifier = Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     text = plantPrediction.plantType.getDisplayName(),
                     fontFamily = HomeInterFont,
                     fontSize = 20.sp,
+                    lineHeight = 25.sp,
                     fontWeight = FontWeight.Bold,
-                    color = HomeColors.TextPrimary
+                    color = HomeColors.TextPrimary,
+                    modifier = Modifier.weight(1f)
                 )
                 ConfidenceBadge(
                     confidence = plantPrediction.confidence,
@@ -330,6 +340,7 @@ private fun DiseaseResultCard(result: DetectionResult.DiseaseAccepted) {
                 text = result.diseasePrediction.className.replace("_", " "),
                 fontFamily = HomeInterFont,
                 fontSize = 24.sp,
+                lineHeight = 30.sp,
                 fontWeight = FontWeight.Bold,
                 color = if (isHealthy) HomeColors.ForestPrimary else HomeColors.AlertRed
             )
@@ -366,15 +377,17 @@ private fun PlantInfoCard(plantPrediction: PlantPrediction) {
             Spacer(modifier = Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     text = plantPrediction.plantType.getDisplayName(),
                     fontFamily = HomeInterFont,
                     fontSize = 18.sp,
+                    lineHeight = 23.sp,
                     fontWeight = FontWeight.Bold,
-                    color = HomeColors.TextPrimary
+                    color = HomeColors.TextPrimary,
+                    modifier = Modifier.weight(1f)
                 )
                 ConfidenceBadge(
                     confidence = plantPrediction.confidence,
@@ -404,14 +417,18 @@ private fun ConfidenceBadge(
             fontFamily = HomeInterFont,
             fontSize = 18.sp,
             fontWeight = FontWeight.ExtraBold,
-            color = color
+            color = color,
+            maxLines = 1,
+            softWrap = false
         )
         Text(
             text = label,
             fontFamily = HomeInterFont,
             fontSize = 10.sp,
             fontWeight = FontWeight.Medium,
-            color = HomeColors.TextMuted
+            color = HomeColors.TextMuted,
+            maxLines = 1,
+            softWrap = false
         )
     }
 }
@@ -459,21 +476,26 @@ private fun AdditionalInfoSection(result: DetectionResult.DiseaseAccepted) {
 private fun InfoRow(label: String, value: String) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.Top
     ) {
         Text(
             text = label,
             fontFamily = HomeInterFont,
             fontSize = 13.sp,
-            color = HomeColors.TextSecondary
+            color = HomeColors.TextSecondary,
+            maxLines = 1,
+            softWrap = false
         )
         Text(
             text = value,
             fontFamily = HomeInterFont,
             fontSize = 13.sp,
+            lineHeight = 18.sp,
             fontWeight = FontWeight.SemiBold,
-            color = HomeColors.TextPrimary
+            color = HomeColors.TextPrimary,
+            textAlign = TextAlign.End,
+            modifier = Modifier.weight(1f)
         )
     }
 }

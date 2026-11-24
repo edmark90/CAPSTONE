@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -240,9 +241,9 @@ fun AIDoctorScreen(
                                 text = "Diagnosed leaves & 7-day care plans",
                                 fontFamily = HomeInterFont,
                                 fontSize = 12.sp,
+                                lineHeight = 16.sp,
                                 color = HomeColors.TextSecondary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                maxLines = 2
                             )
                         }
                     }
@@ -257,7 +258,7 @@ fun AIDoctorScreen(
                         ),
                         shape = RoundedCornerShape(13.dp),
                         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
-                        modifier = Modifier.height(44.dp)
+                        modifier = Modifier.heightIn(min = 44.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.AddAPhoto,
@@ -271,7 +272,9 @@ fun AIDoctorScreen(
                             fontFamily = HomeInterFont,
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Bold,
-                            color = Color.White
+                            color = Color.White,
+                            maxLines = 1,
+                            softWrap = false
                         )
                     }
                 }
@@ -280,7 +283,7 @@ fun AIDoctorScreen(
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     StatCard(
                         icon = Icons.Default.Eco,
@@ -339,7 +342,7 @@ fun AIDoctorScreen(
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
@@ -347,7 +350,8 @@ fun AIDoctorScreen(
                         fontFamily = HomeInterFont,
                         fontWeight = FontWeight.Bold,
                         fontSize = 16.sp,
-                        color = HomeColors.TextPrimary
+                        color = HomeColors.TextPrimary,
+                        modifier = Modifier.weight(1f)
                     )
                     if (plans.isNotEmpty()) {
                         Text(
@@ -355,7 +359,8 @@ fun AIDoctorScreen(
                             fontFamily = HomeInterFont,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Medium,
-                            color = HomeColors.TextSecondary
+                            color = HomeColors.TextSecondary,
+                            maxLines = 1
                         )
                     }
                 }
@@ -369,7 +374,9 @@ fun AIDoctorScreen(
                             text = "Search plant or diagnosis...",
                             fontFamily = HomeInterFont,
                             color = HomeColors.TextMuted,
-                            fontSize = 14.sp
+                            fontSize = 14.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     },
                     leadingIcon = {
@@ -556,7 +563,7 @@ private fun StatCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 11.dp, horizontal = 6.dp),
+                .padding(vertical = 11.dp, horizontal = 4.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Box(
@@ -579,7 +586,9 @@ private fun StatCard(
                 fontFamily = HomeInterFont,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
-                color = valueColor
+                color = valueColor,
+                maxLines = 1,
+                softWrap = false
             )
             Text(
                 text = label,
@@ -587,7 +596,9 @@ private fun StatCard(
                 fontSize = 11.sp,
                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                 color = if (isSelected) HomeColors.TextPrimary else HomeColors.TextSecondary,
-                maxLines = 1
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
@@ -629,7 +640,8 @@ private fun EmptyPlansState(onIdentifyClick: () -> Unit) {
                 fontFamily = HomeInterFont,
                 fontWeight = FontWeight.Bold,
                 fontSize = 17.sp,
-                color = HomeColors.TextPrimary
+                color = HomeColors.TextPrimary,
+                textAlign = TextAlign.Center
             )
             Spacer(modifier = Modifier.height(6.dp))
             Text(
@@ -645,7 +657,8 @@ private fun EmptyPlansState(onIdentifyClick: () -> Unit) {
                 onClick = onIdentifyClick,
                 shape = RoundedCornerShape(13.dp),
                 border = BorderStroke(1.dp, HomeColors.ForestPrimary),
-                modifier = Modifier.height(44.dp)
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+                modifier = Modifier.heightIn(min = 44.dp)
             ) {
                 Icon(
                     imageVector = Icons.Default.AddAPhoto,
@@ -659,7 +672,8 @@ private fun EmptyPlansState(onIdentifyClick: () -> Unit) {
                     fontFamily = HomeInterFont,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold,
-                    color = HomeColors.ForestPrimary
+                    color = HomeColors.ForestPrimary,
+                    textAlign = TextAlign.Center
                 )
             }
         }
@@ -746,9 +760,10 @@ private fun TreatmentPlanCard(
                         text = plan.plantName.ifBlank { "Unknown Plant" },
                         fontFamily = HomeInterFont,
                         fontSize = 16.sp,
+                        lineHeight = 20.sp,
                         fontWeight = FontWeight.Bold,
                         color = HomeColors.TextPrimary,
-                        maxLines = 1,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
 
@@ -760,10 +775,10 @@ private fun TreatmentPlanCard(
                             isCompleted -> HomeColors.WaterBg
                             else -> HomeColors.AlertBg
                         },
-                        shape = RoundedCornerShape(50)
+                        shape = RoundedCornerShape(10.dp)
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Box(
@@ -788,8 +803,9 @@ private fun TreatmentPlanCard(
                                     else -> HomeColors.AlertRed
                                 },
                                 fontSize = 11.sp,
+                                lineHeight = 14.5.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
+                                maxLines = 2,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
@@ -804,6 +820,8 @@ private fun TreatmentPlanCard(
                         color = HomeColors.TextMuted
                     )
                 }
+
+                Spacer(Modifier.width(8.dp))
 
                 // Subtle neutral delete button so it doesn't compete with the diagnosis badge
                 Surface(
@@ -829,7 +847,7 @@ private fun TreatmentPlanCard(
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
@@ -838,7 +856,8 @@ private fun TreatmentPlanCard(
                     fontFamily = HomeInterFont,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold,
-                    color = if (isCompleted || isHealthy) HomeColors.SuccessGreen else HomeColors.ForestPrimary
+                    color = if (isCompleted || isHealthy) HomeColors.SuccessGreen else HomeColors.ForestPrimary,
+                    modifier = Modifier.weight(1f)
                 )
 
                 Row(
@@ -850,7 +869,8 @@ private fun TreatmentPlanCard(
                         fontFamily = HomeInterFont,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = HomeColors.TextSecondary
+                        color = HomeColors.TextSecondary,
+                        maxLines = 1
                     )
                     Icon(
                         imageVector = Icons.Default.ChevronRight,

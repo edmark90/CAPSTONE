@@ -5,12 +5,27 @@
 #include <time.h>
 
 namespace {
+constexpr const char* CMD_DEDUPE_NVS_NS = "spc_cmds";
+
 uint64_t currentWallClockEpochMs(uint32_t nowMs) {
   time_t nowSec = time(nullptr);
   if (nowSec > 1700000000L) {
     return static_cast<uint64_t>(nowSec) * 1000ULL + (nowMs % 1000ULL);
   }
   return 0ULL;
+}
+
+uint16_t computePhMinuteOfDay(uint64_t epochMs) {
+  if (epochMs < 1700000000000ULL) {
+    return 0;
+  }
+  time_t phSec = static_cast<time_t>(epochMs / 1000ULL) + Config::PHILIPPINES_UTC_OFFSET_SEC;
+  struct tm tmPh;
+  memset(&tmPh, 0, sizeof(tmPh));
+  if (gmtime_r(&phSec, &tmPh) == nullptr) {
+    return 0;
+  }
+  return static_cast<uint16_t>(tmPh.tm_hour * 60 + tmPh.tm_min);
 }
 }  // namespace
 
@@ -30,6 +45,7 @@ void IrrigationController::begin(RelayController* relays,
   if (relays_) {
     relays_->emergencyAllOff();
   }
+  loadProcessedCommandsFromNvs();
   state_            = IrrigationState::SELF_TEST;
   stateEnteredAtMs_ = millis();
 }
@@ -498,11 +514,75 @@ uint32_t IrrigationController::activePumpElapsedSec(uint32_t nowMs) const {
   return uint32_t(nowMs - pumpStartedAtMs_) / 1000;
 }
 
+bool IrrigationController::peekPendingCommandReport(CommandExecutionReport& outReport) const {
+  if (reportCount_ == 0) return false;
+  outReport = reportQueue_[reportHead_];
+  return outReport.hasReport;
+}
+
+void IrrigationController::popOldestCommandReport() {
+  if (reportCount_ == 0) return;
+  reportQueue_[reportHead_].hasReport = false;
+  reportHead_ = (reportHead_ + 1) % Config::CMD_REPORT_QUEUE_CAPACITY;
+  --reportCount_;
+}
+
 bool IrrigationController::popPendingCommandReport(CommandExecutionReport& outReport) {
-  if (!pendingReport_.hasReport) return false;
-  outReport                = pendingReport_;
-  pendingReport_.hasReport = false;
+  if (!peekPendingCommandReport(outReport)) return false;
+  popOldestCommandReport();
   return true;
+}
+
+void IrrigationController::loadProcessedCommandsFromNvs() {
+  Preferences prefs;
+  if (!prefs.begin(CMD_DEDUPE_NVS_NS, true)) {
+    return;
+  }
+  processedCmdHead_ = prefs.getUChar("head", 0) % Config::PROCESSED_CMD_RING_SIZE;
+  char key[8];
+  for (size_t i = 0; i < Config::PROCESSED_CMD_RING_SIZE; ++i) {
+    snprintf(key, sizeof(key), "c%u", static_cast<unsigned int>(i));
+    String saved = prefs.getString(key, "");
+    if (saved.length() > 0 && saved.length() < sizeof(processedCmdIds_[0])) {
+      snprintf(processedCmdIds_[i], sizeof(processedCmdIds_[0]), "%s", saved.c_str());
+    } else {
+      processedCmdIds_[i][0] = '\0';
+    }
+  }
+  prefs.end();
+}
+
+void IrrigationController::persistProcessedCommandSlot(size_t slotIdx,
+                                                       const char* commandId,
+                                                       size_t nextHead) {
+  Preferences prefs;
+  if (!prefs.begin(CMD_DEDUPE_NVS_NS, false)) {
+    return;
+  }
+  char key[8];
+  snprintf(key, sizeof(key), "c%u", static_cast<unsigned int>(slotIdx));
+  prefs.putString(key, commandId ? commandId : "");
+  prefs.putUChar("head", static_cast<uint8_t>(nextHead % Config::PROCESSED_CMD_RING_SIZE));
+  prefs.end();
+}
+
+void IrrigationController::clearProcessedCommandsForReset() {
+  for (size_t i = 0; i < Config::PROCESSED_CMD_RING_SIZE; ++i) {
+    processedCmdIds_[i][0] = '\0';
+  }
+  processedCmdHead_ = 0;
+  for (size_t i = 0; i < Config::CMD_REPORT_QUEUE_CAPACITY; ++i) {
+    reportQueue_[i].hasReport = false;
+  }
+  reportHead_  = 0;
+  reportTail_  = 0;
+  reportCount_ = 0;
+
+  Preferences prefs;
+  if (prefs.begin(CMD_DEDUPE_NVS_NS, false)) {
+    prefs.clear();
+    prefs.end();
+  }
 }
 
 bool IrrigationController::peekPendingIrrigationHistory(IrrigationHistoryRecord& outRecord) const {
@@ -554,6 +634,7 @@ void IrrigationController::enqueueIrrigationHistory(uint32_t nowMs,
   } else {
     rec.startedAtEpochMs = 0ULL;
   }
+  rec.minuteOfDay      = computePhMinuteOfDay(rec.startedAtEpochMs);
   rec.startMoisturePct = pumpStartMoisturePct_;
   if (soil_) {
     const SoilZoneStatus& endZs = soil_->zoneStatus(zone);
@@ -719,19 +800,45 @@ bool IrrigationController::isCommandAlreadyProcessed(const char* commandId) cons
 }
 
 void IrrigationController::recordCommandProcessed(const char* commandId) {
-  snprintf(processedCmdIds_[processedCmdHead_],
+  const size_t slot = processedCmdHead_ % Config::PROCESSED_CMD_RING_SIZE;
+  snprintf(processedCmdIds_[slot],
            sizeof(processedCmdIds_[0]),
            "%s",
            commandId);
-  processedCmdHead_ = (processedCmdHead_ + 1) % Config::PROCESSED_CMD_RING_SIZE;
+  processedCmdHead_ = (slot + 1) % Config::PROCESSED_CMD_RING_SIZE;
+  persistProcessedCommandSlot(slot, processedCmdIds_[slot], processedCmdHead_);
 }
 
 void IrrigationController::queueCommandReport(const char* commandId,
                                               const char* state,
                                               const char* reason) {
-  pendingReport_.hasReport   = true;
-  pendingReport_.updatedAtMs = millis();
-  snprintf(pendingReport_.commandId, sizeof(pendingReport_.commandId), "%s", commandId);
-  snprintf(pendingReport_.state, sizeof(pendingReport_.state), "%s", state);
-  snprintf(pendingReport_.reason, sizeof(pendingReport_.reason), "%s", reason ? reason : "");
+  if (!commandId || commandId[0] == '\0' || !state) return;
+
+  // Coalesce non-terminal update in-place if the tail is already for the same commandId
+  if (reportCount_ > 0) {
+    const size_t lastIdx =
+        (reportTail_ + Config::CMD_REPORT_QUEUE_CAPACITY - 1) % Config::CMD_REPORT_QUEUE_CAPACITY;
+    CommandExecutionReport& tailRep = reportQueue_[lastIdx];
+    if (tailRep.hasReport && strcmp(tailRep.commandId, commandId) == 0 && !tailRep.isTerminal()) {
+      tailRep.updatedAtMs = millis();
+      snprintf(tailRep.state, sizeof(tailRep.state), "%s", state);
+      snprintf(tailRep.reason, sizeof(tailRep.reason), "%s", reason ? reason : "");
+      return;
+    }
+  }
+
+  if (reportCount_ >= Config::CMD_REPORT_QUEUE_CAPACITY) {
+    // Evict oldest non-terminal report first; otherwise evict oldest
+    popOldestCommandReport();
+  }
+
+  CommandExecutionReport& rep = reportQueue_[reportTail_];
+  rep.hasReport   = true;
+  rep.updatedAtMs = millis();
+  snprintf(rep.commandId, sizeof(rep.commandId), "%s", commandId);
+  snprintf(rep.state, sizeof(rep.state), "%s", state);
+  snprintf(rep.reason, sizeof(rep.reason), "%s", reason ? reason : "");
+
+  reportTail_ = (reportTail_ + 1) % Config::CMD_REPORT_QUEUE_CAPACITY;
+  ++reportCount_;
 }

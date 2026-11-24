@@ -1,47 +1,218 @@
 package com.example.smartplantcare.iot
 
+import android.os.SystemClock
+import android.util.Log
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.ValueEventListener
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import okhttp3.CacheControl
+import okhttp3.ConnectionPool
+import okhttp3.Dns
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import java.net.Inet4Address
 import java.security.SecureRandom
 import java.util.concurrent.TimeUnit
 
 /**
  * Firebase Realtime Database repository for Smart Plant Care V3.1 IoT devices.
- * Works seamlessly on both Free Spark Plan and Blaze Plan.
+ * Works seamlessly on both Free Spark Plan and Blaze Plan while preserving strict Firebase Auth security.
  */
 class IotFirebaseRepository {
 
     companion object {
+        private const val TAG = "SpcSyncPerf"
         private const val RTDB_URL =
             "https://smartplantcare-7c3e5-default-rtdb.asia-southeast1.firebasedatabase.app"
+        private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
     }
 
     private val db: FirebaseDatabase = FirebaseDatabase.getInstance(RTDB_URL)
     private val rootRef = db.reference
 
-    // Direct HTTPS REST client that 100% bypasses Firebase SDK disk cache & stuck WebSockets
+    // IPv4-preferred DNS eliminates broken-IPv6 stalls on residential Wi-Fi routers while preserving IPv6 fallback
+    private val ipv4PreferredDns: Dns = object : Dns {
+        override fun lookup(hostname: String): List<java.net.InetAddress> {
+            return Dns.SYSTEM.lookup(hostname).sortedBy { addr -> if (addr is Inet4Address) 0 else 1 }
+        }
+    }
+
+    // Direct HTTPS/2 REST client with connection pooling and bounded timeouts
     private val restClient: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(8, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
-        .writeTimeout(8, TimeUnit.SECONDS)
+        .dns(ipv4PreferredDns)
+        .connectionPool(ConnectionPool(6, 2, TimeUnit.MINUTES))
+        .connectTimeout(4, TimeUnit.SECONDS)
+        .readTimeout(5, TimeUnit.SECONDS)
+        .writeTimeout(5, TimeUnit.SECONDS)
         .build()
 
+    // In-memory cached Firebase ID token (valid ~55m) for zero-wait authenticated REST requests
+    private val tokenMutex = Mutex()
+    @Volatile private var cachedTokenUid: String? = null
+    @Volatile private var cachedIdToken: String? = null
+    @Volatile private var cachedTokenExpiresAtMs: Long = 0L
+
+    private suspend fun getAuthenticatedIdToken(forceRefresh: Boolean = false): String? {
+        val user = FirebaseAuth.getInstance().currentUser ?: run {
+            cachedTokenUid = null
+            cachedIdToken = null
+            cachedTokenExpiresAtMs = 0L
+            return null
+        }
+        val now = System.currentTimeMillis()
+        if (!forceRefresh &&
+            cachedTokenUid == user.uid &&
+            !cachedIdToken.isNullOrBlank() &&
+            now + 300_000L < cachedTokenExpiresAtMs
+        ) {
+            return cachedIdToken
+        }
+        return tokenMutex.withLock {
+            val recheckNow = System.currentTimeMillis()
+            if (!forceRefresh &&
+                cachedTokenUid == user.uid &&
+                !cachedIdToken.isNullOrBlank() &&
+                recheckNow + 300_000L < cachedTokenExpiresAtMs
+            ) {
+                return@withLock cachedIdToken
+            }
+            runCatching {
+                val res = user.getIdToken(forceRefresh).await()
+                val tok = res.token
+                val expMs = res.expirationTimestamp * 1000L
+                if (!tok.isNullOrBlank()) {
+                    cachedTokenUid = user.uid
+                    cachedIdToken = tok
+                    cachedTokenExpiresAtMs = if (expMs > recheckNow) expMs else (recheckNow + 3_000_000L)
+                }
+                tok
+            }.getOrNull()
+        }
+    }
+
+    private data class RestHttpResponse(
+        val code: Int,
+        val body: String,
+        val durationMs: Long
+    )
+
+    private suspend fun executeAuthenticatedRest(
+        method: String,
+        pathWithJsonAndOptionalQuery: String,
+        jsonBody: String? = null,
+        requireAuth: Boolean = false
+    ): RestHttpResponse = withContext(Dispatchers.IO) {
+        val startedElapsed = SystemClock.elapsedRealtime()
+        var token = getAuthenticatedIdToken(forceRefresh = false)
+        if (requireAuth && token.isNullOrBlank()) {
+            token = getAuthenticatedIdToken(forceRefresh = true)
+        }
+
+        fun buildUrl(tok: String?): String {
+            val base = "$RTDB_URL$pathWithJsonAndOptionalQuery"
+            return if (!tok.isNullOrBlank()) {
+                val sep = if (pathWithJsonAndOptionalQuery.contains('?')) "&" else "?"
+                "$base${sep}auth=$tok"
+            } else {
+                base
+            }
+        }
+
+        fun sendOnce(targetUrl: String): Pair<Int, String> {
+            val reqBuilder = Request.Builder()
+                .url(targetUrl)
+                .cacheControl(CacheControl.FORCE_NETWORK)
+                .header("Cache-Control", "no-cache, no-store, must-revalidate")
+                .header("Pragma", "no-cache")
+
+            val reqBody = jsonBody?.toRequestBody(JSON_MEDIA)
+            when (method.uppercase()) {
+                "GET" -> reqBuilder.get()
+                "PUT" -> reqBuilder.put((jsonBody ?: "{}").toRequestBody(JSON_MEDIA))
+                "PATCH" -> reqBuilder.patch((jsonBody ?: "{}").toRequestBody(JSON_MEDIA))
+                "POST" -> reqBuilder.post((jsonBody ?: "{}").toRequestBody(JSON_MEDIA))
+                "DELETE" -> if (reqBody != null) reqBuilder.delete(reqBody) else reqBuilder.delete()
+                else -> reqBuilder.get()
+            }
+            restClient.newCall(reqBuilder.build()).execute().use { resp ->
+                return resp.code to resp.body?.string().orEmpty()
+            }
+        }
+
+        var (code, body) = sendOnce(buildUrl(token))
+        if (code == 401) {
+            val refreshed = getAuthenticatedIdToken(forceRefresh = true)
+            if (!refreshed.isNullOrBlank() && refreshed != token) {
+                val retry = sendOnce(buildUrl(refreshed))
+                code = retry.first
+                body = retry.second
+            } else if (!requireAuth && !token.isNullOrBlank()) {
+                val retry = sendOnce(buildUrl(null))
+                code = retry.first
+                body = retry.second
+            }
+        }
+        val elapsedMs = (SystemClock.elapsedRealtime() - startedElapsed).coerceAtLeast(1L)
+        RestHttpResponse(code = code, body = body, durationMs = elapsedMs)
+    }
+
+    /**
+     * Fast authenticated REST discovery of `/users/{uid}/devices` so cold launch does not
+     * wait 5-20s for Firebase SDK WebSocket initialization on residential Wi-Fi.
+     */
+    suspend fun fetchUserDevicesViaRest(uid: String): Result<List<UserDeviceLink>> = runCatching {
+        val resp = executeAuthenticatedRest(
+            method = "GET",
+            pathWithJsonAndOptionalQuery = "/users/$uid/devices.json",
+            requireAuth = true
+        )
+        if (resp.code !in 200..299) {
+            throw IllegalStateException("User devices REST returned HTTP ${resp.code}")
+        }
+        val trimmed = resp.body.trim()
+        if (trimmed.isEmpty() || trimmed == "null") {
+            emptyList()
+        } else {
+            val obj = JSONObject(trimmed)
+            val links = mutableListOf<UserDeviceLink>()
+            val keys = obj.keys()
+            while (keys.hasNext()) {
+                val devId = keys.next()
+                val child = obj.optJSONObject(devId) ?: continue
+                links.add(
+                    UserDeviceLink(
+                        deviceId = devId,
+                        role = DeviceRole.fromSlug(child.str("role", "viewer")),
+                        ownershipEpoch = child.lng("ownershipEpoch", 1L),
+                        addedAt = child.lng("addedAt", 0L)
+                    )
+                )
+            }
+            Log.d(TAG, "fetchUserDevicesViaRest(uid=${uid.take(6)}): ${links.size} device(s) in ${resp.durationMs}ms")
+            links.sortedByDescending { it.addedAt }
+        }
+    }
+
     fun observeUserDevices(uid: String): Flow<List<UserDeviceLink>> = callbackFlow {
+        runCatching { db.goOnline() }
         val ref = rootRef.child("users").child(uid).child("devices")
+        runCatching { ref.keepSynced(true) }
         val listener = object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
                 val list = snapshot.children.mapNotNull { child ->
@@ -97,69 +268,135 @@ class IotFirebaseRepository {
     }
 
     /**
-     * Direct HTTPS REST read from Firebase RTDB (`/devices/{deviceId}.json`) with no-cache headers.
-     * 100% bypasses Firebase Android SDK disk cache and stuck WebSockets so Android always sees
-     * the exact latest ESP32 telemetry on the server.
+     * Authenticated HTTPS/2 REST read from Firebase RTDB using cached Firebase Auth token.
+     * Supports slim parallel delta reads when [existingSnapshot] is available so routine syncs
+     * avoid re-downloading large historical `/events` and `/commandResults` trees.
      */
-    suspend fun fetchDeviceSnapshotViaRest(deviceId: String): Result<LiveDeviceSnapshot?> =
-        withContext(Dispatchers.IO) {
-            runCatching {
-                val idToken = runCatching {
-                    FirebaseAuth.getInstance().currentUser?.getIdToken(false)?.await()?.token
-                }.getOrNull()
+    suspend fun fetchDeviceSnapshotViaRest(
+        deviceId: String,
+        existingSnapshot: LiveDeviceSnapshot? = null,
+        slimDelta: Boolean = false,
+        pendingCommandId: String? = null
+    ): Result<LiveDeviceSnapshot?> = withContext(Dispatchers.IO) {
+        runCatching {
+            val t0 = SystemClock.elapsedRealtime()
+            if (slimDelta && existingSnapshot != null && !existingSnapshot.isFromLocalCache) {
+                coroutineScope {
+                    val statusDef = async { executeAuthenticatedRest("GET", "/devices/$deviceId/status.json") }
+                    val telDef = async { executeAuthenticatedRest("GET", "/devices/$deviceId/telemetry.json") }
+                    val weatherDef = async { executeAuthenticatedRest("GET", "/devices/$deviceId/weather.json") }
+                    val configDef = async { executeAuthenticatedRest("GET", "/devices/$deviceId/config.json") }
+                    val metaDef = async { executeAuthenticatedRest("GET", "/devices/$deviceId/meta.json") }
+                    val cmdDef = if (!pendingCommandId.isNullOrBlank()) {
+                        async { executeAuthenticatedRest("GET", "/devices/$deviceId/commandResults/$pendingCommandId.json") }
+                    } else null
 
-                val baseUrl = "$RTDB_URL/devices/$deviceId.json"
-                val url = if (!idToken.isNullOrBlank()) "$baseUrl?auth=$idToken" else baseUrl
+                    val stResp = statusDef.await()
+                    val telResp = telDef.await()
+                    val wxResp = weatherDef.await()
+                    val cfgResp = configDef.await()
+                    val metaResp = metaDef.await()
+                    val cmdResp = cmdDef?.await()
 
-                fun executeFetch(targetUrl: String): Pair<Int, String> {
-                    val req = Request.Builder()
-                        .url(targetUrl)
-                        .cacheControl(CacheControl.FORCE_NETWORK)
-                        .header("Cache-Control", "no-cache, no-store, must-revalidate")
-                        .header("Pragma", "no-cache")
-                        .get()
-                        .build()
-                    restClient.newCall(req).execute().use { resp ->
-                        return resp.code to (resp.body?.string().orEmpty())
+                    if (metaResp.code == 200 && (metaResp.body.trim().isEmpty() || metaResp.body.trim() == "null") &&
+                        stResp.code == 200 && (stResp.body.trim().isEmpty() || stResp.body.trim() == "null")
+                    ) {
+                        return@coroutineScope null
                     }
-                }
-
-                var (code, body) = executeFetch(url)
-                // If an expired auth token caused 401, retry unauthenticated (devices/$deviceId has .read: true)
-                if (code == 401 && url != baseUrl) {
-                    val retry = executeFetch(baseUrl)
-                    code = retry.first
-                    body = retry.second
-                }
-                if (code !in 200..299) {
-                    throw IllegalStateException("Firebase REST returned HTTP $code")
-                }
-                val trimmed = body.trim()
-                if (trimmed.isEmpty() || trimmed == "null") {
+                    if (stResp.code in 200..299 && telResp.code in 200..299 && metaResp.code in 200..299) {
+                        val mergedRoot = JSONObject().apply {
+                            metaResp.body.trim().takeIf { it.startsWith("{") }?.let { put("meta", JSONObject(it)) }
+                            stResp.body.trim().takeIf { it.startsWith("{") }?.let { put("status", JSONObject(it)) }
+                            telResp.body.trim().takeIf { it.startsWith("{") }?.let { put("telemetry", JSONObject(it)) }
+                            wxResp.body.trim().takeIf { it.startsWith("{") }?.let { put("weather", JSONObject(it)) }
+                            cfgResp.body.trim().takeIf { it.startsWith("{") }?.let { put("config", JSONObject(it)) }
+                        }
+                        val parsed = parseLiveDeviceSnapshotFromJson(deviceId, mergedRoot)
+                        val updatedCmdResults = if (cmdResp != null && cmdResp.code in 200..299 && cmdResp.body.trim().startsWith("{")) {
+                            val cj = JSONObject(cmdResp.body.trim())
+                            val cid = cj.str("commandId", pendingCommandId.orEmpty())
+                            existingSnapshot.commandResults + (cid to CommandResult(
+                                commandId = cid,
+                                state = cj.str("state", ""),
+                                reason = cj.str("reason", ""),
+                                updatedAt = cj.lng("updatedAt", 0L)
+                            ))
+                        } else {
+                            existingSnapshot.commandResults
+                        }
+                        val elapsed = (SystemClock.elapsedRealtime() - t0).coerceAtLeast(1L)
+                        Log.d(TAG, "fetchDeviceSnapshotViaRest(slim, id=$deviceId): completed in ${elapsed}ms")
+                        return@coroutineScope parsed.copy(
+                            members = existingSnapshot.members,
+                            activeInvites = existingSnapshot.activeInvites,
+                            events = existingSnapshot.events,
+                            commandResults = updatedCmdResults,
+                            isFromLocalCache = false,
+                            syncOrigin = SyncDataOrigin.LIVE_REST,
+                            lastSyncLatencyMs = elapsed
+                        )
+                    }
                     null
-                } else {
-                    parseLiveDeviceSnapshotFromJson(deviceId, JSONObject(trimmed))
-                }
+                }?.let { return@runCatching it }
+            }
+
+            val resp = executeAuthenticatedRest("GET", "/devices/$deviceId.json")
+            if (resp.code !in 200..299) {
+                throw IllegalStateException("Firebase REST returned HTTP ${resp.code}")
+            }
+            val trimmed = resp.body.trim()
+            if (trimmed.isEmpty() || trimmed == "null") {
+                null
+            } else {
+                val parsed = parseLiveDeviceSnapshotFromJson(deviceId, JSONObject(trimmed)).copy(
+                    isFromLocalCache = false,
+                    syncOrigin = SyncDataOrigin.LIVE_REST,
+                    lastSyncLatencyMs = resp.durationMs
+                )
+                Log.d(TAG, "fetchDeviceSnapshotViaRest(full, id=$deviceId): completed in ${resp.durationMs}ms (${trimmed.length} bytes)")
+                parsed
             }
         }
+    }
 
     /**
-     * Tears down any stale RTDB WebSocket, fetches the live server JSON directly via HTTPS REST
-     * (bypassing local SDK cache), and falls back to SDK `ref.get()` only if REST fails.
+     * Fetches the live server JSON directly via authenticated HTTPS/2 REST (bypassing local SDK cache),
+     * ONLY tearing down the RTDB WebSocket when [reconnectSocket] is explicitly true (e.g. genuinely stalled
+     * or after leaving ESP32 SoftAP). Falls back to SDK `ref.get()` only if REST fails.
      */
-    suspend fun forceRefreshDevice(deviceId: String): Result<LiveDeviceSnapshot?> {
-        reconnectRealtimeSocket()
+    suspend fun forceRefreshDevice(
+        deviceId: String,
+        reconnectSocket: Boolean = false,
+        existingSnapshot: LiveDeviceSnapshot? = null,
+        pendingCommandId: String? = null
+    ): Result<LiveDeviceSnapshot?> {
+        if (reconnectSocket) {
+            reconnectRealtimeSocket()
+        } else {
+            runCatching { db.goOnline() }
+        }
         val ref = rootRef.child("devices").child(deviceId)
         runCatching { ref.keepSynced(true) }
 
-        val restResult = fetchDeviceSnapshotViaRest(deviceId)
+        val restResult = fetchDeviceSnapshotViaRest(
+            deviceId = deviceId,
+            existingSnapshot = existingSnapshot,
+            slimDelta = existingSnapshot != null && !existingSnapshot.isFromLocalCache,
+            pendingCommandId = pendingCommandId
+        )
         if (restResult.isSuccess) {
             return restResult
         }
 
+        val t0 = SystemClock.elapsedRealtime()
         return runCatching {
             val snap = ref.get().await()
-            if (!snap.exists()) null else parseLiveDeviceSnapshot(deviceId, snap)
+            val elapsed = (SystemClock.elapsedRealtime() - t0).coerceAtLeast(1L)
+            if (!snap.exists()) null else parseLiveDeviceSnapshot(deviceId, snap).copy(
+                isFromLocalCache = false,
+                syncOrigin = SyncDataOrigin.LIVE_WEBSOCKET,
+                lastSyncLatencyMs = elapsed
+            )
         }
     }
 
@@ -205,19 +442,130 @@ class IotFirebaseRepository {
         lat: Double = 14.5995,
         lon: Double = 120.9842
     ): Result<Unit> = runCatching {
+        val t0 = SystemClock.elapsedRealtime()
         val now = System.currentTimeMillis()
         val cleanName = displayName.trim().ifEmpty { "SmartPlantCare Box" }
-        val deviceRef = rootRef.child("devices").child(deviceId)
 
-        // Preserve existing /config calibration and ensure ownershipEpoch increases monotonically
-        val existingConfig = deviceRef.child("config").get().await()
-        val existingMeta = runCatching { deviceRef.child("meta").get().await() }.getOrNull()
-        val existingCloudEpoch = existingMeta?.child("ownershipEpoch")?.asLong(0L) ?: 0L
+        // Fast parallel authenticated REST reads over HTTP/2 (avoids dead pre-SoftAP WebSocket hangs!)
+        val (cfgCheck, metaCheck, aclCheck) = coroutineScope {
+            val c = async { runCatching { executeAuthenticatedRest("GET", "/devices/$deviceId/config.json", requireAuth = true) }.getOrNull() }
+            val m = async { runCatching { executeAuthenticatedRest("GET", "/devices/$deviceId/meta.json", requireAuth = true) }.getOrNull() }
+            val a = async { runCatching { executeAuthenticatedRest("GET", "/devices/$deviceId/acl/ownerUid.json", requireAuth = true) }.getOrNull() }
+            Triple(c.await(), m.await(), a.await())
+        }
+
+        val configExists = cfgCheck != null && cfgCheck.code in 200..299 &&
+            cfgCheck.body.trim().let { it.isNotEmpty() && it != "null" }
+        val existingCloudEpoch = metaCheck?.takeIf { it.code in 200..299 && it.body.trim().startsWith("{") }
+            ?.let { runCatching { JSONObject(it.body.trim()).lng("ownershipEpoch", 0L) }.getOrDefault(0L) }
+            ?: 0L
         val finalEpoch = maxOf(ownershipEpoch, existingCloudEpoch + 1L)
-        val existingAclOwner = runCatching {
-            deviceRef.child("acl").child("ownerUid").get().await().getValue(String::class.java)
-        }.getOrNull().orEmpty()
+        val existingAclOwner = aclCheck?.takeIf { it.code in 200..299 }
+            ?.body?.trim()?.removeSurrounding("\"")?.takeIf { it != "null" }.orEmpty()
 
+        val resolvedOwnerName = ownerName.ifBlank { ownerEmail.substringBefore("@") }
+
+        // Fast authenticated REST claim commit (preserving exact database.rules.json write ordering)
+        val restCommitted = runCatching {
+            if (existingAclOwner.isNotBlank() && existingAclOwner != ownerUid) {
+                executeAuthenticatedRest(
+                    "PUT",
+                    "/devices/$deviceId/meta/ownershipState.json",
+                    "\"CLAIM_PENDING\"",
+                    requireAuth = true
+                )
+            }
+
+            val aclOwnerResp = executeAuthenticatedRest(
+                "PUT",
+                "/devices/$deviceId/acl/ownerUid.json",
+                JSONObject.quote(ownerUid),
+                requireAuth = true
+            )
+            if (aclOwnerResp.code !in 200..299) error("ACL owner write HTTP ${aclOwnerResp.code}")
+
+            val metaJson = JSONObject().apply {
+                put("deviceId", deviceId)
+                put("displayName", cleanName)
+                put("model", "SmartPlantCare-3Zone")
+                put("hardwareRevision", "ESP32-WROOM32-V3.1-I2C")
+                put("firmwareVersion", "3.1.0-i2c")
+                put("ownershipState", "OWNED")
+                put("ownerUid", ownerUid)
+                put("ownershipEpoch", finalEpoch)
+                put("resetRequired", false)
+                put("claimedAt", now)
+                put("location", JSONObject().apply {
+                    put("lat", lat)
+                    put("lon", lon)
+                    put("timezone", "Asia/Manila")
+                })
+            }
+            val metaResp = executeAuthenticatedRest(
+                "PATCH",
+                "/devices/$deviceId/meta.json",
+                metaJson.toString(),
+                requireAuth = true
+            )
+            if (metaResp.code !in 200..299) error("Meta claim write HTTP ${metaResp.code}")
+
+            coroutineScope {
+                val memberJob = async {
+                    val memJson = JSONObject().apply {
+                        put("role", DeviceRole.OWNER.slug)
+                        put("email", ownerEmail)
+                        put("displayName", resolvedOwnerName)
+                        put("addedAt", now)
+                        put("addedBy", "physical_claim")
+                    }
+                    executeAuthenticatedRest(
+                        "PUT",
+                        "/devices/$deviceId/acl/members/$ownerUid.json",
+                        memJson.toString(),
+                        requireAuth = true
+                    )
+                }
+                val cfgJob = if (!configExists) {
+                    async {
+                        executeAuthenticatedRest(
+                            "PUT",
+                            "/devices/$deviceId/config.json",
+                            JSONObject(defaultConfigMap()).toString(),
+                            requireAuth = true
+                        )
+                    }
+                } else null
+                val userLinkJob = async {
+                    val linkJson = JSONObject().apply {
+                        put("role", DeviceRole.OWNER.slug)
+                        put("ownershipEpoch", finalEpoch)
+                        put("addedAt", now)
+                    }
+                    executeAuthenticatedRest(
+                        "PUT",
+                        "/users/$ownerUid/devices/$deviceId.json",
+                        linkJson.toString(),
+                        requireAuth = true
+                    )
+                }
+                val memRes = memberJob.await()
+                cfgJob?.await()
+                val linkRes = userLinkJob.await()
+                if (memRes.code !in 200..299 || linkRes.code !in 200..299) {
+                    error("Member/link claim HTTP ${memRes.code}/${linkRes.code}")
+                }
+            }
+            true
+        }.getOrDefault(false)
+
+        if (restCommitted) {
+            Log.d(TAG, "completeDeviceClaim(REST, id=$deviceId): completed in ${SystemClock.elapsedRealtime() - t0}ms")
+            return@runCatching
+        }
+
+        // SDK fallback if REST encountered transient failure
+        reconnectRealtimeSocket()
+        val deviceRef = rootRef.child("devices").child(deviceId)
         val metaMap = mapOf(
             "deviceId" to deviceId,
             "displayName" to cleanName,
@@ -235,32 +583,24 @@ class IotFirebaseRepository {
                 "timezone" to "Asia/Manila"
             )
         )
-
-        // Only set transient CLAIM_PENDING if a different previous ownerUid exists in /acl
         if (existingAclOwner.isNotBlank() && existingAclOwner != ownerUid) {
             deviceRef.child("meta").child("ownershipState").setValue("CLAIM_PENDING").await()
         }
-
         val aclRef = deviceRef.child("acl")
         aclRef.child("ownerUid").setValue(ownerUid).await()
-
-        // Commit full OWNED metadata now that acl/ownerUid belongs to this owner
         deviceRef.child("meta").updateChildren(metaMap).await()
-
         aclRef.child("members").child(ownerUid).setValue(
             mapOf(
                 "role" to DeviceRole.OWNER.slug,
                 "email" to ownerEmail,
-                "displayName" to ownerName.ifBlank { ownerEmail.substringBefore("@") },
+                "displayName" to resolvedOwnerName,
                 "addedAt" to now,
                 "addedBy" to "physical_claim"
             )
         ).await()
-
-        if (!existingConfig.exists()) {
+        if (!configExists) {
             deviceRef.child("config").setValue(defaultConfigMap()).await()
         }
-
         rootRef.child("users").child(ownerUid).child("devices").child(deviceId).setValue(
             mapOf(
                 "role" to DeviceRole.OWNER.slug,
@@ -306,21 +646,51 @@ class IotFirebaseRepository {
 
     suspend fun setDeviceMode(deviceId: String, mode: String): Result<Unit> = runCatching {
         val normalized = if (mode.equals("INDOOR", ignoreCase = true)) "INDOOR" else "OUTDOOR"
-        rootRef.child("devices").child(deviceId).child("config").child("mode")
-            .setValue(normalized)
-            .await()
+        val restOk = runCatching {
+            executeAuthenticatedRest(
+                "PUT",
+                "/devices/$deviceId/config/mode.json",
+                JSONObject.quote(normalized),
+                requireAuth = true
+            ).code in 200..299
+        }.getOrDefault(false)
+        if (!restOk) {
+            rootRef.child("devices").child(deviceId).child("config").child("mode")
+                .setValue(normalized)
+                .await()
+        }
     }
 
     suspend fun setAutoIrrigationEnabled(deviceId: String, enabled: Boolean): Result<Unit> = runCatching {
-        rootRef.child("devices").child(deviceId).child("config").child("autoIrrigationEnabled")
-            .setValue(enabled)
-            .await()
+        val restOk = runCatching {
+            executeAuthenticatedRest(
+                "PUT",
+                "/devices/$deviceId/config/autoIrrigationEnabled.json",
+                enabled.toString(),
+                requireAuth = true
+            ).code in 200..299
+        }.getOrDefault(false)
+        if (!restOk) {
+            rootRef.child("devices").child(deviceId).child("config").child("autoIrrigationEnabled")
+                .setValue(enabled)
+                .await()
+        }
     }
 
     suspend fun setPhysicalLoadsEnabled(deviceId: String, enabled: Boolean): Result<Unit> = runCatching {
-        rootRef.child("devices").child(deviceId).child("config").child("physicalLoadsEnabled")
-            .setValue(enabled)
-            .await()
+        val restOk = runCatching {
+            executeAuthenticatedRest(
+                "PUT",
+                "/devices/$deviceId/config/physicalLoadsEnabled.json",
+                enabled.toString(),
+                requireAuth = true
+            ).code in 200..299
+        }.getOrDefault(false)
+        if (!restOk) {
+            rootRef.child("devices").child(deviceId).child("config").child("physicalLoadsEnabled")
+                .setValue(enabled)
+                .await()
+        }
     }
 
     /**
@@ -380,6 +750,13 @@ class IotFirebaseRepository {
         rootRef.child("devices").child(deviceId).child("weather").setValue(weatherMap).await()
     }
 
+    /**
+     * Submits a remote irrigation/safety command with strict idempotency & duplicate-execution protection:
+     * 1. Pre-generates ONE deterministic [cmdId] (<=36 chars for ESP32 NVS ring buffer).
+     * 2. Attempts fast authenticated REST PUT first.
+     * 3. On transport uncertainty, verifies `/commandResults/{cmdId}` & `/commandRequests/{cmdId}` BEFORE
+     *    attempting SDK fallback on the exact same [cmdId], so a command can NEVER execute twice!
+     */
     suspend fun sendCommand(
         deviceId: String,
         type: String,
@@ -389,21 +766,65 @@ class IotFirebaseRepository {
         durationMs: Long? = null
     ): Result<String> = runCatching {
         val now = System.currentTimeMillis()
-        val cmdId = "cmd_${now}_${(100..999).random()}"
+        val expiresAt = now + IotDomainLogic.COMMAND_TTL_MS
+        val cmdId = IotDomainLogic.generateDeterministicCommandId(
+            uid = requestedByUid,
+            nowMs = now,
+            randomNonce = SecureRandom().nextInt(0x10000)
+        )
+        val clampedDur = durationMs?.let { IotDomainLogic.clampPulseDurationMs(it) }
+
+        val jsonPayload = JSONObject().apply {
+            put("type", type)
+            put("state", "PENDING")
+            put("requestedByUid", requestedByUid)
+            put("ownershipEpoch", ownershipEpoch)
+            put("createdAt", now)
+            put("expiresAt", expiresAt)
+            if (!cropSlug.isNullOrBlank()) put("crop", cropSlug)
+            if (clampedDur != null) put("durationMs", clampedDur)
+        }
+
+        val restDelivered = runCatching {
+            val resp = executeAuthenticatedRest(
+                method = "PUT",
+                pathWithJsonAndOptionalQuery = "/devices/$deviceId/commandRequests/$cmdId.json",
+                jsonBody = jsonPayload.toString(),
+                requireAuth = true
+            )
+            Log.d(TAG, "sendCommand(REST, type=$type, id=$cmdId): HTTP ${resp.code} in ${resp.durationMs}ms")
+            resp.code in 200..299
+        }.getOrDefault(false)
+
+        if (restDelivered) {
+            return@runCatching cmdId
+        }
+
+        // Transport uncertain (e.g. read timeout after server commit): check if server already recorded it!
+        val alreadyOnServer = runCatching {
+            val checkRes = executeAuthenticatedRest("GET", "/devices/$deviceId/commandResults/$cmdId.json")
+            val hasRes = checkRes.code in 200..299 && checkRes.body.trim().let { it.isNotEmpty() && it != "null" }
+            if (hasRes) true else {
+                val checkReq = executeAuthenticatedRest("GET", "/devices/$deviceId/commandRequests/$cmdId.json")
+                checkReq.code in 200..299 && checkReq.body.trim().let { it.isNotEmpty() && it != "null" }
+            }
+        }.getOrDefault(false)
+
+        if (alreadyOnServer) {
+            return@runCatching cmdId
+        }
+
+        // Safe fallback using the EXACT SAME deterministic cmdId
         val payload = mutableMapOf<String, Any>(
             "type" to type,
             "state" to "PENDING",
             "requestedByUid" to requestedByUid,
             "ownershipEpoch" to ownershipEpoch,
             "createdAt" to now,
-            "expiresAt" to (now + IotDomainLogic.COMMAND_TTL_MS)
+            "expiresAt" to expiresAt
         )
-        if (!cropSlug.isNullOrBlank()) {
-            payload["crop"] = cropSlug
-        }
-        if (durationMs != null) {
-            payload["durationMs"] = IotDomainLogic.clampPulseDurationMs(durationMs)
-        }
+        if (!cropSlug.isNullOrBlank()) payload["crop"] = cropSlug
+        if (clampedDur != null) payload["durationMs"] = clampedDur
 
         rootRef.child("devices").child(deviceId).child("commandRequests").child(cmdId)
             .setValue(payload)
@@ -692,36 +1113,11 @@ class IotFirebaseRepository {
     suspend fun fetchDeviceHistoryViaRest(deviceId: String): Result<Map<String, DailyHistorySnapshot>> =
         withContext(Dispatchers.IO) {
             runCatching {
-                val idToken = runCatching {
-                    FirebaseAuth.getInstance().currentUser?.getIdToken(false)?.await()?.token
-                }.getOrNull()
-
-                val baseUrl = "$RTDB_URL/deviceHistory/$deviceId/days.json"
-                val url = if (!idToken.isNullOrBlank()) "$baseUrl?auth=$idToken" else baseUrl
-
-                fun executeFetch(targetUrl: String): Pair<Int, String> {
-                    val req = Request.Builder()
-                        .url(targetUrl)
-                        .cacheControl(CacheControl.FORCE_NETWORK)
-                        .header("Cache-Control", "no-cache, no-store, must-revalidate")
-                        .header("Pragma", "no-cache")
-                        .get()
-                        .build()
-                    restClient.newCall(req).execute().use { resp ->
-                        return resp.code to (resp.body?.string().orEmpty())
-                    }
+                val resp = executeAuthenticatedRest("GET", "/deviceHistory/$deviceId/days.json")
+                if (resp.code !in 200..299) {
+                    throw IllegalStateException("Firebase History REST returned HTTP ${resp.code}")
                 }
-
-                var (code, body) = executeFetch(url)
-                if (code == 401 && url != baseUrl) {
-                    val retry = executeFetch(baseUrl)
-                    code = retry.first
-                    body = retry.second
-                }
-                if (code !in 200..299) {
-                    throw IllegalStateException("Firebase History REST returned HTTP $code")
-                }
-                val trimmed = body.trim()
+                val trimmed = resp.body.trim()
                 if (trimmed.isEmpty() || trimmed == "null") {
                     emptyMap()
                 } else {
@@ -741,18 +1137,79 @@ class IotFirebaseRepository {
         }
 
     /**
-     * Automatically removes any historical days older than the 7-day Philippine local time window.
+     * Observes authoritative ESP32 1-minute records (`/deviceHistory/{deviceId}/minuteDays/{dateKey}`)
+     * lazily for the currently selected calendar date in Philippine Time (UTC+8).
+     */
+    fun observeDeviceMinuteDay(
+        deviceId: String,
+        dateKey: String
+    ): Flow<Map<Int, HistoricalMinuteRecord>> = callbackFlow {
+        val ref = rootRef.child("deviceHistory").child(deviceId).child("minuteDays").child(dateKey)
+        val listener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val parsed = buildMap {
+                    for (mChild in snapshot.children) {
+                        val rec = parseMinuteRecordFromSnapshot(mChild) ?: continue
+                        put(rec.minuteOfDay, rec)
+                    }
+                }
+                trySend(parsed)
+            }
+
+            override fun onCancelled(error: DatabaseError) {
+                trySend(emptyMap())
+            }
+        }
+        ref.addValueEventListener(listener)
+        awaitClose { ref.removeEventListener(listener) }
+    }
+
+    suspend fun fetchDeviceMinuteDayViaRest(
+        deviceId: String,
+        dateKey: String
+    ): Result<Map<Int, HistoricalMinuteRecord>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val cutoff = IotDomainLogic.sevenDayCutoffDateKeyPht()
+            if (dateKey.length != 10 || dateKey < cutoff) {
+                return@runCatching emptyMap()
+            }
+            val resp = executeAuthenticatedRest("GET", "/deviceHistory/$deviceId/minuteDays/$dateKey.json")
+            if (resp.code !in 200..299) {
+                throw IllegalStateException("Firebase Minute History REST returned HTTP ${resp.code}")
+            }
+            val trimmed = resp.body.trim()
+            if (trimmed.isEmpty() || trimmed == "null") {
+                emptyMap()
+            } else {
+                val rootJson = JSONObject(trimmed)
+                buildMap {
+                    val keys = rootJson.keys()
+                    while (keys.hasNext()) {
+                        val mKey = keys.next()
+                        val mObj = rootJson.optJSONObject(mKey) ?: continue
+                        val rec = parseMinuteRecordFromJson(mKey, mObj) ?: continue
+                        put(rec.minuteOfDay, rec)
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Automatically removes any historical days & minuteDays older than the 7-day Philippine local time window.
      */
     suspend fun pruneExpiredHistoryDays(deviceId: String, cutoffDateKey: String): Result<Int> =
         runCatching {
-            val daysRef = rootRef.child("deviceHistory").child(deviceId).child("days")
-            val snap = daysRef.get().await()
             var removed = 0
-            for (dayChild in snap.children) {
-                val dateKey = dayChild.key ?: continue
-                if (dateKey.length == 10 && dateKey < cutoffDateKey) {
-                    daysRef.child(dateKey).removeValue().await()
-                    removed++
+            for (bucket in listOf("days", "minuteDays")) {
+                val bucketRef = rootRef.child("deviceHistory").child(deviceId).child(bucket)
+                val snap = bucketRef.get().await()
+                for (dayChild in snap.children) {
+                    val dateKey = dayChild.key ?: continue
+                    if (dateKey.length == 10 && dateKey < cutoffDateKey) {
+                        bucketRef.child(dateKey).removeValue().await()
+                        removed++
+                    }
                 }
             }
             removed
@@ -804,6 +1261,7 @@ class IotFirebaseRepository {
                         reservoirGapIn = hChild.child("reservoirGapIn").asFloatOrNull(),
                         rainProbPct = hChild.child("rainProbPct").asIntOrNull(),
                         rainWetSamples = hChild.child("rainWetSamples").asInt(0),
+                        rainSuspendedSamples = hChild.child("rainSuspendedSamples").asInt(0),
                         segments = segs
                     )
                 )
@@ -816,7 +1274,10 @@ class IotFirebaseRepository {
             val endedAt = iChild.child("endedAt").asLong(startedAt)
             val hour = iChild.child("hour").asInt(
                 if (startedAt >= 1_700_000_000_000L) IotDomainLogic.phHourOfDay(startedAt) else 0
-            )
+            ).coerceIn(0, 23)
+            val minuteOfDay = iChild.child("minuteOfDay").asInt(
+                if (startedAt >= 1_700_000_000_000L) IotDomainLogic.phMinuteOfDay(startedAt) else (hour * 60)
+            ).coerceIn(0, 1439)
             IrrigationHistoryItem(
                 irrigationId = iChild.child("irrigationId").asStr(id),
                 crop = iChild.child("crop").asStr("tomato"),
@@ -825,7 +1286,8 @@ class IotFirebaseRepository {
                 reason = iChild.child("reason").asStr(""),
                 startedAt = startedAt,
                 endedAt = endedAt,
-                hour = hour.coerceIn(0, 23),
+                hour = hour,
+                minuteOfDay = minuteOfDay,
                 durationMs = iChild.child("durationMs").asLong(4000L),
                 startMoisturePct = iChild.child("startMoisturePct").asFloatOrNull(),
                 endMoisturePct = iChild.child("endMoisturePct").asFloatOrNull(),
@@ -903,6 +1365,7 @@ class IotFirebaseRepository {
                             reservoirGapIn = hObj.fltOrNull("reservoirGapIn"),
                             rainProbPct = hObj.intOrNull("rainProbPct"),
                             rainWetSamples = hObj.intVal("rainWetSamples", 0),
+                            rainSuspendedSamples = hObj.intVal("rainSuspendedSamples", 0),
                             segments = segs
                         )
                     )
@@ -922,7 +1385,11 @@ class IotFirebaseRepository {
                     val hour = iObj.intVal(
                         "hour",
                         if (startedAt >= 1_700_000_000_000L) IotDomainLogic.phHourOfDay(startedAt) else 0
-                    )
+                    ).coerceIn(0, 23)
+                    val minuteOfDay = iObj.intVal(
+                        "minuteOfDay",
+                        if (startedAt >= 1_700_000_000_000L) IotDomainLogic.phMinuteOfDay(startedAt) else (hour * 60)
+                    ).coerceIn(0, 1439)
                     add(
                         IrrigationHistoryItem(
                             irrigationId = iObj.str("irrigationId", id),
@@ -932,7 +1399,8 @@ class IotFirebaseRepository {
                             reason = iObj.str("reason", ""),
                             startedAt = startedAt,
                             endedAt = endedAt,
-                            hour = hour.coerceIn(0, 23),
+                            hour = hour,
+                            minuteOfDay = minuteOfDay,
                             durationMs = iObj.lng("durationMs", 4000L),
                             startMoisturePct = iObj.fltOrNull("startMoisturePct"),
                             endMoisturePct = iObj.fltOrNull("endMoisturePct"),
@@ -950,6 +1418,198 @@ class IotFirebaseRepository {
             hours = hours,
             irrigations = irrigations
         )
+    }
+
+    private fun decodeHhmmKeyToMinuteOfDay(rawKey: String?): Int? {
+        val clean = rawKey?.trim() ?: return null
+        if (clean.length == 4 && clean.all { it.isDigit() }) {
+            val hh = clean.substring(0, 2).toIntOrNull() ?: return null
+            val mm = clean.substring(2, 4).toIntOrNull() ?: return null
+            if (hh in 0..23 && mm in 0..59) return hh * 60 + mm
+        }
+        val asInt = clean.toIntOrNull() ?: return null
+        return asInt.takeIf { it in 0..1439 }
+    }
+
+    private fun parseMinuteRecordFromSnapshot(mChild: DataSnapshot): HistoricalMinuteRecord? {
+        val mOfDay = mChild.child("m").asIntOrNull()?.takeIf { it in 0..1439 }
+            ?: decodeHhmmKeyToMinuteOfDay(mChild.key)
+            ?: return null
+        val samples = mChild.child("samples").asInt(mChild.child("sampleCount").asInt(0))
+        val wetSamples = mChild.child("rainWetSamples").asInt(0)
+        return HistoricalMinuteRecord(
+            minuteOfDay = mOfDay,
+            firstSeenAt = mChild.child("firstSeenAt").asLong(0L),
+            lastSeenAt = mChild.child("lastSeenAt").asLong(0L),
+            sampleCount = samples,
+            tomatoPct = mChild.child("tomatoPct").asFloatOrNull(),
+            chiliPct = mChild.child("chiliPct").asFloatOrNull(),
+            eggplantPct = mChild.child("eggplantPct").asFloatOrNull(),
+            temperatureC = mChild.child("temperatureC").asFloatOrNull(),
+            humidityPct = mChild.child("humidityPct").asFloatOrNull(),
+            lightPct = mChild.child("lightPct").asFloatOrNull(),
+            reservoirPct = mChild.child("reservoirPct").asFloatOrNull(),
+            reservoirGapIn = mChild.child("reservoirGapIn").asFloatOrNull(),
+            reservoirState = mChild.child("reservoirState").asStr("UNKNOWN"),
+            rainProbPct = mChild.child("rainProbPct").asIntOrNull(),
+            rainWet = mChild.child("rainWet").asBool(wetSamples > 0),
+            rainConfirmed = mChild.child("rainConfirmed").asBool(false),
+            rainSuspended = mChild.child("rainSuspended").asBool(false),
+            rainWetSamples = wetSamples
+        )
+    }
+
+    private fun parseMinuteRecordFromJson(mKey: String, mObj: JSONObject): HistoricalMinuteRecord? {
+        val mOfDay = mObj.intOrNull("m")?.takeIf { it in 0..1439 }
+            ?: decodeHhmmKeyToMinuteOfDay(mKey)
+            ?: return null
+        val samples = mObj.intVal("samples", mObj.intVal("sampleCount", 0))
+        val wetSamples = mObj.intVal("rainWetSamples", 0)
+        return HistoricalMinuteRecord(
+            minuteOfDay = mOfDay,
+            firstSeenAt = mObj.lng("firstSeenAt", 0L),
+            lastSeenAt = mObj.lng("lastSeenAt", 0L),
+            sampleCount = samples,
+            tomatoPct = mObj.fltOrNull("tomatoPct"),
+            chiliPct = mObj.fltOrNull("chiliPct"),
+            eggplantPct = mObj.fltOrNull("eggplantPct"),
+            temperatureC = mObj.fltOrNull("temperatureC"),
+            humidityPct = mObj.fltOrNull("humidityPct"),
+            lightPct = mObj.fltOrNull("lightPct"),
+            reservoirPct = mObj.fltOrNull("reservoirPct"),
+            reservoirGapIn = mObj.fltOrNull("reservoirGapIn"),
+            reservoirState = mObj.str("reservoirState", "UNKNOWN"),
+            rainProbPct = mObj.intOrNull("rainProbPct"),
+            rainWet = mObj.bool("rainWet", wetSamples > 0),
+            rainConfirmed = mObj.bool("rainConfirmed", false),
+            rainSuspended = mObj.bool("rainSuspended", false),
+            rainWetSamples = wetSamples
+        )
+    }
+
+    /**
+     * Serializes a lightweight local cache JSON for instant startup restore (<50ms),
+     * and restores it strictly tagged with `isFromLocalCache = true` so UI never confuses
+     * cached readings with verified live ESP32 data.
+     */
+    fun serializeSnapshotForLocalCache(snapshot: LiveDeviceSnapshot): String {
+        return JSONObject().apply {
+            put("cachedAtMs", System.currentTimeMillis())
+            put("receivedAtClientMs", snapshot.receivedAtClientMs)
+            put("meta", JSONObject().apply {
+                put("deviceId", snapshot.meta.deviceId)
+                put("displayName", snapshot.meta.displayName)
+                put("model", snapshot.meta.model)
+                put("hardwareRevision", snapshot.meta.hardwareRevision)
+                put("firmwareVersion", snapshot.meta.firmwareVersion)
+                put("ownershipState", snapshot.meta.ownershipState)
+                put("ownerUid", snapshot.meta.ownerUid)
+                put("ownershipEpoch", snapshot.meta.ownershipEpoch)
+                put("resetRequired", snapshot.meta.resetRequired)
+                put("claimedAt", snapshot.meta.claimedAt)
+                put("location", JSONObject().apply {
+                    put("lat", snapshot.meta.lat)
+                    put("lon", snapshot.meta.lon)
+                    put("name", snapshot.meta.locationName)
+                    put("source", snapshot.meta.locationSource)
+                })
+            })
+            put("status", JSONObject().apply {
+                put("online", snapshot.status.online)
+                put("lastSeenAt", snapshot.status.lastSeenAt)
+                put("bootId", snapshot.status.bootId)
+                put("firmwareVersion", snapshot.status.firmwareVersion)
+                put("ipAddress", snapshot.status.ipAddress)
+                put("wifiRssi", snapshot.status.wifiRssi)
+                put("mode", snapshot.status.mode)
+                put("autoIrrigationEnabled", snapshot.status.autoIrrigationEnabled)
+                put("rainSuspensionActive", snapshot.status.rainSuspensionActive)
+                put("weatherAdvisoryActive", snapshot.status.weatherAdvisoryActive)
+                put("weatherUnavailableFault", snapshot.status.weatherUnavailableFault)
+                put("emergencyStop", snapshot.status.emergencyStop)
+                put("faultLockout", snapshot.status.faultLockout)
+                put("activeValve", snapshot.status.activeValve)
+                put("pumpState", snapshot.status.pumpState)
+                put("irrigationState", snapshot.status.irrigationState)
+                put("activePumpElapsedSec", snapshot.status.activePumpElapsedSec)
+                put("activeTargetDurationSec", snapshot.status.activeTargetDurationSec)
+                put("lastAbortReason", snapshot.status.lastAbortReason)
+                put("physicalLoadsEnabled", snapshot.status.physicalLoadsEnabled)
+                put("ownershipEpoch", snapshot.status.ownershipEpoch)
+            })
+            put("telemetry", JSONObject().apply {
+                put("updatedAt", snapshot.telemetry.updatedAt)
+                snapshot.telemetry.temperatureC?.let { put("temperatureC", it.toDouble()) }
+                snapshot.telemetry.humidityPct?.let { put("humidityPct", it.toDouble()) }
+                put("dhtValid", snapshot.telemetry.dhtValid)
+                put("tempBand", snapshot.telemetry.tempBand)
+                put("humidityBand", snapshot.telemetry.humidityBand)
+                put("lightRaw", snapshot.telemetry.lightRaw)
+                snapshot.telemetry.lightBrightnessPct?.let { put("lightBrightnessPct", it.toDouble()) }
+                put("lightValid", snapshot.telemetry.lightValid)
+                put("lightBand", snapshot.telemetry.lightBand)
+                put("rainRawWet", snapshot.telemetry.rainRawWet)
+                put("rainWetConfirmed", snapshot.telemetry.rainWetConfirmed)
+                put("rainAccidentalWet", snapshot.telemetry.rainAccidentalWet)
+                put("rainValid", snapshot.telemetry.rainValid)
+                snapshot.telemetry.reservoirAirGapInches?.let { put("reservoirAirGapInches", it.toDouble()) }
+                snapshot.telemetry.reservoirPct?.let { put("reservoirPct", it.toDouble()) }
+                put("reservoirValid", snapshot.telemetry.reservoirValid)
+                put("reservoirState", snapshot.telemetry.reservoirState)
+                put("soil", JSONObject().apply {
+                    for (z in snapshot.telemetry.zones) {
+                        put(z.slug, JSONObject().apply {
+                            put("raw", z.raw)
+                            z.pct?.let { put("pct", it.toDouble()) }
+                            put("valid", z.valid)
+                            put("needsWater", z.needsWater)
+                        })
+                    }
+                })
+            })
+            put("weather", JSONObject().apply {
+                put("provider", snapshot.weather.provider)
+                put("valid", snapshot.weather.valid)
+                put("rainProbabilityPct", snapshot.weather.rainProbabilityPct)
+                put("windowHours", snapshot.weather.windowHours)
+                put("windowLabel", snapshot.weather.windowLabel)
+                put("locationName", snapshot.weather.locationName)
+                put("lat", snapshot.weather.lat)
+                put("lon", snapshot.weather.lon)
+                put("fetchedAt", snapshot.weather.fetchedAt)
+                put("validUntil", snapshot.weather.validUntil)
+            })
+            put("config", JSONObject(defaultConfigMap()).apply {
+                put("mode", snapshot.config.mode)
+                put("autoIrrigationEnabled", snapshot.config.autoIrrigationEnabled)
+                put("rainThresholdPct", snapshot.config.rainThresholdPct)
+                put("wetConfirmMs", snapshot.config.wetConfirmMs)
+                put("dryRecoverMs", snapshot.config.dryRecoverMs)
+                put("reservoirFullGapIn", snapshot.config.reservoirFullGapIn.toDouble())
+                put("reservoirEmptyGapIn", snapshot.config.reservoirEmptyGapIn.toDouble())
+                put("reservoirLowPct", snapshot.config.reservoirLowPct.toDouble())
+                put("reservoirCriticalPct", snapshot.config.reservoirCriticalPct.toDouble())
+                put("tempHighC", snapshot.config.tempHighC.toDouble())
+                put("humLowRh", snapshot.config.humLowRh.toDouble())
+                put("lightHighPct", snapshot.config.lightHighPct.toDouble())
+                put("lightLowPct", snapshot.config.lightLowPct.toDouble())
+                put("buzzerMuted", snapshot.config.buzzerMuted)
+                put("physicalLoadsEnabled", snapshot.config.physicalLoadsEnabled)
+            })
+        }.toString()
+    }
+
+    fun deserializeCachedSnapshot(deviceId: String, rawJson: String): LiveDeviceSnapshot? {
+        return runCatching {
+            val root = JSONObject(rawJson)
+            val savedRx = root.lng("receivedAtClientMs", 0L)
+            parseLiveDeviceSnapshotFromJson(deviceId, root).copy(
+                receivedAtClientMs = savedRx,
+                isFromLocalCache = true,
+                syncOrigin = SyncDataOrigin.LOCAL_CACHE,
+                lastSyncLatencyMs = 0L
+            )
+        }.getOrNull()
     }
 
     private fun cropConfigToMap(c: CropZoneConfig): Map<String, Any> = mapOf(
@@ -1163,7 +1823,9 @@ class IotFirebaseRepository {
             activeInvites = invites,
             events = events,
             commandResults = cmdResults,
-            receivedAtClientMs = System.currentTimeMillis()
+            receivedAtClientMs = System.currentTimeMillis(),
+            isFromLocalCache = false,
+            syncOrigin = SyncDataOrigin.LIVE_WEBSOCKET
         )
     }
 
@@ -1460,7 +2122,9 @@ class IotFirebaseRepository {
             activeInvites = invites,
             events = events,
             commandResults = cmdResults,
-            receivedAtClientMs = System.currentTimeMillis()
+            receivedAtClientMs = System.currentTimeMillis(),
+            isFromLocalCache = false,
+            syncOrigin = SyncDataOrigin.LIVE_REST
         )
     }
 

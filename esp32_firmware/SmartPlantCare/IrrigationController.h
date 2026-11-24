@@ -17,6 +17,8 @@
  */
 
 #include <Arduino.h>
+#include <Preferences.h>
+#include <string.h>
 #include "BuzzerManager.h"
 #include "Config.h"
 #include "EventNotificationManager.h"
@@ -32,6 +34,12 @@ struct CommandExecutionReport {
   char     state[16]       = {0};  // ACCEPTED, REJECTED, RUNNING, DONE, ABORTED
   char     reason[64]      = {0};
   uint32_t updatedAtMs     = 0;
+
+  bool isTerminal() const {
+    return strcmp(state, "DONE") == 0 ||
+           strcmp(state, "REJECTED") == 0 ||
+           strcmp(state, "ABORTED") == 0;
+  }
 };
 
 class IrrigationController {
@@ -75,12 +83,21 @@ class IrrigationController {
   void setNetworkOnline(bool online) { networkOnline_ = online; }
   void setOwnershipEpoch(uint32_t epoch) { ownershipEpoch_ = epoch; }
 
+  const char* activeCommandId() const { return activeCommandId_; }
+  bool hasProcessedCommand(const char* commandId) const { return isCommandAlreadyProcessed(commandId); }
+  bool hasPendingCommandReports() const { return reportCount_ > 0; }
+  bool peekPendingCommandReport(CommandExecutionReport& outReport) const;
+  void popOldestCommandReport();
   bool popPendingCommandReport(CommandExecutionReport& outReport);
+  void clearProcessedCommandsForReset();
+
   bool peekPendingIrrigationHistory(IrrigationHistoryRecord& outRecord) const;
   void popOldestIrrigationHistory();
   void clearIrrigationHistoryQueue();
 
  private:
+  void loadProcessedCommandsFromNvs();
+  void persistProcessedCommandSlot(size_t slotIdx, const char* commandId, size_t nextHead);
   void enqueueIrrigationHistory(uint32_t nowMs,
                                 CropZoneId zone,
                                 bool isManual,
@@ -132,7 +149,10 @@ class IrrigationController {
 
   char                      processedCmdIds_[Config::PROCESSED_CMD_RING_SIZE][40] = {{0}};
   size_t                    processedCmdHead_        = 0;
-  CommandExecutionReport    pendingReport_;
+  CommandExecutionReport    reportQueue_[Config::CMD_REPORT_QUEUE_CAPACITY];
+  size_t                    reportHead_              = 0;
+  size_t                    reportTail_              = 0;
+  size_t                    reportCount_             = 0;
 
   IrrigationHistoryRecord   irrHistoryQueue_[Config::IRRIGATION_HISTORY_QUEUE_CAPACITY];
   size_t                    irrHistoryHead_          = 0;

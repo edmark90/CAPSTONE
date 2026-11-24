@@ -325,8 +325,42 @@ bool FirebaseClientManager::requestCustomTokenAndSignIn(uint32_t nowMs) {
 }
 
 bool FirebaseClientManager::requestAnonymousOrSparkAuth(uint32_t nowMs) {
-  // Try Firebase Anonymous Sign-Up REST call if enabled in Firebase Auth
-  if (strncmp(Secrets::FIREBASE_WEB_API_KEY, "YOUR_", 5) != 0) {
+  // Reuse persisted refresh token or attempt one-time Anonymous Sign-Up if enabled in Firebase Auth
+  if (!anonAuthUnsupported_ && strncmp(Secrets::FIREBASE_WEB_API_KEY, "YOUR_", 5) != 0) {
+    char savedRefreshToken[512] = {0};
+    if (provisioning_) {
+      provisioning_->loadSparkRefreshToken(savedRefreshToken, sizeof(savedRefreshToken));
+    }
+
+    if (savedRefreshToken[0] != '\0') {
+      String refreshUrl =
+          String("https://securetoken.googleapis.com/v1/token?key=") +
+          Secrets::FIREBASE_WEB_API_KEY;
+      JsonDocument refReq;
+      refReq["grant_type"]    = "refresh_token";
+      refReq["refresh_token"] = savedRefreshToken;
+      String refBody, refResp;
+      serializeJson(refReq, refBody);
+      if (httpRequestJson("POST", refreshUrl, refBody, refResp)) {
+        JsonDocument refDoc;
+        if (deserializeJson(refDoc, refResp) == DeserializationError::Ok) {
+          const char* tok = refDoc["id_token"] | "";
+          const char* nextRef = refDoc["refresh_token"] | "";
+          if (strlen(tok) > 0) {
+            idToken_             = tok;
+            idTokenObtainedAtMs_ = nowMs;
+            idTokenValid_        = true;
+            sparkDirectMode_     = true;
+            if (provisioning_ && strlen(nextRef) > 0 && strcmp(nextRef, savedRefreshToken) != 0) {
+              provisioning_->saveSparkRefreshToken(nextRef);
+            }
+            Serial.println(F("[AUTH] Renewed cached Firebase Spark Auth token."));
+            return true;
+          }
+        }
+      }
+    }
+
     String signUpUrl =
         String("https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=") +
         Secrets::FIREBASE_WEB_API_KEY;
@@ -335,15 +369,22 @@ bool FirebaseClientManager::requestAnonymousOrSparkAuth(uint32_t nowMs) {
       JsonDocument doc;
       if (deserializeJson(doc, resp) == DeserializationError::Ok) {
         const char* tok = doc["idToken"] | "";
+        const char* refTok = doc["refreshToken"] | "";
         if (strlen(tok) > 0) {
           idToken_             = tok;
           idTokenObtainedAtMs_ = nowMs;
           idTokenValid_        = true;
           sparkDirectMode_     = true;
-          Serial.println(F("[AUTH] Firebase Spark Auth token acquired."));
+          if (provisioning_ && strlen(refTok) > 0) {
+            provisioning_->saveSparkRefreshToken(refTok);
+          }
+          Serial.println(F("[AUTH] Firebase Spark Auth token acquired and cached."));
           return true;
         }
       }
+    } else if (WiFi.status() == WL_CONNECTED) {
+      // Anonymous Sign-Up disabled in Firebase Console; latch for this boot so we never stall again
+      anonAuthUnsupported_ = true;
     }
   }
 
@@ -505,8 +546,12 @@ void FirebaseClientManager::flushPendingEventsAndReports(
     return;
   }
 
-  CommandExecutionReport report;
-  if (irrigation.popPendingCommandReport(report) && report.hasReport) {
+  for (int r = 0; r < 2; ++r) {
+    CommandExecutionReport report;
+    if (!irrigation.peekPendingCommandReport(report) || !report.hasReport) {
+      break;
+    }
+
     JsonDocument doc;
     doc["commandId"]        = report.commandId;
     doc["state"]            = report.state;
@@ -519,7 +564,22 @@ void FirebaseClientManager::flushPendingEventsAndReports(
     String url = buildRtdbUrl("/devices/" + String(provisioning_->deviceId()) +
                               "/commandResults/" + String(report.commandId) + ".json");
     String resp;
-    httpRequestJson("PUT", url, body, resp);
+    if (httpRequestJson("PUT", url, body, resp)) {
+      irrigation.popOldestCommandReport();
+      lastSuccessfulSyncMs_ = nowMs;
+      ioDiag.firebaseSyncSuccessCnt++;
+
+      // Delete processed commandRequest ONLY AFTER terminal result (DONE/REJECTED/ABORTED) is safely stored!
+      if (report.isTerminal()) {
+        String delUrl = buildRtdbUrl("/devices/" + String(provisioning_->deviceId()) +
+                                     "/commandRequests/" + String(report.commandId) + ".json");
+        String delResp;
+        httpRequestJson("DELETE", delUrl, "", delResp);
+      }
+    } else {
+      ioDiag.firebaseSyncFailCnt++;
+      break;  // Retain report in queue so terminal state is never lost
+    }
   }
 
   for (int i = 0; i < 2; ++i) {
@@ -964,21 +1024,101 @@ void FirebaseClientManager::syncPendingCommands(
     return;
   }
 
+  // Fast exit on empty queue ("null" / "{}") — zero JSON allocator overhead on idle polls!
+  if (resp.length() <= 4 || resp == "null" || resp == "{}") {
+    return;
+  }
+
   JsonDocument doc;
   if (deserializeJson(doc, resp) != DeserializationError::Ok || !doc.is<JsonObject>()) {
     return;
   }
 
+  const uint64_t nowEpoch = currentEpochMs();
+  bool cleanedOneLegacy = false;
+
   for (JsonPair kv : doc.as<JsonObject>()) {
+    const char* cmdKey = kv.key().c_str();
+    if (!cmdKey || cmdKey[0] == '\0') {
+      continue;
+    }
     JsonObject cmdObj = kv.value().as<JsonObject>();
     const char* state = cmdObj["state"] | "PENDING";
+
+    if (strcmp(state, "PROCESSED") == 0) {
+      // Safely prune stale PROCESSED entries left by older firmware only after confirming commandResults exists
+      const uint64_t expMs = cmdObj["expiresAt"] | 0ULL;
+      const bool isActiveCmd = (strcmp(irrigation.activeCommandId(), cmdKey) == 0);
+      if (!actuatorBusy_ && !cleanedOneLegacy && !isActiveCmd && !irrigation.hasPendingCommandReports() &&
+          nowEpoch > 1700000000000ULL && (expMs == 0ULL || nowEpoch > expMs + 60000ULL)) {
+        cleanedOneLegacy = true;
+        String resUrl = buildRtdbUrl("/devices/" + String(provisioning_->deviceId()) +
+                                     "/commandResults/" + String(cmdKey) + ".json");
+        String existingRes;
+        bool resultRecorded = httpRequestJson("GET", resUrl, "", existingRes) &&
+                              existingRes.length() > 4 && existingRes != "null";
+        if (!resultRecorded) {
+          JsonDocument archDoc;
+          archDoc["commandId"]        = cmdKey;
+          archDoc["state"]            = "DONE";
+          archDoc["reason"]           = "Archived completed command";
+          archDoc["updatedAt"][".sv"] = "timestamp";
+          archDoc["ownershipEpoch"]   = provisioning_->ownershipEpoch();
+          String archBody, archResp;
+          serializeJson(archDoc, archBody);
+          resultRecorded = httpRequestJson("PUT", resUrl, archBody, archResp);
+        }
+        if (resultRecorded) {
+          String delUrl = buildRtdbUrl("/devices/" + String(provisioning_->deviceId()) +
+                                       "/commandRequests/" + String(cmdKey) + ".json");
+          String delResp;
+          httpRequestJson("DELETE", delUrl, "", delResp);
+        }
+      }
+      continue;
+    }
+
     if (strcmp(state, "PENDING") != 0) {
       continue;
     }
 
     CommandRequest req;
     req.valid = true;
-    snprintf(req.commandId, sizeof(req.commandId), "%s", kv.key().c_str());
+    snprintf(req.commandId, sizeof(req.commandId), "%s", cmdKey);
+
+    // NVS + RAM duplicate execution guard (survives ESP32 restarts!)
+    if (irrigation.hasProcessedCommand(req.commandId)) {
+      String ackUrl = buildRtdbUrl("/devices/" + String(provisioning_->deviceId()) +
+                                   "/commandRequests/" + String(req.commandId) + "/state.json");
+      String ackResp;
+      httpRequestJson("PUT", ackUrl, "\"PROCESSED\"", ackResp);
+
+      if (strcmp(irrigation.activeCommandId(), req.commandId) != 0) {
+        String resUrl = buildRtdbUrl("/devices/" + String(provisioning_->deviceId()) +
+                                     "/commandResults/" + String(req.commandId) + ".json");
+        String existingRes;
+        bool hasRes = httpRequestJson("GET", resUrl, "", existingRes) &&
+                      existingRes.length() > 4 && existingRes != "null";
+        if (!hasRes) {
+          JsonDocument dupDoc;
+          dupDoc["commandId"]        = req.commandId;
+          dupDoc["state"]            = "REJECTED";
+          dupDoc["reason"]           = "Duplicate command replay prevented";
+          dupDoc["updatedAt"][".sv"] = "timestamp";
+          dupDoc["ownershipEpoch"]   = provisioning_->ownershipEpoch();
+          String dupBody, dupResp;
+          serializeJson(dupDoc, dupBody);
+          hasRes = httpRequestJson("PUT", resUrl, dupBody, dupResp);
+        }
+        if (hasRes) {
+          String delUrl = buildRtdbUrl("/devices/" + String(provisioning_->deviceId()) +
+                                       "/commandRequests/" + String(req.commandId) + ".json");
+          String delResp;
+          httpRequestJson("DELETE", delUrl, "", delResp);
+        }
+      }
+      continue;
+    }
 
     const char* typeStr = cmdObj["type"] | "";
     if (strcmp(typeStr, "WATER_CROP") == 0) {
@@ -1012,7 +1152,7 @@ void FirebaseClientManager::syncPendingCommands(
 
     irrigation.handleCommand(req,
                              nowMs,
-                             currentEpochMs(),
+                             nowEpoch,
                              provisioning_->ownershipEpoch(),
                              cfg,
                              provisioning_->ownershipState());
@@ -1074,16 +1214,22 @@ bool FirebaseClientManager::httpRequestJson(const char* method,
   const bool isRtdbHttps =
       isHttps && url.startsWith(Secrets::FIREBASE_RTDB_BASE_URL);
 
+  const uint32_t effectiveTimeoutMs =
+      actuatorBusy_ ? Config::HTTP_ACTIVE_WATERING_TIMEOUT_MS : Config::HTTP_TIMEOUT_MS;
+  const int maxRtdbAttempts = actuatorBusy_ ? 1 : 2;
+
   // Fast Path: Persistent HTTPS Keep-Alive socket dedicated to Firebase RTDB
-  // Eliminates 1.5-3.0s SSL/TLS handshakes on every poll/upload (~0.2-0.4s per request!)
+  // Preserves open mbedTLS session across requests (~150-300ms vs 2.0s TLS handshakes!)
   if (isRtdbHttps) {
-    for (int attempt = 0; attempt < 2; ++attempt) {
-      if (!rtdbHttpActive_) {
+    for (int attempt = 0; attempt < maxRtdbAttempts; ++attempt) {
+      if (!rtdbHttpActive_ || !rtdbClient_.connected()) {
+        resetRtdbConnection();
         rtdbClient_.setInsecure();
-        rtdbClient_.setTimeout(Config::HTTP_TIMEOUT_MS / 1000 + 1);
+        rtdbClient_.setHandshakeTimeout(Config::TLS_HANDSHAKE_TIMEOUT_SEC);
       }
+      rtdbClient_.setTimeout(effectiveTimeoutMs / 1000 + 1);
       rtdbHttp_.setReuse(true);
-      rtdbHttp_.setTimeout(Config::HTTP_TIMEOUT_MS);
+      rtdbHttp_.setTimeout(effectiveTimeoutMs);
 
       if (!rtdbHttp_.begin(rtdbClient_, url)) {
         resetRtdbConnection();
@@ -1108,15 +1254,18 @@ bool FirebaseClientManager::httpRequestJson(const char* method,
 
       if (statusCode >= 200 && statusCode < 300) {
         outResponse = rtdbHttp_.getString();
-        // With setReuse(true), end() drains body & clears headers while keeping TLS open!
-        rtdbHttp_.end();
+        // Do NOT call rtdbHttp_.end() here: Arduino-ESP32 end() calls disconnect(false),
+        // closing rtdbClient_! getString() already drains the body while keeping TLS open.
+        if (!rtdbClient_.connected()) {
+          rtdbHttpActive_ = false;
+        }
         return true;
       }
 
-      // Transport/idle-close error (<=0): tear down stale socket and silently retry once
+      // Transport/idle-close error (<=0): tear down stale socket and retry once when idle
       if (statusCode <= 0) {
         resetRtdbConnection();
-        if (attempt == 0) {
+        if (attempt + 1 < maxRtdbAttempts) {
           continue;
         }
         Serial.printf("[HTTP] %s transport error (code=%d) for %s\n",
@@ -1137,7 +1286,9 @@ bool FirebaseClientManager::httpRequestJson(const char* method,
       errSnippet.replace("\r", " ");
       Serial.printf("[HTTP] %s failed (code=%d) for %s %s\n",
                     method, statusCode, url.c_str(), errSnippet.c_str());
-      rtdbHttp_.end();
+      if (!rtdbClient_.connected()) {
+        resetRtdbConnection();
+      }
       return false;
     }
     return false;
@@ -1147,15 +1298,16 @@ bool FirebaseClientManager::httpRequestJson(const char* method,
   WiFiClient       plainClient;
   WiFiClientSecure secureClient;
   HTTPClient       http;
-  http.setTimeout(Config::HTTP_TIMEOUT_MS);
+  http.setTimeout(effectiveTimeoutMs);
 
   bool began = false;
   if (isHttps) {
     secureClient.setInsecure();
-    secureClient.setTimeout(Config::HTTP_TIMEOUT_MS / 1000 + 1);
+    secureClient.setHandshakeTimeout(Config::TLS_HANDSHAKE_TIMEOUT_SEC);
+    secureClient.setTimeout(effectiveTimeoutMs / 1000 + 1);
     began = http.begin(secureClient, url);
   } else {
-    plainClient.setTimeout(Config::HTTP_TIMEOUT_MS / 1000 + 1);
+    plainClient.setTimeout(effectiveTimeoutMs / 1000 + 1);
     began = http.begin(plainClient, url);
   }
   if (!began) {
@@ -1217,6 +1369,15 @@ bool FirebaseClientManager::formatPhDateAndHour(uint64_t epochMs,
                                                 char* outDateKey,
                                                 size_t dateLen,
                                                 uint8_t& outHour) const {
+  uint16_t dummyMin = 0;
+  return formatPhDateHourAndMinute(epochMs, outDateKey, dateLen, outHour, dummyMin);
+}
+
+bool FirebaseClientManager::formatPhDateHourAndMinute(uint64_t epochMs,
+                                                      char* outDateKey,
+                                                      size_t dateLen,
+                                                      uint8_t& outHour,
+                                                      uint16_t& outMinuteOfDay) const {
   if (epochMs < 1700000000000ULL || !outDateKey || dateLen < 11) {
     return false;
   }
@@ -1228,7 +1389,8 @@ bool FirebaseClientManager::formatPhDateAndHour(uint64_t epochMs,
   }
   snprintf(outDateKey, dateLen, "%04d-%02d-%02d",
            tmPh.tm_year + 1900, tmPh.tm_mon + 1, tmPh.tm_mday);
-  outHour = static_cast<uint8_t>(tmPh.tm_hour);
+  outHour        = static_cast<uint8_t>(tmPh.tm_hour);
+  outMinuteOfDay = static_cast<uint16_t>(tmPh.tm_hour * 60 + tmPh.tm_min);
   return true;
 }
 
@@ -1274,6 +1436,11 @@ void FirebaseClientManager::addSampleToAccumulator(HourlySensorAccumulator& acc,
       ++acc.rainWetSamples;
     }
   }
+  if (rain.rainSuspensionLatched) {
+    if (acc.rainSuspendedSamples < 65000) {
+      ++acc.rainSuspendedSamples;
+    }
+  }
 
   // Strictly accumulate ONLY valid readings; never insert 0 for invalid/faulted sensors!
   if (soil[0].valid && isfinite(soil[0].moisturePct)) {
@@ -1308,6 +1475,120 @@ void FirebaseClientManager::addSampleToAccumulator(HourlySensorAccumulator& acc,
   if (weather.valid && weather.probabilityPct >= 0 && weather.probabilityPct <= 100) {
     acc.rainProbSum += static_cast<double>(weather.probabilityPct);
     ++acc.rainProbCnt;
+  }
+}
+
+void FirebaseClientManager::addSampleToMinuteAccumulator(MinuteSensorAccumulator& acc,
+                                                         uint64_t nowEpochMs,
+                                                         const EnvironmentReading& env,
+                                                         const SoilZoneStatus soil[3],
+                                                         const ReservoirReading& reservoir,
+                                                         const RainGateStatus& rain,
+                                                         const WeatherSnapshot& weather) {
+  if (acc.firstSeenAtEpochMs == 0 || nowEpochMs < acc.firstSeenAtEpochMs) {
+    acc.firstSeenAtEpochMs = nowEpochMs;
+  }
+  if (nowEpochMs > acc.lastSeenAtEpochMs) {
+    acc.lastSeenAtEpochMs = nowEpochMs;
+  }
+  if (acc.sampleCount < 65000) {
+    ++acc.sampleCount;
+  }
+  if (rain.rawWet) {
+    acc.rainRawWetAny = true;
+    if (acc.rainWetSamples < 250) {
+      ++acc.rainWetSamples;
+    }
+  }
+  if (rain.wetConfirmed) {
+    acc.rainWetConfirmedAny = true;
+  }
+  if (rain.rainSuspensionLatched) {
+    acc.rainSuspendedAny = true;
+  }
+  acc.reservoirState = reservoir.state;
+
+  // Strictly accumulate ONLY valid finite readings; never substitute 0 for faulted sensors
+  if (soil[0].valid && isfinite(soil[0].moisturePct) && acc.tomatoCnt < 250) {
+    acc.tomatoSum += soil[0].moisturePct;
+    ++acc.tomatoCnt;
+  }
+  if (soil[1].valid && isfinite(soil[1].moisturePct) && acc.chiliCnt < 250) {
+    acc.chiliSum += soil[1].moisturePct;
+    ++acc.chiliCnt;
+  }
+  if (soil[2].valid && isfinite(soil[2].moisturePct) && acc.eggplantCnt < 250) {
+    acc.eggplantSum += soil[2].moisturePct;
+    ++acc.eggplantCnt;
+  }
+  if (env.dhtValid && isfinite(env.temperatureC) && acc.tempCnt < 250) {
+    acc.tempSum += env.temperatureC;
+    ++acc.tempCnt;
+  }
+  if (env.dhtValid && isfinite(env.humidityRh) && acc.humCnt < 250) {
+    acc.humSum += env.humidityRh;
+    ++acc.humCnt;
+  }
+  if (env.lightValid && isfinite(env.brightnessPct) && acc.lightCnt < 250) {
+    acc.lightSum += env.brightnessPct;
+    ++acc.lightCnt;
+  }
+  if (reservoir.valid && isfinite(reservoir.waterLevelPct) && isfinite(reservoir.airGapInches) &&
+      acc.reservoirCnt < 250) {
+    acc.reservoirPctSum += reservoir.waterLevelPct;
+    acc.reservoirGapSum += reservoir.airGapInches;
+    ++acc.reservoirCnt;
+  }
+  if (weather.valid && weather.probabilityPct >= 0 && weather.probabilityPct <= 100 &&
+      acc.rainProbCnt < 250) {
+    acc.rainProbSum += static_cast<uint32_t>(weather.probabilityPct);
+    ++acc.rainProbCnt;
+  }
+}
+
+void FirebaseClientManager::populateMinuteJson(JsonObject minObj,
+                                               const MinuteSensorAccumulator& acc) const {
+  minObj["m"]              = acc.minuteOfDay;
+  minObj["firstSeenAt"]    = acc.firstSeenAtEpochMs;
+  minObj["lastSeenAt"]     = acc.lastSeenAtEpochMs;
+  minObj["samples"]        = acc.sampleCount;
+  minObj["rainWet"]        = acc.rainRawWetAny || acc.rainWetConfirmedAny;
+  minObj["rainConfirmed"]  = acc.rainWetConfirmedAny;
+  minObj["rainSuspended"]  = acc.rainSuspendedAny;
+  minObj["rainWetSamples"] = acc.rainWetSamples;
+  minObj["reservoirState"] = reservoirStateString(acc.reservoirState);
+
+  if (acc.tomatoCnt > 0) minObj["tomatoPct"] = serialized(String(acc.tomatoSum / acc.tomatoCnt, 1));
+  else minObj["tomatoPct"] = nullptr;
+
+  if (acc.chiliCnt > 0) minObj["chiliPct"] = serialized(String(acc.chiliSum / acc.chiliCnt, 1));
+  else minObj["chiliPct"] = nullptr;
+
+  if (acc.eggplantCnt > 0) minObj["eggplantPct"] = serialized(String(acc.eggplantSum / acc.eggplantCnt, 1));
+  else minObj["eggplantPct"] = nullptr;
+
+  if (acc.tempCnt > 0) minObj["temperatureC"] = serialized(String(acc.tempSum / acc.tempCnt, 1));
+  else minObj["temperatureC"] = nullptr;
+
+  if (acc.humCnt > 0) minObj["humidityPct"] = serialized(String(acc.humSum / acc.humCnt, 1));
+  else minObj["humidityPct"] = nullptr;
+
+  if (acc.lightCnt > 0) minObj["lightPct"] = serialized(String(acc.lightSum / acc.lightCnt, 1));
+  else minObj["lightPct"] = nullptr;
+
+  if (acc.reservoirCnt > 0) {
+    minObj["reservoirPct"]   = serialized(String(acc.reservoirPctSum / acc.reservoirCnt, 1));
+    minObj["reservoirGapIn"] = serialized(String(acc.reservoirGapSum / acc.reservoirCnt, 2));
+  } else {
+    minObj["reservoirPct"]   = nullptr;
+    minObj["reservoirGapIn"] = nullptr;
+  }
+
+  if (acc.rainProbCnt > 0) {
+    minObj["rainProbPct"] = static_cast<int>(
+        (acc.rainProbSum + acc.rainProbCnt / 2U) / acc.rainProbCnt);
+  } else {
+    minObj["rainProbPct"] = nullptr;
   }
 }
 
@@ -1389,23 +1670,46 @@ void FirebaseClientManager::recordLiveSampleForHistory(uint32_t nowMs,
   }
   const uint64_t nowEpochMs = currentEpochMs();
   if (nowEpochMs < 1700000000000ULL) {
-    return;  // Wait for valid UTC wall-clock time before bucketing into PHT date/hour
+    return;  // Wait for valid UTC wall-clock time before bucketing into PHT date/hour/minute
   }
 
-  char dateKey[12] = {0};
-  uint8_t hour     = 0;
-  if (!formatPhDateAndHour(nowEpochMs, dateKey, sizeof(dateKey), hour)) {
+  char dateKey[12]       = {0};
+  uint8_t hour           = 0;
+  uint16_t minuteOfDay   = 0;
+  if (!formatPhDateHourAndMinute(nowEpochMs, dateKey, sizeof(dateKey), hour, minuteOfDay)) {
     return;
   }
 
+  // ─── 1. Authoritative 1-Minute PHT Bucket (0..1439) ───────────────────────
+  const bool minuteChanged =
+      !activeMinuteValid_ ||
+      (strcmp(activeMinuteDateKey_, dateKey) != 0) ||
+      (activeMinuteOfDay_ != minuteOfDay);
+
+  if (minuteChanged) {
+    if (activeMinuteValid_ && activeMinuteDirty_ && minuteAcc_.sampleCount > 0) {
+      // Stage completed minute in RAM so serviceHistorySyncAndRetention flushes on its own loop tick!
+      completedMinuteAcc_ = minuteAcc_;
+      snprintf(completedMinuteDateKey_, sizeof(completedMinuteDateKey_), "%s", activeMinuteDateKey_);
+      completedMinutePending_ = true;
+    }
+    snprintf(activeMinuteDateKey_, sizeof(activeMinuteDateKey_), "%s", dateKey);
+    activeMinuteOfDay_ = minuteOfDay;
+    minuteAcc_.reset(minuteOfDay);
+    activeMinuteValid_ = true;
+  }
+  addSampleToMinuteAccumulator(minuteAcc_, nowEpochMs, env, soil, reservoir, rain, weather);
+  activeMinuteDirty_ = true;
+
+  // ─── 2. Authoritative 1-Hour PHT Bucket (0..23) ───────────────────────────
   const bool slotChanged =
       !activeHistValid_ ||
       (strcmp(activeHistDateKey_, dateKey) != 0) ||
       (activeHistHour_ != hour);
 
   if (slotChanged) {
-    // Finalize and flush previous hour before rolling over
-    if (activeHistValid_ && activeHistDirty_ && segAcc_.sampleCount > 0) {
+    // Flush previous hour cleanly if still dirty
+    if (activeHistValid_ && activeHistDirty_ && segAcc_.sampleCount > 0 && !actuatorBusy_) {
       flushHourlyAccumulatorToRtdb(activeHistDateKey_,
                                    activeHistHour_,
                                    activeSegIdx_,
@@ -1415,22 +1719,18 @@ void FirebaseClientManager::recordLiveSampleForHistory(uint32_t nowMs,
     }
 
     snprintf(activeHistDateKey_, sizeof(activeHistDateKey_), "%s", dateKey);
-    activeHistHour_              = hour;
-    activeSegIdx_                = 0;
-    activeHourGapCount_          = 0;
+    activeHistHour_               = hour;
+    activeSegIdx_                 = 0;
+    activeHourGapCount_           = 0;
     hourAcc_.reset();
     segAcc_.reset();
-    activeHistValid_             = true;
+    activeHistValid_              = true;
     activeSegNeedsImmediateFlush_ = true;
-
-    if (!cloudHourInspectedForBoot_) {
-      inspectExistingCloudHourOnReconnect(dateKey, hour, nowEpochMs);
-    }
   } else if (segAcc_.lastSeenAtEpochMs > 1700000000000ULL &&
              nowEpochMs > segAcc_.lastSeenAtEpochMs &&
              (nowEpochMs - segAcc_.lastSeenAtEpochMs) >= Config::HISTORY_INTRA_HOUR_GAP_MS) {
-    // Reconnected within the same hour after a >=5 min Wi-Fi/internet outage!
-    if (activeHistDirty_ && segAcc_.sampleCount > 0) {
+    // Reconnected within the same hour after a >=5 min Wi-Fi/internet outage
+    if (activeHistDirty_ && segAcc_.sampleCount > 0 && !actuatorBusy_) {
       flushHourlyAccumulatorToRtdb(activeHistDateKey_,
                                    activeHistHour_,
                                    activeSegIdx_,
@@ -1451,12 +1751,36 @@ void FirebaseClientManager::recordLiveSampleForHistory(uint32_t nowMs,
   activeHistDirty_ = true;
 }
 
-bool FirebaseClientManager::flushHourlyAccumulatorToRtdb(const char* dateKey,
-                                                         uint8_t hour,
-                                                         uint8_t segIdx,
-                                                         uint8_t gapCount,
-                                                         const HourlySensorAccumulator& segAcc,
-                                                         const HourlySensorAccumulator& hourAcc) {
+bool FirebaseClientManager::flushSingleMinuteToRtdb(const char* dateKey,
+                                                    const MinuteSensorAccumulator& minAcc) {
+  if (!provisioning_ || !dateKey || dateKey[0] == '\0' || minAcc.sampleCount == 0) {
+    return false;
+  }
+  const uint16_t hr = minAcc.minuteOfDay / 60;
+  const uint16_t mn = minAcc.minuteOfDay % 60;
+  char minKey[8];
+  snprintf(minKey, sizeof(minKey), "%02u%02u",
+           static_cast<unsigned int>(hr), static_cast<unsigned int>(mn));
+
+  JsonDocument doc;
+  populateMinuteJson(doc.to<JsonObject>(), minAcc);
+  String body, resp;
+  serializeJson(doc, body);
+
+  String url = buildRtdbUrl("/deviceHistory/" + String(provisioning_->deviceId()) +
+                            "/minuteDays/" + String(dateKey) + "/" + String(minKey) + ".json");
+  return httpRequestJson("PUT", url, body, resp);
+}
+
+bool FirebaseClientManager::flushHourlyAccumulatorToRtdb(
+    const char* dateKey,
+    uint8_t hour,
+    uint8_t segIdx,
+    uint8_t gapCount,
+    const HourlySensorAccumulator& segAcc,
+    const HourlySensorAccumulator& hourAcc,
+    const char* optMinDateKey,
+    const MinuteSensorAccumulator* optMinAcc) {
   if (!provisioning_ || !dateKey || dateKey[0] == '\0' || segAcc.sampleCount == 0) {
     return false;
   }
@@ -1466,112 +1790,94 @@ bool FirebaseClientManager::flushHourlyAccumulatorToRtdb(const char* dateKey,
   char segKey[8];
   snprintf(segKey, sizeof(segKey), "s%u", static_cast<unsigned int>(segIdx));
 
-  // 1. Write segment node /deviceHistory/{id}/days/{date}/hours/{HH}/segments/s{idx}
-  JsonDocument segDoc;
-  segDoc["startAt"] = segAcc.firstSeenAtEpochMs;
-  segDoc["endAt"]   = segAcc.lastSeenAtEpochMs;
-  segDoc["samples"] = segAcc.sampleCount;
+  // Coalesce Day metadata + Hour summary + Segment + optional Minute record into ONE atomic PATCH!
+  JsonDocument patchDoc;
+  String dayPrefix  = "days/" + String(dateKey);
+  String hourPrefix = dayPrefix + "/hours/" + String(hourKey);
 
-  if (segAcc.tomatoCnt > 0) segDoc["tomatoPct"] = serialized(String(segAcc.tomatoSum / segAcc.tomatoCnt, 1));
-  else segDoc["tomatoPct"] = nullptr;
+  patchDoc[dayPrefix + "/dateKey"]           = dateKey;
+  patchDoc[dayPrefix + "/updatedAt"][".sv"]  = "timestamp";
 
-  if (segAcc.chiliCnt > 0) segDoc["chiliPct"] = serialized(String(segAcc.chiliSum / segAcc.chiliCnt, 1));
-  else segDoc["chiliPct"] = nullptr;
+  // 1. Segment object (replaces s{idx} while preserving sibling s0..sN)
+  JsonObject segObj = patchDoc[hourPrefix + "/segments/" + String(segKey)].to<JsonObject>();
+  segObj["startAt"] = segAcc.firstSeenAtEpochMs;
+  segObj["endAt"]   = segAcc.lastSeenAtEpochMs;
+  segObj["samples"] = segAcc.sampleCount;
 
-  if (segAcc.eggplantCnt > 0) segDoc["eggplantPct"] = serialized(String(segAcc.eggplantSum / segAcc.eggplantCnt, 1));
-  else segDoc["eggplantPct"] = nullptr;
-
-  if (segAcc.tempCnt > 0) segDoc["temperatureC"] = serialized(String(segAcc.tempSum / segAcc.tempCnt, 1));
-  else segDoc["temperatureC"] = nullptr;
-
-  if (segAcc.humCnt > 0) segDoc["humidityPct"] = serialized(String(segAcc.humSum / segAcc.humCnt, 1));
-  else segDoc["humidityPct"] = nullptr;
-
-  if (segAcc.lightCnt > 0) segDoc["lightPct"] = serialized(String(segAcc.lightSum / segAcc.lightCnt, 1));
-  else segDoc["lightPct"] = nullptr;
-
+  if (segAcc.tomatoCnt > 0) segObj["tomatoPct"] = serialized(String(segAcc.tomatoSum / segAcc.tomatoCnt, 1));
+  else segObj["tomatoPct"] = nullptr;
+  if (segAcc.chiliCnt > 0) segObj["chiliPct"] = serialized(String(segAcc.chiliSum / segAcc.chiliCnt, 1));
+  else segObj["chiliPct"] = nullptr;
+  if (segAcc.eggplantCnt > 0) segObj["eggplantPct"] = serialized(String(segAcc.eggplantSum / segAcc.eggplantCnt, 1));
+  else segObj["eggplantPct"] = nullptr;
+  if (segAcc.tempCnt > 0) segObj["temperatureC"] = serialized(String(segAcc.tempSum / segAcc.tempCnt, 1));
+  else segObj["temperatureC"] = nullptr;
+  if (segAcc.humCnt > 0) segObj["humidityPct"] = serialized(String(segAcc.humSum / segAcc.humCnt, 1));
+  else segObj["humidityPct"] = nullptr;
+  if (segAcc.lightCnt > 0) segObj["lightPct"] = serialized(String(segAcc.lightSum / segAcc.lightCnt, 1));
+  else segObj["lightPct"] = nullptr;
   if (segAcc.reservoirCnt > 0) {
-    segDoc["reservoirPct"]   = serialized(String(segAcc.reservoirPctSum / segAcc.reservoirCnt, 1));
-    segDoc["reservoirGapIn"] = serialized(String(segAcc.reservoirGapSum / segAcc.reservoirCnt, 2));
+    segObj["reservoirPct"]   = serialized(String(segAcc.reservoirPctSum / segAcc.reservoirCnt, 1));
+    segObj["reservoirGapIn"] = serialized(String(segAcc.reservoirGapSum / segAcc.reservoirCnt, 2));
   } else {
-    segDoc["reservoirPct"]   = nullptr;
-    segDoc["reservoirGapIn"] = nullptr;
+    segObj["reservoirPct"]   = nullptr;
+    segObj["reservoirGapIn"] = nullptr;
   }
-
   if (segAcc.rainProbCnt > 0) {
-    segDoc["rainProbPct"] = static_cast<int>(lround(segAcc.rainProbSum / segAcc.rainProbCnt));
+    segObj["rainProbPct"] = static_cast<int>(lround(segAcc.rainProbSum / segAcc.rainProbCnt));
   } else {
-    segDoc["rainProbPct"] = nullptr;
+    segObj["rainProbPct"] = nullptr;
   }
 
-  String segBody;
-  serializeJson(segDoc, segBody);
-  String baseDayPath = "/deviceHistory/" + String(provisioning_->deviceId()) + "/days/" + String(dateKey);
-  String segUrl = buildRtdbUrl(baseDayPath + "/hours/" + String(hourKey) + "/segments/" + String(segKey) + ".json");
-  String segResp;
-  if (!httpRequestJson("PUT", segUrl, segBody, segResp)) {
-    return false;
-  }
+  // 2. Hour summary scalar paths (preserves all sibling segments/s0..sN)
+  patchDoc[hourPrefix + "/hour"]                 = hour;
+  patchDoc[hourPrefix + "/firstSeenAt"]          = hourAcc.firstSeenAtEpochMs;
+  patchDoc[hourPrefix + "/lastSeenAt"]           = hourAcc.lastSeenAtEpochMs;
+  patchDoc[hourPrefix + "/sampleCount"]          = hourAcc.sampleCount;
+  patchDoc[hourPrefix + "/gapCount"]             = gapCount;
+  patchDoc[hourPrefix + "/rainWetSamples"]       = hourAcc.rainWetSamples;
+  patchDoc[hourPrefix + "/rainSuspendedSamples"] = hourAcc.rainSuspendedSamples;
 
-  // 2. PATCH hour summary node (preserves existing sibling segments/s0..sN!)
-  JsonDocument hourDoc;
-  hourDoc["hour"]           = hour;
-  hourDoc["firstSeenAt"]    = hourAcc.firstSeenAtEpochMs;
-  hourDoc["lastSeenAt"]     = hourAcc.lastSeenAtEpochMs;
-  hourDoc["sampleCount"]    = hourAcc.sampleCount;
-  hourDoc["gapCount"]       = gapCount;
-  hourDoc["rainWetSamples"] = hourAcc.rainWetSamples;
-
-  if (hourAcc.tomatoCnt > 0) hourDoc["tomatoPct"] = serialized(String(hourAcc.tomatoSum / hourAcc.tomatoCnt, 1));
-  else hourDoc["tomatoPct"] = nullptr;
-
-  if (hourAcc.chiliCnt > 0) hourDoc["chiliPct"] = serialized(String(hourAcc.chiliSum / hourAcc.chiliCnt, 1));
-  else hourDoc["chiliPct"] = nullptr;
-
-  if (hourAcc.eggplantCnt > 0) hourDoc["eggplantPct"] = serialized(String(hourAcc.eggplantSum / hourAcc.eggplantCnt, 1));
-  else hourDoc["eggplantPct"] = nullptr;
-
-  if (hourAcc.tempCnt > 0) hourDoc["temperatureC"] = serialized(String(hourAcc.tempSum / hourAcc.tempCnt, 1));
-  else hourDoc["temperatureC"] = nullptr;
-
-  if (hourAcc.humCnt > 0) hourDoc["humidityPct"] = serialized(String(hourAcc.humSum / hourAcc.humCnt, 1));
-  else hourDoc["humidityPct"] = nullptr;
-
-  if (hourAcc.lightCnt > 0) hourDoc["lightPct"] = serialized(String(hourAcc.lightSum / hourAcc.lightCnt, 1));
-  else hourDoc["lightPct"] = nullptr;
-
+  if (hourAcc.tomatoCnt > 0) patchDoc[hourPrefix + "/tomatoPct"] = serialized(String(hourAcc.tomatoSum / hourAcc.tomatoCnt, 1));
+  else patchDoc[hourPrefix + "/tomatoPct"] = nullptr;
+  if (hourAcc.chiliCnt > 0) patchDoc[hourPrefix + "/chiliPct"] = serialized(String(hourAcc.chiliSum / hourAcc.chiliCnt, 1));
+  else patchDoc[hourPrefix + "/chiliPct"] = nullptr;
+  if (hourAcc.eggplantCnt > 0) patchDoc[hourPrefix + "/eggplantPct"] = serialized(String(hourAcc.eggplantSum / hourAcc.eggplantCnt, 1));
+  else patchDoc[hourPrefix + "/eggplantPct"] = nullptr;
+  if (hourAcc.tempCnt > 0) patchDoc[hourPrefix + "/temperatureC"] = serialized(String(hourAcc.tempSum / hourAcc.tempCnt, 1));
+  else patchDoc[hourPrefix + "/temperatureC"] = nullptr;
+  if (hourAcc.humCnt > 0) patchDoc[hourPrefix + "/humidityPct"] = serialized(String(hourAcc.humSum / hourAcc.humCnt, 1));
+  else patchDoc[hourPrefix + "/humidityPct"] = nullptr;
+  if (hourAcc.lightCnt > 0) patchDoc[hourPrefix + "/lightPct"] = serialized(String(hourAcc.lightSum / hourAcc.lightCnt, 1));
+  else patchDoc[hourPrefix + "/lightPct"] = nullptr;
   if (hourAcc.reservoirCnt > 0) {
-    hourDoc["reservoirPct"]   = serialized(String(hourAcc.reservoirPctSum / hourAcc.reservoirCnt, 1));
-    hourDoc["reservoirGapIn"] = serialized(String(hourAcc.reservoirGapSum / hourAcc.reservoirCnt, 2));
+    patchDoc[hourPrefix + "/reservoirPct"]   = serialized(String(hourAcc.reservoirPctSum / hourAcc.reservoirCnt, 1));
+    patchDoc[hourPrefix + "/reservoirGapIn"] = serialized(String(hourAcc.reservoirGapSum / hourAcc.reservoirCnt, 2));
   } else {
-    hourDoc["reservoirPct"]   = nullptr;
-    hourDoc["reservoirGapIn"] = nullptr;
+    patchDoc[hourPrefix + "/reservoirPct"]   = nullptr;
+    patchDoc[hourPrefix + "/reservoirGapIn"] = nullptr;
   }
-
   if (hourAcc.rainProbCnt > 0) {
-    hourDoc["rainProbPct"] = static_cast<int>(lround(hourAcc.rainProbSum / hourAcc.rainProbCnt));
+    patchDoc[hourPrefix + "/rainProbPct"] = static_cast<int>(lround(hourAcc.rainProbSum / hourAcc.rainProbCnt));
   } else {
-    hourDoc["rainProbPct"] = nullptr;
+    patchDoc[hourPrefix + "/rainProbPct"] = nullptr;
   }
 
-  String hourBody;
-  serializeJson(hourDoc, hourBody);
-  String hourUrl = buildRtdbUrl(baseDayPath + "/hours/" + String(hourKey) + ".json");
-  String hourResp;
-  if (!httpRequestJson("PATCH", hourUrl, hourBody, hourResp)) {
-    return false;
+  // 3. Optional 1-minute bucket bundled into the exact same HTTP PATCH
+  if (optMinAcc != nullptr && optMinAcc->sampleCount > 0 && optMinDateKey && optMinDateKey[0] != '\0') {
+    const uint16_t mHr = optMinAcc->minuteOfDay / 60;
+    const uint16_t mMn = optMinAcc->minuteOfDay % 60;
+    char minKey[8];
+    snprintf(minKey, sizeof(minKey), "%02u%02u",
+             static_cast<unsigned int>(mHr), static_cast<unsigned int>(mMn));
+    String minPath = "minuteDays/" + String(optMinDateKey) + "/" + String(minKey);
+    populateMinuteJson(patchDoc[minPath].to<JsonObject>(), *optMinAcc);
   }
 
-  // 3. Patch lightweight day metadata
-  JsonDocument dayMeta;
-  dayMeta["dateKey"]           = dateKey;
-  dayMeta["updatedAt"][".sv"]  = "timestamp";
-  String dayMetaBody;
-  serializeJson(dayMeta, dayMetaBody);
-  String dayUrl = buildRtdbUrl(baseDayPath + ".json");
-  String dayResp;
-  httpRequestJson("PATCH", dayUrl, dayMetaBody, dayResp);
-  return true;
+  String body, resp;
+  serializeJson(patchDoc, body);
+  String url = buildRtdbUrl("/deviceHistory/" + String(provisioning_->deviceId()) + ".json");
+  return httpRequestJson("PATCH", url, body, resp);
 }
 
 void FirebaseClientManager::flushPendingIrrigationHistory(uint32_t nowMs,
@@ -1604,9 +1910,10 @@ void FirebaseClientManager::flushPendingIrrigationHistory(uint32_t nowMs,
                                : resolvedEndEpoch;
     }
 
-    char dateKey[12] = {0};
-    uint8_t hour     = 0;
-    if (!formatPhDateAndHour(resolvedStartEpoch, dateKey, sizeof(dateKey), hour)) {
+    char dateKey[12]     = {0};
+    uint8_t hour         = 0;
+    uint16_t minuteOfDay = 0;
+    if (!formatPhDateHourAndMinute(resolvedStartEpoch, dateKey, sizeof(dateKey), hour, minuteOfDay)) {
       irrigation.popOldestIrrigationHistory();
       continue;
     }
@@ -1631,6 +1938,7 @@ void FirebaseClientManager::flushPendingIrrigationHistory(uint32_t nowMs,
     doc["startedAt"]       = resolvedStartEpoch;
     doc["endedAt"]         = resolvedEndEpoch;
     doc["hour"]            = hour;
+    doc["minuteOfDay"]     = minuteOfDay;
     doc["durationMs"]      = rec.durationMs;
     doc["recordedOffline"] = rec.recordedOffline;
     doc["ownershipEpoch"]  = provisioning_->ownershipEpoch();
@@ -1692,24 +2000,28 @@ void FirebaseClientManager::pruneExpiredHistoryDaysIfDue(uint32_t nowMs, uint64_
   }
   lastPruneAttemptAtMs_ = (nowMs == 0) ? 1UL : nowMs;
 
-  String shallowUrl = buildRtdbUrl("/deviceHistory/" + String(provisioning_->deviceId()) +
-                                   "/days.json?shallow=true");
-  String resp;
-  if (!httpRequestJson("GET", shallowUrl, "", resp)) {
-    return;
-  }
+  // Prune expired calendar days (< cutoffKey, strict 7-day PHT window) from BOTH /days and /minuteDays
+  const char* buckets[2] = {"days", "minuteDays"};
+  for (int b = 0; b < 2; ++b) {
+    String shallowUrl = buildRtdbUrl("/deviceHistory/" + String(provisioning_->deviceId()) +
+                                     "/" + String(buckets[b]) + ".json?shallow=true");
+    String resp;
+    if (!httpRequestJson("GET", shallowUrl, "", resp)) {
+      return;
+    }
 
-  if (resp.length() > 2 && resp != "null") {
-    JsonDocument doc;
-    if (deserializeJson(doc, resp) == DeserializationError::Ok && doc.is<JsonObject>()) {
-      for (JsonPair kv : doc.as<JsonObject>()) {
-        const char* dayKey = kv.key().c_str();
-        if (dayKey && strlen(dayKey) == 10 && strcmp(dayKey, cutoffKey) < 0) {
-          String delUrl = buildRtdbUrl("/deviceHistory/" + String(provisioning_->deviceId()) +
-                                       "/days/" + String(dayKey) + ".json");
-          String delResp;
-          if (httpRequestJson("DELETE", delUrl, "", delResp)) {
-            Serial.printf("[HIST] Pruned expired history day %s (cutoff %s).\n", dayKey, cutoffKey);
+    if (resp.length() > 2 && resp != "null") {
+      JsonDocument doc;
+      if (deserializeJson(doc, resp) == DeserializationError::Ok && doc.is<JsonObject>()) {
+        for (JsonPair kv : doc.as<JsonObject>()) {
+          const char* dayKey = kv.key().c_str();
+          if (dayKey && strlen(dayKey) == 10 && strcmp(dayKey, cutoffKey) < 0) {
+            String delUrl = buildRtdbUrl("/deviceHistory/" + String(provisioning_->deviceId()) +
+                                         "/" + String(buckets[b]) + "/" + String(dayKey) + ".json");
+            String delResp;
+            if (httpRequestJson("DELETE", delUrl, "", delResp)) {
+              Serial.printf("[HIST] Pruned expired %s/%s (cutoff %s).\n", buckets[b], dayKey, cutoffKey);
+            }
           }
         }
       }
@@ -1730,7 +2042,7 @@ void FirebaseClientManager::pruneExpiredHistoryDaysIfDue(uint32_t nowMs, uint64_
 void FirebaseClientManager::serviceHistorySyncAndRetention(uint32_t nowMs,
                                                            IrrigationController& irrigation,
                                                            DiagnosticsMetrics& ioDiag) {
-  if (!ensureValidAuth(nowMs) || !provisioning_) {
+  if (!ensureValidAuth(nowMs) || !provisioning_ || actuatorBusy_) {
     return;
   }
   if (provisioning_->ownershipState() != OwnershipState::OWNED) {
@@ -1740,25 +2052,70 @@ void FirebaseClientManager::serviceHistorySyncAndRetention(uint32_t nowMs,
   // 1. Upload any completed/aborted irrigation cycles immediately
   flushPendingIrrigationHistory(nowMs, irrigation, ioDiag);
 
-  // 2. Flush hourly telemetry on first sample of a new hour/segment, or every 5 minutes
+  // 2. Inspect existing cloud hour once per boot lazily before first history flush
+  if (activeHistValid_ && !cloudHourInspectedForBoot_) {
+    inspectExistingCloudHourOnReconnect(
+        activeHistDateKey_, activeHistHour_, segAcc_.firstSeenAtEpochMs);
+  }
+
+  // 3. Flush finalized previous minute (and bundle running hour summary in the same atomic PATCH)
+  if (completedMinutePending_ && completedMinuteAcc_.sampleCount > 0) {
+    bool flushedOk = false;
+    if (activeHistValid_ && activeHistDirty_ && segAcc_.sampleCount > 0) {
+      flushedOk = flushHourlyAccumulatorToRtdb(activeHistDateKey_,
+                                               activeHistHour_,
+                                               activeSegIdx_,
+                                               activeHourGapCount_,
+                                               segAcc_,
+                                               hourAcc_,
+                                               completedMinuteDateKey_,
+                                               &completedMinuteAcc_);
+      if (flushedOk) {
+        activeHistDirty_              = false;
+        activeSegNeedsImmediateFlush_ = false;
+        lastHistoryFlushAtMs_         = (nowMs == 0) ? 1UL : nowMs;
+      }
+    } else {
+      flushedOk = flushSingleMinuteToRtdb(completedMinuteDateKey_, completedMinuteAcc_);
+    }
+    if (flushedOk) {
+      completedMinutePending_ = false;
+      ioDiag.firebaseSyncSuccessCnt++;
+    } else {
+      ioDiag.firebaseSyncFailCnt++;
+      return;
+    }
+  }
+
+  // 4. Flush active hour + active minute on first sample of a new hour/segment, or every 60 seconds
   const bool periodicDue =
       (lastHistoryFlushAtMs_ == 0) ||
       (uint32_t(nowMs - lastHistoryFlushAtMs_) >= Config::INTERVAL_HISTORY_FLUSH_MS);
 
   if (activeHistValid_ && activeHistDirty_ && segAcc_.sampleCount > 0 &&
       (activeSegNeedsImmediateFlush_ || periodicDue)) {
+    const MinuteSensorAccumulator* liveMinPtr =
+        (activeMinuteValid_ && activeMinuteDirty_ && minuteAcc_.sampleCount > 0)
+            ? &minuteAcc_
+            : nullptr;
     if (flushHourlyAccumulatorToRtdb(activeHistDateKey_,
                                      activeHistHour_,
                                      activeSegIdx_,
                                      activeHourGapCount_,
                                      segAcc_,
-                                     hourAcc_)) {
-      activeHistDirty_             = false;
+                                     hourAcc_,
+                                     activeMinuteDateKey_,
+                                     liveMinPtr)) {
+      activeHistDirty_              = false;
+      if (liveMinPtr != nullptr) {
+        activeMinuteDirty_ = false;
+      }
       activeSegNeedsImmediateFlush_ = false;
-      lastHistoryFlushAtMs_        = (nowMs == 0) ? 1UL : nowMs;
+      lastHistoryFlushAtMs_         = (nowMs == 0) ? 1UL : nowMs;
+      ioDiag.firebaseSyncSuccessCnt++;
     }
   }
 
-  // 3. Enforce strict 7-day Philippine calendar retention once per day
+  // 5. Enforce strict 7-day Philippine calendar retention once per day
   pruneExpiredHistoryDaysIfDue(nowMs, currentEpochMs());
 }

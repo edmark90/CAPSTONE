@@ -124,8 +124,7 @@ fun OnboardingScreen(onGetStarted: () -> Unit) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                ,
+                .navigationBarsPadding(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
 
@@ -143,8 +142,9 @@ fun OnboardingScreen(onGetStarted: () -> Unit) {
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
                         .statusBarsPadding()
-                        .padding(horizontal = 28.dp)
+                        .padding(horizontal = 28.dp, vertical = 16.dp)
                         .graphicsLayer {
 
                             alpha = 1f - (absOffset * 0.35f)
@@ -155,7 +155,7 @@ fun OnboardingScreen(onGetStarted: () -> Unit) {
                     verticalArrangement = Arrangement.Center
                 ) {
 
-                    Spacer(Modifier.height(40.dp))
+                    Spacer(Modifier.height(16.dp))
 
 
                     Card(
@@ -163,7 +163,8 @@ fun OnboardingScreen(onGetStarted: () -> Unit) {
                         colors = CardDefaults.cardColors(containerColor = White),
                         elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
                         modifier = Modifier
-                            .fillMaxWidth(0.8f)
+                            .widthIn(max = 260.dp)
+                            .fillMaxWidth(0.76f)
                             .aspectRatio(1f)
                     ) {
                         Box(
@@ -174,7 +175,7 @@ fun OnboardingScreen(onGetStarted: () -> Unit) {
                             // BACKGROUND CIRCLE (Parallax Effect - moves faster)
                             Box(
                                 modifier = Modifier
-                                    .size(230.dp)
+                                    .fillMaxSize(0.78f)
                                     .graphicsLayer {
                                         translationX = pageOffset * 200f
                                     }
@@ -188,19 +189,19 @@ fun OnboardingScreen(onGetStarted: () -> Unit) {
                                 contentDescription = data.title,
                                 contentScale = ContentScale.Fit,
                                 modifier = Modifier
-                                    .size(250.dp)
+                                    .fillMaxSize(0.84f)
                                     .graphicsLayer {
                                         translationX = pageOffset * -50f
                                         translationY = floatY
-                                        rotationZ = animatedRotation // Fixed naming collision here
-                                        scaleX = 1.05f
-                                        scaleY = 1.05f
+                                        rotationZ = animatedRotation
+                                        scaleX = 1.03f
+                                        scaleY = 1.03f
                                     }
                             )
                         }
                     }
 
-                    Spacer(Modifier.height(40.dp))
+                    Spacer(Modifier.height(28.dp))
 
                     // TITLE (Slide & Fade)
                     AnimatedContent(
@@ -214,6 +215,7 @@ fun OnboardingScreen(onGetStarted: () -> Unit) {
                         Text(
                             text = title,
                             fontSize = 26.sp,
+                            lineHeight = 32.sp,
                             fontWeight = FontWeight.Bold,
                             color = TitleColor,
                             textAlign = TextAlign.Center
@@ -296,8 +298,9 @@ fun OnboardingScreen(onGetStarted: () -> Unit) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 28.dp)
-                    .height(56.dp)
+                    .heightIn(min = 56.dp)
                     .scale(scaleBtn),
+                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
                 shape = RoundedCornerShape(30.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = DarkGreen,

@@ -92,6 +92,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -227,7 +228,7 @@ fun CameraScreen(
     }
 
     val configuration = LocalConfiguration.current
-    val boxSize = if (configuration.screenHeightDp < 640) 210.dp else 260.dp
+    val boxSize = if (configuration.screenHeightDp < 700) 200.dp else 260.dp
 
     Box(
         modifier = Modifier
@@ -327,7 +328,7 @@ fun CameraScreen(
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 IconButton(
                     onClick = onBackClick,
@@ -340,29 +341,36 @@ fun CameraScreen(
                     Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
                 }
 
-                Surface(
-                    color = Color.Black.copy(alpha = 0.52f),
-                    shape = RoundedCornerShape(50),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.16f))
+                Box(
+                    modifier = Modifier.weight(1f),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    Surface(
+                        color = Color.Black.copy(alpha = 0.52f),
+                        shape = RoundedCornerShape(50),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.16f))
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(7.dp)
-                                .clip(CircleShape)
-                                .background(HomeColors.MintGlow)
-                        )
-                        Text(
-                            text = "AI Leaf Classifier",
-                            fontFamily = HomeInterFont,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(7.dp)
+                                    .clip(CircleShape)
+                                    .background(HomeColors.MintGlow)
+                            )
+                            Text(
+                                text = "AI Leaf Classifier",
+                                fontFamily = HomeInterFont,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
 
@@ -403,10 +411,10 @@ fun CameraScreen(
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
                 .navigationBarsPadding()
-                .padding(horizontal = 24.dp)
-                .padding(bottom = 24.dp),
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 22.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(18.dp)
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Surface(
                 color = Color.Black.copy(alpha = 0.56f),
@@ -414,7 +422,7 @@ fun CameraScreen(
                 border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.14f))
             ) {
                 Column(
-                    modifier = Modifier.padding(vertical = 9.dp, horizontal = 16.dp),
+                    modifier = Modifier.padding(vertical = 9.dp, horizontal = 14.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
@@ -422,6 +430,7 @@ fun CameraScreen(
                         fontFamily = HomeInterFont,
                         color = Color.White,
                         fontSize = 13.sp,
+                        lineHeight = 18.sp,
                         fontWeight = FontWeight.SemiBold,
                         textAlign = TextAlign.Center
                     )
@@ -431,6 +440,7 @@ fun CameraScreen(
                         fontFamily = HomeInterFont,
                         color = Color.White.copy(alpha = 0.78f),
                         fontSize = 11.sp,
+                        lineHeight = 15.sp,
                         textAlign = TextAlign.Center
                     )
                 }
@@ -438,10 +448,10 @@ fun CameraScreen(
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceEvenly
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(
+                    modifier = Modifier.weight(1f),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
@@ -466,7 +476,9 @@ fun CameraScreen(
                         fontFamily = HomeInterFont,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Medium,
-                        color = Color.White.copy(alpha = 0.85f)
+                        color = Color.White.copy(alpha = 0.85f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
 
@@ -557,6 +569,7 @@ fun CameraScreen(
                 }
 
                 Column(
+                    modifier = Modifier.weight(1f),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
@@ -598,7 +611,9 @@ fun CameraScreen(
                         fontFamily = HomeInterFont,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Medium,
-                        color = if (isFlashOn) Color(0xFFFFEB3B) else Color.White.copy(alpha = 0.85f)
+                        color = if (isFlashOn) Color(0xFFFFEB3B) else Color.White.copy(alpha = 0.85f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
@@ -860,10 +875,13 @@ private fun DiseaseScanningAnimationScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(28.dp)
         ) {
+            val scanConfiguration = LocalConfiguration.current
+            val frameSize = if (scanConfiguration.screenHeightDp < 640) 180.dp else 240.dp
+            val glowSize = frameSize + 50.dp
             Box(contentAlignment = Alignment.Center) {
                 Canvas(
                     modifier = Modifier
-                        .size(290.dp)
+                        .size(glowSize)
                         .graphicsLayer {
                             scaleX = glowScale
                             scaleY = glowScale
@@ -882,7 +900,7 @@ private fun DiseaseScanningAnimationScreen(
 
                 Box(
                     modifier = Modifier
-                        .size(240.dp)
+                        .size(frameSize)
                         .clip(RoundedCornerShape(24.dp))
                         .background(DiseaseFramePanel),
                     contentAlignment = Alignment.Center
@@ -951,15 +969,18 @@ private fun DiseaseScanningAnimationScreen(
                     fontFamily = HomeInterFont,
                     color = Color.White,
                     fontSize = 18.sp,
+                    lineHeight = 24.sp,
                     fontWeight = FontWeight.SemiBold,
-                    style = MaterialTheme.typography.bodyLarge
+                    textAlign = TextAlign.Center
                 )
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
                     text = "Please wait while we analyze your plant",
                     fontFamily = HomeInterFont,
                     color = Color.White.copy(alpha = 0.6f),
-                    fontSize = 13.sp
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp,
+                    textAlign = TextAlign.Center
                 )
             }
 

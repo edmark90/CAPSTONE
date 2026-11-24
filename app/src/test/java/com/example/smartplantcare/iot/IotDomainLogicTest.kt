@@ -1,8 +1,10 @@
 package com.example.smartplantcare.iot
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class IotDomainLogicTest {
@@ -388,5 +390,220 @@ class IotDomainLogicTest {
         assertEquals(1, reconnectedRes.segments[1].size)
         assertEquals(32.5f, reconnectedRes.segments[1][0].value, 0.01f)
         assertEquals(1, reconnectedRes.gaps.size)
+
+        // Cached snapshot must NEVER be appended as a live point
+        val cachedIgnored = IotDomainLogic.appendLivePointIfFresh(
+            base = base,
+            liveValue = 33.0f,
+            liveEpochMs = h08Start + 180_000L,
+            isToday = true,
+            isDeviceOnline = true,
+            isFromLocalCache = true
+        )
+        assertEquals(1, cachedIgnored.segments.size)
+        assertEquals(1, cachedIgnored.segments[0].size)
+    }
+
+    @Test
+    fun buildSegmentedMinuteSeries_breaksImmediatelyOnSingleMissingMinute_andPreservesZero() {
+        // 2026-11-22 02:00 PHT -> 2026-11-21T18:00:00Z = 1795284000000L
+        val m120Start = 1_795_284_000_000L
+        val day = DailyHistorySnapshot(
+            deviceId = "spc-unit-0001",
+            dateKey = "2026-11-22",
+            minutes = mapOf(
+                120 to HistoricalMinuteRecord(
+                    minuteOfDay = 120,
+                    firstSeenAt = m120Start + 1_000L,
+                    lastSeenAt = m120Start + 55_000L,
+                    sampleCount = 9,
+                    tomatoPct = 44.0f,
+                    lightPct = 0.0f // legitimate zero must be preserved!
+                ),
+                121 to HistoricalMinuteRecord(
+                    minuteOfDay = 121,
+                    firstSeenAt = m120Start + 61_000L,
+                    lastSeenAt = m120Start + 115_000L,
+                    sampleCount = 9,
+                    tomatoPct = 43.5f,
+                    lightPct = 0.0f
+                ),
+                // Minute 122 (02:02 AM) is MISSING — line MUST break immediately without waiting 3 minutes!
+                123 to HistoricalMinuteRecord(
+                    minuteOfDay = 123,
+                    firstSeenAt = m120Start + 181_000L,
+                    lastSeenAt = m120Start + 235_000L,
+                    sampleCount = 9,
+                    tomatoPct = 42.0f,
+                    lightPct = 5.0f
+                ),
+                124 to HistoricalMinuteRecord(
+                    minuteOfDay = 124,
+                    firstSeenAt = m120Start + 241_000L,
+                    lastSeenAt = m120Start + 295_000L,
+                    sampleCount = 9,
+                    tomatoPct = null, // sensor fault: breaks tomato line, never plots 0!
+                    lightPct = 6.0f
+                )
+            )
+        )
+
+        // 1) All Day minute view (selectedHour = null)
+        val allDayLight = IotDomainLogic.buildSegmentedMinuteSeries(
+            day = day,
+            selectedHour = null,
+            isToday = false
+        ) { it.lightPct }
+        assertEquals(2, allDayLight.segments.size)
+        assertEquals(2, allDayLight.segments[0].size)
+        assertEquals(0.0f, allDayLight.segments[0][0].value, 0.001f)
+        assertEquals(2, allDayLight.segments[1].size)
+        assertEquals(1, allDayLight.gaps.size)
+
+        // 2) Single-hour (:00–:59) minute view for 2 AM (selectedHour = 2) on Tomato (with minute 124 sensor fault)
+        val hour2Tomato = IotDomainLogic.buildSegmentedMinuteSeries(
+            day = day,
+            selectedHour = 2,
+            isToday = false
+        ) { it.tomatoPct }
+        assertEquals(2, hour2Tomato.segments.size)
+        assertEquals(listOf(0f, 1f), hour2Tomato.segments[0].map { it.xHour })
+        assertEquals(listOf(3f), hour2Tomato.segments[1].map { it.xHour })
+        assertEquals(1, hour2Tomato.gaps.size)
+    }
+
+    @Test
+    fun appendLiveMinutePointIfFresh_rejectsCacheAndBreaksOnMissedMinute() {
+        // 2026-11-22 02:10 PHT -> mOfDay = 130
+        val m130Epoch = 1_795_284_000_000L + 10 * 60_000L + 20_000L
+        val base = SegmentedChartSeries(
+            segments = listOf(
+                listOf(
+                    ChartDataPoint(
+                        xHour = 10f,
+                        value = 50.0f,
+                        epochMs = m130Epoch,
+                        hour = 2,
+                        minuteOfDay = 130
+                    )
+                )
+            ),
+            gaps = emptyList()
+        )
+
+        // Local cache snapshot must never append onto minute chart
+        val cachedRes = IotDomainLogic.appendLiveMinutePointIfFresh(
+            base = base,
+            selectedHour = 2,
+            liveValue = 51.0f,
+            liveEpochMs = m130Epoch + 60_000L,
+            isToday = true,
+            isDeviceOnline = true,
+            isFromLocalCache = true
+        )
+        assertEquals(1, cachedRes.segments.size)
+        assertEquals(1, cachedRes.segments[0].size)
+
+        // Consecutive minute (:11 -> mOfDay = 131) extends current segment
+        val consecutiveRes = IotDomainLogic.appendLiveMinutePointIfFresh(
+            base = base,
+            selectedHour = 2,
+            liveValue = 51.0f,
+            liveEpochMs = m130Epoch + 60_000L,
+            isToday = true,
+            isDeviceOnline = true,
+            isFromLocalCache = false
+        )
+        assertEquals(1, consecutiveRes.segments.size)
+        assertEquals(2, consecutiveRes.segments[0].size)
+
+        // Skipping 1 minute (:12 -> mOfDay = 132, :11 missing) MUST break into a 2nd segment!
+        val gappedRes = IotDomainLogic.appendLiveMinutePointIfFresh(
+            base = base,
+            selectedHour = 2,
+            liveValue = 52.0f,
+            liveEpochMs = m130Epoch + 120_000L,
+            isToday = true,
+            isDeviceOnline = true,
+            isFromLocalCache = false
+        )
+        assertEquals(2, gappedRes.segments.size)
+        assertEquals(1, gappedRes.gaps.size)
+    }
+
+    @Test
+    fun classifyMinuteInspectionStatus_distinguishesFutureSensorFaultLegacyPhoneOfflineAndDeviceOffline() {
+        // 2026-11-22 10:30 PHT -> mOfDay = 630
+        // 2026-11-22 00:00 PHT = 2026-11-21T16:00:00Z = 1795276800000L
+        val nowMs = 1_795_276_800_000L + 630 * 60_000L + 15_000L
+        val day = DailyHistorySnapshot(
+            deviceId = "spc-unit-0001",
+            dateKey = "2026-11-22",
+            hours = mapOf(
+                9 to HistoricalHourRecord(hour = 9, sampleCount = 300, temperatureC = 30.2f)
+            ),
+            minutes = mapOf(
+                610 to HistoricalMinuteRecord(minuteOfDay = 610, sampleCount = 8, temperatureC = null)
+            )
+        )
+
+        // Future minute (> 630 on Today)
+        assertEquals(
+            PointInspectionStatus.FUTURE_TIME,
+            IotDomainLogic.classifyMinuteInspectionStatus(day, 645, false, isToday = true, isPhoneOnline = true, nowMs = nowMs)
+        )
+        // Sensor fault (ESP32 uploaded minute 610 with sampleCount > 0, but temperatureC == null)
+        assertEquals(
+            PointInspectionStatus.SENSOR_FAULT,
+            IotDomainLogic.classifyMinuteInspectionStatus(day, 610, false, isToday = true, isPhoneOnline = true, nowMs = nowMs)
+        )
+        // Legacy hourly-only (hour 9 has hourly data, zero minute records exist for hour 9)
+        assertEquals(
+            PointInspectionStatus.LEGACY_HOURLY_ONLY,
+            IotDomainLogic.classifyMinuteInspectionStatus(day, 9 * 60 + 15, false, isToday = true, isPhoneOnline = true, nowMs = nowMs)
+        )
+        // Phone offline on Today when minute missing
+        assertEquals(
+            PointInspectionStatus.PHONE_OFFLINE,
+            IotDomainLogic.classifyMinuteInspectionStatus(day, 620, false, isToday = true, isPhoneOnline = false, nowMs = nowMs)
+        )
+        // Device offline when phone is online and minute missing
+        assertEquals(
+            PointInspectionStatus.DEVICE_OFFLINE,
+            IotDomainLogic.classifyMinuteInspectionStatus(day, 620, false, isToday = true, isPhoneOnline = true, nowMs = nowMs)
+        )
+    }
+
+    @Test
+    fun generateDeterministicCommandId_isIdempotentAndFitsEsp32Buffer() {
+        val t0 = 1_795_300_001_200L
+        val idA = IotDomainLogic.generateDeterministicCommandId(
+            uid = "user_abc_123456",
+            nowMs = t0,
+            randomNonce = 0x4A7F
+        )
+        val idSameInvocation = IotDomainLogic.generateDeterministicCommandId(
+            uid = "user_abc_123456",
+            nowMs = t0,
+            randomNonce = 0x4A7F
+        )
+        val idDifferentNonce = IotDomainLogic.generateDeterministicCommandId(
+            uid = "user_abc_123456",
+            nowMs = t0,
+            randomNonce = 0x9B12
+        )
+
+        assertTrue("cmdId length (${idA.length}) must fit ESP32 40-char NVS buffer", idA.length <= 36)
+        assertEquals(idA, idSameInvocation)
+        assertNotEquals(idA, idDifferentNonce)
+    }
+
+    @Test
+    fun formatPhStartEndTimeRange_formatsExactStartAndEndInPhilippineTime() {
+        // 2026-11-22 14:05:10 PHT -> 2026-11-22T06:05:10Z = 1795327510000L
+        val startMs = 1_795_327_510_000L
+        val endMs = startMs + 4_000L
+        val formatted = IotDomainLogic.formatPhStartEndTimeRange(startMs, endMs)
+        assertEquals("2:05:10 PM – 2:05:14 PM", formatted)
     }
 }
