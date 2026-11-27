@@ -66,7 +66,6 @@ import com.example.smartplantcare.data.PredictionResult.PredictionResult
 import com.example.smartplantcare.data.TreatmentPlan
 import com.example.smartplantcare.data.ImageUtils
 import com.example.smartplantcare.data.TreatmentPlanRepository
-import com.example.smartplantcare.notification.NotificationScheduler
 import com.example.smartplantcare.ML.DiseaseRepository
 import com.example.smartplantcare.ui.theme.screens.SystemUiController
 import com.example.smartplantcare.ui.theme.screens.resultscreen.ResultScreen
@@ -133,19 +132,7 @@ fun MainScreen(
     val uiState          by authViewModel.uiState.collectAsState()
     val tabNavController = rememberNavController()
     val mainActivity = activity as? com.example.smartplantcare.MainActivity
-    val planIdFromIntent = mainActivity?.pendingPlanId ?: activity.intent?.getStringExtra("plan_id")
-    LaunchedEffect(planIdFromIntent) {
-        if (!planIdFromIntent.isNullOrBlank()) {
-            tabNavController.navigate(treatmentDetailRoute(planIdFromIntent)) {
-                popUpTo(tabNavController.graph.findStartDestination().id) {
-                    saveState = true
-                }
-                launchSingleTop = true
-            }
-            mainActivity?.consumePendingPlanId()
-            activity.intent?.removeExtra("plan_id")
-        }
-    }
+    val pendingAccessRevokedSync = mainActivity?.pendingAccessRevokedSync == true
 
 
     var capturedBitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -243,6 +230,25 @@ fun MainScreen(
     LaunchedEffect(Unit) {
         treatmentPlanViewModel.loadPlans()
         notificationHistoryViewModel.loadUnreadCount()
+    }
+
+    // Handle tapping an ACCESS_REVOKED system notification: navigate safely to Home (never restricted dashboard)
+    LaunchedEffect(pendingAccessRevokedSync) {
+        if (pendingAccessRevokedSync) {
+            myPlantsViewModel.closeSubPage()
+            goToTab(tabNavController, BottomTab.Home.route)
+            myPlantsViewModel.syncPendingRevocationsNow()
+            notificationHistoryViewModel.loadUnreadCount()
+            mainActivity?.consumePendingAccessRevokedSync()
+        }
+    }
+
+    val globalMyPlantsUiState by myPlantsViewModel.uiState.collectAsState()
+    val revocationDialogEvent = globalMyPlantsUiState.pendingRevocationDialog
+    LaunchedEffect(revocationDialogEvent?.eventId) {
+        if (revocationDialogEvent != null) {
+            notificationHistoryViewModel.loadUnreadCount()
+        }
     }
 
     val coroutineScope = rememberCoroutineScope()
@@ -439,16 +445,10 @@ fun MainScreen(
                                                     className = pred.className,
                                                     imageUrl = savedImageUrl,
                                                     startDateMillis = System.currentTimeMillis(),
-                                                    sevenDayPlan = dis.sevenDayPlan,
-                                                    currentDayIndex = 0,
-                                                    lastNotificationSent = 0L,
-                                                    nextScheduledNotification = 0L,
-                                                    lastOverdueCheck = 0L,
                                                     confidence = pred.confidence,
                                                     isHealthy = pred.className.contains("Healthy", ignoreCase = true)
                                                 )
                                                 repository.savePlan(newPlan)
-                                                NotificationScheduler.scheduleInitialDay1(appContext, newPlan)
                                                 newPlan
                                             }
                                             treatmentPlanViewModel.loadPlan(plan.id)
@@ -520,6 +520,85 @@ fun MainScreen(
                     currentRoute = currentRoute
                 )
             }
+        }
+
+        // Global responsive Access Removed Dialog (immediate while online, or on next sync if offline/closed)
+        if (revocationDialogEvent != null) {
+            AlertDialog(
+                onDismissRequest = {
+                    myPlantsViewModel.dismissRevocationDialog()
+                    notificationHistoryViewModel.loadUnreadCount()
+                    if (currentRoute == BottomTab.MyPlants.route && globalMyPlantsUiState.activeDeviceId == null) {
+                        goToTab(tabNavController, BottomTab.Home.route)
+                    }
+                },
+                icon = {
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .background(HomeColors.AlertBg),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.LockPerson,
+                            contentDescription = null,
+                            tint = HomeColors.AlertRed,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                },
+                title = {
+                    Text(
+                        text = "Monitoring Access Removed",
+                        fontFamily = HomeInterFont,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp,
+                        lineHeight = 23.sp,
+                        color = HomeColors.TextPrimary,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                },
+                text = {
+                    Text(
+                        text = "Your monitoring access to ${revocationDialogEvent.deviceName} has been removed by ${revocationDialogEvent.ownerName}. You can no longer monitor this device.",
+                        fontFamily = HomeInterFont,
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
+                        color = HomeColors.TextSecondary,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            myPlantsViewModel.dismissRevocationDialog()
+                            notificationHistoryViewModel.loadUnreadCount()
+                            if (currentRoute == BottomTab.MyPlants.route && globalMyPlantsUiState.activeDeviceId == null) {
+                                goToTab(tabNavController, BottomTab.Home.route)
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = HomeColors.ForestPrimary,
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 44.dp)
+                    ) {
+                        Text(
+                            text = "OK",
+                            fontFamily = HomeInterFont,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = Color.White
+                        )
+                    }
+                },
+                shape = RoundedCornerShape(22.dp),
+                containerColor = HomeColors.SurfaceWhite
+            )
         }
     }
 }

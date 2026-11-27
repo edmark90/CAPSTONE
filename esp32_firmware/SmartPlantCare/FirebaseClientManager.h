@@ -103,6 +103,12 @@ class FirebaseClientManager {
 
   bool     isWifiConnected() const { return WiFi.status() == WL_CONNECTED; }
   bool     isFirebaseAuthenticated() const { return idTokenValid_ || sparkDirectMode_; }
+  bool     hasVerifiedCloudMeta() const { return cloudMetaVerifiedThisBoot_; }
+  bool     consumeUrgentMetaCheck() {
+    if (!urgentMetaCheck_) return false;
+    urgentMetaCheck_ = false;
+    return true;
+  }
   uint32_t lastSyncUptimeMs() const { return lastSuccessfulSyncMs_; }
   void     setActuatorBusy(bool busy) { actuatorBusy_ = busy; }
   bool     hasPendingUrgentWork(const EventNotificationManager& events,
@@ -202,10 +208,12 @@ class FirebaseClientManager {
   bool                        ntpConfigured_            = false;
   bool                        firstTelemetryPublished_  = false;
 
-  bool                        idTokenValid_          = false;
-  bool                        sparkDirectMode_       = false;
-  bool                        anonAuthUnsupported_   = false;
-  bool                        actuatorBusy_          = false;
+  bool                        idTokenValid_             = false;
+  bool                        sparkDirectMode_          = false;
+  bool                        anonAuthUnsupported_      = false;
+  bool                        cloudMetaVerifiedThisBoot_ = false;
+  bool                        urgentMetaCheck_          = false;
+  bool                        actuatorBusy_             = false;
   String                      idToken_;
   uint32_t                    idTokenObtainedAtMs_   = 0;
   uint32_t                    lastAuthAttemptAtMs_   = 0;

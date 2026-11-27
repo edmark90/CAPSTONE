@@ -310,7 +310,9 @@ fun MyPlantsScreen(
                             onMuteBuzzer = { vm.muteBuzzerCommand() },
                             onRefreshWeather = { requestWeatherOrOwnerGpsRefresh() },
                             onEnablePhysicalLoads = { vm.enablePhysicalRelayLoads() },
-                            onResyncDevice = { vm.resyncLiveDevice(silent = false) }
+                            onResyncDevice = { vm.resyncLiveDevice(silent = false) },
+                            onUploadCropPhoto = { slug, uri -> vm.uploadCropPhoto(slug, uri) },
+                            onDeleteCropPhoto = { slug -> vm.deleteCropPhoto(slug) }
                         )
                     }
                 }

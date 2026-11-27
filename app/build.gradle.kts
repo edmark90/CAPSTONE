@@ -23,23 +23,24 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // Load API key from local.properties
+        // Load API keys from local.properties
         val localPropertiesFile = rootProject.file("local.properties")
-        val plantNetApiKey = if (localPropertiesFile.exists()) {
-            localPropertiesFile.readLines()
-                .firstOrNull { it.startsWith("PLANTNET_API_KEY=") }
+        val localPropsLines = if (localPropertiesFile.exists()) localPropertiesFile.readLines() else emptyList()
+        fun readLocalProp(key: String): String =
+            localPropsLines.firstOrNull { it.startsWith("$key=") }
                 ?.substringAfter("=")
                 ?.trim()
                 ?: ""
-        } else {
-            ""
-        }
 
-        buildConfigField(
-            "String",
-            "PLANTNET_API_KEY",
-            "\"${plantNetApiKey}\""
-        )
+        val plantNetApiKey = readLocalProp("PLANTNET_API_KEY")
+        val cloudinaryCloudName = readLocalProp("CLOUDINARY_CLOUD_NAME")
+        val cloudinaryApiKey = readLocalProp("CLOUDINARY_API_KEY")
+        val cloudinaryApiSecret = readLocalProp("CLOUDINARY_API_SECRET")
+
+        buildConfigField("String", "PLANTNET_API_KEY", "\"${plantNetApiKey}\"")
+        buildConfigField("String", "CLOUDINARY_CLOUD_NAME", "\"${cloudinaryCloudName}\"")
+        buildConfigField("String", "CLOUDINARY_API_KEY", "\"${cloudinaryApiKey}\"")
+        buildConfigField("String", "CLOUDINARY_API_SECRET", "\"${cloudinaryApiSecret}\"")
     }
 
     buildTypes {
@@ -109,6 +110,8 @@ dependencies {
     implementation(libs.firebase.auth.ktx)
     implementation(libs.firebase.firestore.ktx)
     implementation(libs.firebase.database.ktx)
+    implementation(libs.firebase.messaging.ktx)
+    implementation(libs.firebase.functions.ktx)
     implementation(libs.play.services.auth)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

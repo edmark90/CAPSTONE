@@ -1,5 +1,9 @@
 package com.example.smartplantcare.ui.theme.screens.homescreen
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
@@ -11,15 +15,19 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -40,11 +48,14 @@ import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
@@ -55,10 +66,12 @@ import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material.icons.filled.WifiOff
+import androidx.compose.material.icons.outlined.Spa
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -66,6 +79,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -76,12 +90,19 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.example.smartplantcare.iot.CropZoneConfig
+import com.example.smartplantcare.iot.CropZonePhoto
 import com.example.smartplantcare.iot.DeviceRole
 import com.example.smartplantcare.iot.DeviceStatus
 import com.example.smartplantcare.iot.DeviceTelemetry
@@ -113,7 +134,9 @@ internal fun MyPlantsDashboardScreen(
     onMuteBuzzer: () -> Unit,
     onRefreshWeather: () -> Unit = {},
     onEnablePhysicalLoads: () -> Unit = {},
-    onResyncDevice: () -> Unit = {}
+    onResyncDevice: () -> Unit = {},
+    onUploadCropPhoto: (String, Uri) -> Unit = { _, _ -> },
+    onDeleteCropPhoto: (String) -> Unit = {}
 ) {
     val snapshot = uiState.liveSnapshot
     val role = uiState.activeRole
@@ -181,6 +204,28 @@ internal fun MyPlantsDashboardScreen(
         receivedAtClientMs = snapshot.receivedAtClientMs,
         telemetryUpdatedAt = telemetry.updatedAt
     )
+
+    val canManageCropPhotos = role.canControl
+    var pendingPhotoCropSlug by remember { mutableStateOf<String?>(null) }
+    var previewPhotoZone by remember { mutableStateOf<SoilZoneTelemetry?>(null) }
+
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { pickedUri ->
+        val slug = pendingPhotoCropSlug
+        pendingPhotoCropSlug = null
+        if (pickedUri != null && slug != null && canManageCropPhotos) {
+            onUploadCropPhoto(slug, pickedUri)
+        }
+    }
+
+    fun launchCropPhotoPicker(slug: String) {
+        if (!canManageCropPhotos) return
+        pendingPhotoCropSlug = slug
+        photoPickerLauncher.launch(
+            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+        )
+    }
 
     Box(
         modifier = Modifier
@@ -272,38 +317,18 @@ internal fun MyPlantsDashboardScreen(
                 )
             }
 
-            // 4. Priority Live Status Banners
-            if (isCachedSnapshot && isPhoneOnline) {
-                item(key = "banner_cached_syncing") {
-                    InlineStatusBanner(
-                        bg = HomeColors.SoftMint,
-                        accent = HomeColors.ForestPrimary,
-                        icon = Icons.Filled.Refresh,
-                        title = "Showing Cached Snapshot • Syncing Live",
-                        subtitle = "Displaying your last saved readings while verifying live ESP32 telemetry."
-                    )
-                }
-            } else if (isCachedSnapshot && !isPhoneOnline) {
-                item(key = "banner_cached_offline") {
-                    InlineStatusBanner(
-                        bg = HomeColors.WarningBg,
-                        accent = HomeColors.WarningAmber,
-                        icon = Icons.Filled.WifiOff,
-                        title = "Offline • Showing Cached Snapshot",
-                        subtitle = "Connect to Wi-Fi or mobile data and tap Sync to verify live ESP32 readings."
-                    )
-                }
-            } else if (isDeviceOnline && !isPhoneOnline) {
+            // 4. Priority Live Status Banners (Offline / No Internet — never "Cached")
+            if (!isPhoneOnline) {
                 item(key = "banner_no_internet") {
                     InlineStatusBanner(
                         bg = HomeColors.AlertBg,
                         accent = HomeColors.AlertRed,
                         icon = Icons.Filled.WifiOff,
                         title = "No Internet Connection",
-                        subtitle = "Check your internet connection. Your plant box is online, but your phone has no internet."
+                        subtitle = "Check your internet connection and tap Sync to load live ESP32 readings."
                     )
                 }
-            } else if (!isDeviceOnline && isPhoneOnline) {
+            } else if (!isDeviceOnline) {
                 item(key = "banner_offline") {
                     InlineStatusBanner(
                         bg = HomeColors.AlertBg,
@@ -443,9 +468,8 @@ internal fun MyPlantsDashboardScreen(
                             val cropCfg = config.cropConfig(zone.slug)
                             val baseLockReason = IotDomainLogic.manualWaterLockReason(role, snapshot, zone.slug)
                             val effectiveLockReason = when {
-                                isCachedSnapshot -> "Syncing live ESP32 state"
-                                !isDeviceOnline -> "ESP32 offline"
                                 !isPhoneOnline -> "No internet connection"
+                                !isDeviceOnline -> "ESP32 offline"
                                 else -> baseLockReason
                             }
                             val isZoneWatering = isDeviceOnline && status.isActivelyIrrigating && status.activeValve == zone.slug
@@ -457,11 +481,23 @@ internal fun MyPlantsDashboardScreen(
                                 PendingCommandPhase.IDLE
                             }
 
+                            val zonePhoto = snapshot.cropPhotos[zone.slug]
+                            val isZonePhotoBusy = uiState.uploadingPhotoCropSlug == zone.slug
+
                             ProCropZoneCard(
                                 zone = zone,
                                 cropConfig = cropCfg,
-                                isDeviceOnline = isDeviceOnline || isCachedSnapshot,
-                                isCachedData = isCachedSnapshot,
+                                cropPhoto = zonePhoto,
+                                canManagePhoto = canManageCropPhotos,
+                                isPhotoBusy = isZonePhotoBusy,
+                                onPhotoClick = {
+                                    if (zonePhoto != null && zonePhoto.url.isNotBlank()) {
+                                        previewPhotoZone = zone
+                                    } else if (canManageCropPhotos) {
+                                        launchCropPhotoPicker(zone.slug)
+                                    }
+                                },
+                                isDeviceOnline = isDeviceOnline && isPhoneOnline,
                                 isAutoIrrigation = isAutoIrrigation,
                                 isWateringThisZone = isZoneWatering,
                                 isSoakingThisZone = isZoneSoaking,
@@ -533,6 +569,30 @@ internal fun MyPlantsDashboardScreen(
                 HistoryRecordsEntryCard(
                     onClick = { onOpenSubPage(MyPlantsSubPage.HISTORY_MONITORING) }
                 )
+            }
+        }
+
+        val activePreviewZone = previewPhotoZone
+        if (activePreviewZone != null) {
+            val activePhoto = snapshot.cropPhotos[activePreviewZone.slug]
+            if (activePhoto != null && activePhoto.url.isNotBlank()) {
+                CropZonePhotoPreviewDialog(
+                    cropName = activePreviewZone.displayName,
+                    cropPhoto = activePhoto,
+                    canManagePhoto = canManageCropPhotos,
+                    onChangePhoto = {
+                        previewPhotoZone = null
+                        launchCropPhotoPicker(activePreviewZone.slug)
+                    },
+                    onRemovePhoto = {
+                        val slug = activePreviewZone.slug
+                        previewPhotoZone = null
+                        onDeleteCropPhoto(slug)
+                    },
+                    onDismiss = { previewPhotoZone = null }
+                )
+            } else {
+                previewPhotoZone = null
             }
         }
     }
@@ -668,9 +728,9 @@ private fun BotanicalHeroCard(
     val status = snapshot.status
     val telemetry = snapshot.telemetry
     val isCachedSnapshot = snapshot.isFromLocalCache
-    val canShowValues = isDeviceOnline || isCachedSnapshot
     val latestHeartbeatMs = maxOf(status.lastSeenAt, telemetry.updatedAt)
     val isOnlineFresh = isDeviceOnline && !isCachedSnapshot
+    val canShowValues = isOnlineFresh && isPhoneOnline
     val isNoInternetWhileOnline = isOnlineFresh && !isPhoneOnline
 
     val pulseAlpha = if (isOnlineFresh && isPhoneOnline) {
@@ -690,9 +750,7 @@ private fun BotanicalHeroCard(
     }
 
     val summaryStatus = when {
-        isCachedSnapshot && isPhoneOnline -> "Syncing Live..."
-        isCachedSnapshot -> "Cached Snapshot"
-        isNoInternetWhileOnline -> "No Internet"
+        !isPhoneOnline -> "No Internet"
         !isOnlineFresh -> "ESP32 Offline"
         status.emergencyStop || status.faultLockout -> "System Locked"
         status.isActivelyIrrigating -> {
@@ -757,18 +815,18 @@ private fun BotanicalHeroCard(
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Surface(
-                        color = when {
-                            isCachedSnapshot -> Color(0xFFF59E0B).copy(alpha = 0.24f)
-                            isOnlineFresh && isPhoneOnline -> Color(0xFF10B981).copy(alpha = 0.24f)
-                            else -> HomeColors.AlertRed.copy(alpha = 0.28f)
+                        color = if (isOnlineFresh && isPhoneOnline) {
+                            Color(0xFF10B981).copy(alpha = 0.24f)
+                        } else {
+                            HomeColors.AlertRed.copy(alpha = 0.28f)
                         },
                         shape = RoundedCornerShape(50),
                         border = BorderStroke(
                             1.dp,
-                            when {
-                                isCachedSnapshot -> Color(0xFFFDE68A).copy(alpha = 0.45f)
-                                isOnlineFresh && isPhoneOnline -> HomeColors.MintGlow.copy(alpha = 0.30f)
-                                else -> Color(0xFFFCA5A5).copy(alpha = 0.35f)
+                            if (isOnlineFresh && isPhoneOnline) {
+                                HomeColors.MintGlow.copy(alpha = 0.30f)
+                            } else {
+                                Color(0xFFFCA5A5).copy(alpha = 0.35f)
                             }
                         )
                     ) {
@@ -781,29 +839,27 @@ private fun BotanicalHeroCard(
                                     .size(7.dp)
                                     .clip(CircleShape)
                                     .background(
-                                        when {
-                                            isCachedSnapshot -> Color(0xFFFDE68A)
-                                            isOnlineFresh && isPhoneOnline -> HomeColors.MintGlow.copy(alpha = pulseAlpha)
-                                            else -> Color(0xFFFCA5A5)
+                                        if (isOnlineFresh && isPhoneOnline) {
+                                            HomeColors.MintGlow.copy(alpha = pulseAlpha)
+                                        } else {
+                                            Color(0xFFFCA5A5)
                                         }
                                     )
                             )
                             Spacer(modifier = Modifier.width(5.dp))
                             Text(
                                 text = when {
-                                    isCachedSnapshot && isPhoneOnline -> "Cached • Syncing"
-                                    isCachedSnapshot -> "Cached"
-                                    isNoInternetWhileOnline -> "No Internet"
-                                    isOnlineFresh -> "Online"
+                                    isOnlineFresh && isPhoneOnline -> "Online"
+                                    !isPhoneOnline -> "No Internet"
                                     else -> "Offline"
                                 },
                                 fontFamily = HomeInterFont,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = when {
-                                    isCachedSnapshot -> Color(0xFFFDE68A)
-                                    isOnlineFresh && isPhoneOnline -> HomeColors.MintGlow
-                                    else -> Color(0xFFFCA5A5)
+                                color = if (isOnlineFresh && isPhoneOnline) {
+                                    HomeColors.MintGlow
+                                } else {
+                                    Color(0xFFFCA5A5)
                                 },
                                 maxLines = 1
                             )
@@ -874,10 +930,9 @@ private fun BotanicalHeroCard(
                             append(" • ")
                             append(
                                 when {
-                                    isCachedSnapshot -> "Cached"
                                     latestHeartbeatMs > 0L || snapshot.receivedAtClientMs > 0L ->
                                         formatRelativeAge(latestHeartbeatMs, snapshot.receivedAtClientMs, nowMs)
-                                    else -> snapshot.deviceId
+                                    else -> "Offline"
                                 }
                             )
                         },
@@ -1383,10 +1438,15 @@ private fun InlineStatusBanner(
 
 // ─── 5. Pro Crop Zone Card (Professional 2-Tier Botanical Telemetry Card) ────
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ProCropZoneCard(
     zone: SoilZoneTelemetry,
     cropConfig: CropZoneConfig,
+    cropPhoto: CropZonePhoto?,
+    canManagePhoto: Boolean,
+    isPhotoBusy: Boolean,
+    onPhotoClick: () -> Unit,
     isDeviceOnline: Boolean,
     isCachedData: Boolean = false,
     isAutoIrrigation: Boolean,
@@ -1427,7 +1487,6 @@ private fun ProCropZoneCard(
 
     val (statusLabel, badgeBg, badgeFg, accentColor) = when {
         !isDeviceOnline -> Quad("Offline", HomeColors.PlaceholderBg, HomeColors.TextSecondary, HomeColors.NavInactive)
-        isCachedData -> Quad("Cached", HomeColors.WarningBg, HomeColors.WarningAmber, HomeColors.ForestMedium)
         isWateringThisZone -> Quad("Watering", HomeColors.WaterBg, HomeColors.WaterBlue, HomeColors.WaterBlue)
         isStartingThisZone -> Quad(phaseBadgeLabel, HomeColors.WaterBg, HomeColors.WaterBlue, HomeColors.WaterBlue)
         isSoakingThisZone -> Quad("Soaking", HomeColors.SoftMint, HomeColors.ForestPrimary, HomeColors.EmeraldAccent)
@@ -1444,6 +1503,7 @@ private fun ProCropZoneCard(
     )
 
     val canTapWater = lockReason == null && !isBusy && !isStartingThisZone && !isWateringThisZone
+    val context = LocalContext.current
 
     Surface(
         color = cardBg,
@@ -1457,56 +1517,107 @@ private fun ProCropZoneCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp)
+                .padding(15.dp)
         ) {
-            // ── Top Tier: Circular Moisture Gauge + Crop Identity + Status Badge ──
+            // ── Top Tier: Crop Photo Thumbnail + Crop Identity + Circular Moisture Gauge ──
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Left Vertical Accent Bar
+                // Uploadable / Shared Cloudinary Crop Image Tile (Owner & Operator can edit; Viewer is read-only)
+                val hasPhoto = cropPhoto != null && cropPhoto.url.isNotBlank()
+                val tileClickable = !isPhotoBusy && (hasPhoto || canManagePhoto)
                 Box(
                     modifier = Modifier
-                        .width(4.dp)
-                        .height(52.dp)
-                        .clip(RoundedCornerShape(50))
-                        .background(
-                            if (!zone.valid && isDeviceOnline) HomeColors.EmeraldAccent else accentColor
-                        )
-                )
+                        .size(58.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .then(if (tileClickable) Modifier.clickable(onClick = onPhotoClick) else Modifier)
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = if (hasPhoto) HomeColors.PlaceholderBg else HomeColors.SoftMint,
+                        border = BorderStroke(
+                            1.dp,
+                            if (hasPhoto) HomeColors.CardBorder else HomeColors.SoftMintStrong
+                        ),
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        if (hasPhoto) {
+                            AsyncImage(
+                                model = ImageRequest.Builder(context)
+                                    .data(cropPhoto!!.url)
+                                    .crossfade(true)
+                                    .build(),
+                                contentDescription = "${zone.displayName} photo",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        } else {
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier.fillMaxSize()
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Spa,
+                                    contentDescription = if (canManagePhoto) "Add ${zone.displayName} photo" else zone.displayName,
+                                    tint = HomeColors.ForestMedium,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    if (isPhotoBusy) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color.Black.copy(alpha = 0.42f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator(
+                                color = Color.White,
+                                strokeWidth = 2.dp,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                    } else if (canManagePhoto) {
+                        // Subtle camera badge shown ONLY for Owner & Operator
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(3.dp)
+                                .size(20.dp)
+                                .clip(CircleShape)
+                                .background(HomeColors.ForestPrimary)
+                                .border(1.5.dp, Color.White, CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.PhotoCamera,
+                                contentDescription = "Upload photo",
+                                tint = Color.White,
+                                modifier = Modifier.size(10.5.dp)
+                            )
+                        }
+                    }
+                }
 
                 Spacer(modifier = Modifier.width(12.dp))
 
-                // Circular Moisture Ring Gauge (56.dp, crisp & readable)
-                CircularMoistureRing(
-                    progress = animatedSweep,
-                    ringColor = accentColor,
-                    isPulsingWater = isWateringThisZone || isStartingThisZone,
-                    valueText = if (validMoisture) {
-                        String.format(Locale.US, "%.0f%%", zone.pct)
-                    } else "--"
-                )
-
-                Spacer(modifier = Modifier.width(14.dp))
-
                 // Crop Name + Status Pill + Target Range + Progress Bar
                 Column(modifier = Modifier.weight(1f)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        itemVerticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
                             text = zone.displayName,
                             fontFamily = HomeInterFont,
-                            fontSize = 17.sp,
+                            fontSize = 16.5.sp,
+                            lineHeight = 20.sp,
                             fontWeight = FontWeight.Bold,
-                            color = HomeColors.TextPrimary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(end = 8.dp)
+                            color = HomeColors.TextPrimary
                         )
 
                         Surface(
@@ -1517,10 +1628,10 @@ private fun ProCropZoneCard(
                                 text = statusLabel,
                                 fontFamily = HomeInterFont,
                                 fontSize = 11.sp,
+                                lineHeight = 13.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = badgeFg,
-                                maxLines = 1,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp)
                             )
                         }
                     }
@@ -1537,8 +1648,7 @@ private fun ProCropZoneCard(
                         fontSize = 12.sp,
                         lineHeight = 16.sp,
                         fontWeight = FontWeight.Medium,
-                        color = HomeColors.TextSecondary,
-                        maxLines = 2
+                        color = HomeColors.TextSecondary
                     )
 
                     Spacer(modifier = Modifier.height(8.dp))
@@ -1562,6 +1672,19 @@ private fun ProCropZoneCard(
                         )
                     }
                 }
+
+                Spacer(modifier = Modifier.width(10.dp))
+
+                // Compact Circular Moisture Ring Gauge on Right
+                CircularMoistureRing(
+                    progress = animatedSweep,
+                    ringColor = accentColor,
+                    isPulsingWater = isWateringThisZone || isStartingThisZone,
+                    valueText = if (validMoisture) {
+                        String.format(Locale.US, "%.0f%%", zone.pct)
+                    } else "--",
+                    ringSize = 52.dp
+                )
             }
 
             // ── Bottom Tier: Full-Size Watering Controls ──────────────────────────
@@ -1812,11 +1935,141 @@ private fun ProCropZoneCard(
 }
 
 @Composable
+private fun CropZonePhotoPreviewDialog(
+    cropName: String,
+    cropPhoto: CropZonePhoto,
+    canManagePhoto: Boolean,
+    onChangePhoto: () -> Unit,
+    onRemovePhoto: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = HomeColors.SurfaceWhite,
+            border = BorderStroke(1.dp, HomeColors.CardBorder),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "$cropName Photo",
+                            fontFamily = HomeInterFont,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = HomeColors.TextPrimary
+                        )
+                        if (cropPhoto.updatedByName.isNotBlank()) {
+                            Text(
+                                text = "Updated by ${cropPhoto.updatedByName}",
+                                fontFamily = HomeInterFont,
+                                fontSize = 11.5.sp,
+                                color = HomeColors.TextSecondary
+                            )
+                        }
+                    }
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.size(34.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "Close",
+                            tint = HomeColors.TextSecondary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+
+                AsyncImage(
+                    model = ImageRequest.Builder(context)
+                        .data(cropPhoto.url)
+                        .crossfade(true)
+                        .build(),
+                    contentDescription = "$cropName plant photo",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(1f)
+                        .clip(RoundedCornerShape(18.dp))
+                        .border(1.dp, HomeColors.CardBorder, RoundedCornerShape(18.dp))
+                )
+
+                if (canManagePhoto) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = onRemovePhoto,
+                            shape = RoundedCornerShape(14.dp),
+                            border = BorderStroke(1.dp, HomeColors.AlertRed.copy(alpha = 0.35f)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = HomeColors.AlertRed),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.DeleteOutline,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Remove",
+                                fontFamily = HomeInterFont,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+
+                        Button(
+                            onClick = onChangePhoto,
+                            shape = RoundedCornerShape(14.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = HomeColors.ForestPrimary,
+                                contentColor = Color.White
+                            ),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                            modifier = Modifier.weight(1.25f)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.PhotoCamera,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Change Photo",
+                                fontFamily = HomeInterFont,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun CircularMoistureRing(
     progress: Float,
     ringColor: Color,
     isPulsingWater: Boolean = false,
-    valueText: String
+    valueText: String,
+    ringSize: Dp = 56.dp
 ) {
     val ripple = if (isPulsingWater) {
         val infinite = rememberInfiniteTransition(label = "ring_ripple")
@@ -1835,7 +2088,7 @@ private fun CircularMoistureRing(
     }
 
     Box(
-        modifier = Modifier.size(56.dp),
+        modifier = Modifier.size(ringSize),
         contentAlignment = Alignment.Center
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {

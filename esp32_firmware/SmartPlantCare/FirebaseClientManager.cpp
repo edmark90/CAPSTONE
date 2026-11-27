@@ -325,10 +325,11 @@ bool FirebaseClientManager::requestCustomTokenAndSignIn(uint32_t nowMs) {
 }
 
 bool FirebaseClientManager::requestAnonymousOrSparkAuth(uint32_t nowMs) {
-  // Reuse persisted refresh token or attempt one-time Anonymous Sign-Up if enabled in Firebase Auth
-  if (!anonAuthUnsupported_ && strncmp(Secrets::FIREBASE_WEB_API_KEY, "YOUR_", 5) != 0) {
+  if (strncmp(Secrets::FIREBASE_WEB_API_KEY, "YOUR_", 5) != 0 && provisioning_) {
+    // 1. Renew cached per-device Email/Password refresh token if already provisioned (mode == 2)
     char savedRefreshToken[512] = {0};
-    if (provisioning_) {
+    const uint8_t savedAuthMode = provisioning_->loadSparkAuthMode();
+    if (savedAuthMode == 2) {
       provisioning_->loadSparkRefreshToken(savedRefreshToken, sizeof(savedRefreshToken));
     }
 
@@ -351,23 +352,47 @@ bool FirebaseClientManager::requestAnonymousOrSparkAuth(uint32_t nowMs) {
             idTokenObtainedAtMs_ = nowMs;
             idTokenValid_        = true;
             sparkDirectMode_     = true;
-            if (provisioning_ && strlen(nextRef) > 0 && strcmp(nextRef, savedRefreshToken) != 0) {
+            if (strlen(nextRef) > 0 && strcmp(nextRef, savedRefreshToken) != 0) {
               provisioning_->saveSparkRefreshToken(nextRef);
             }
-            Serial.println(F("[AUTH] Renewed cached Firebase Spark Auth token."));
+            Serial.println(F("[AUTH] Renewed per-device Firebase Auth token."));
             return true;
           }
         }
       }
     }
 
-    String signUpUrl =
-        String("https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=") +
+    // 2. Scoped Per-Device Firebase Email/Password Auth (works 100% on Free Spark Plan without Cloud Functions!)
+    //    Matches `auth.token.email === ('esp32.' + $deviceId + '@device.smartplantcare.local')` in database.rules.json.
+    String devEmail = String("esp32.") + String(provisioning_->deviceId()) + "@device.smartplantcare.local";
+    String devPass  = String(provisioning_->deviceAuthSecret());
+    if (devPass.length() < 6) {
+      devPass = String(Secrets::DEFAULT_DEVICE_AUTH_SECRET);
+    }
+
+    JsonDocument credDoc;
+    credDoc["email"]             = devEmail;
+    credDoc["password"]          = devPass;
+    credDoc["returnSecureToken"] = true;
+    String credBody;
+    serializeJson(credDoc, credBody);
+
+    String signInUrl =
+        String("https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=") +
         Secrets::FIREBASE_WEB_API_KEY;
-    String resp;
-    if (httpRequestJson("POST", signUpUrl, "{\"returnSecureToken\":true}", resp)) {
+    String authResp;
+    bool signedIn = httpRequestJson("POST", signInUrl, credBody, authResp);
+    if (!signedIn && WiFi.status() == WL_CONNECTED) {
+      // Auto-register this ESP32's scoped device identity on very first connect to the Firebase project
+      String signUpDevUrl =
+          String("https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=") +
+          Secrets::FIREBASE_WEB_API_KEY;
+      signedIn = httpRequestJson("POST", signUpDevUrl, credBody, authResp);
+    }
+
+    if (signedIn) {
       JsonDocument doc;
-      if (deserializeJson(doc, resp) == DeserializationError::Ok) {
+      if (deserializeJson(doc, authResp) == DeserializationError::Ok) {
         const char* tok = doc["idToken"] | "";
         const char* refTok = doc["refreshToken"] | "";
         if (strlen(tok) > 0) {
@@ -375,20 +400,47 @@ bool FirebaseClientManager::requestAnonymousOrSparkAuth(uint32_t nowMs) {
           idTokenObtainedAtMs_ = nowMs;
           idTokenValid_        = true;
           sparkDirectMode_     = true;
-          if (provisioning_ && strlen(refTok) > 0) {
+          if (strlen(refTok) > 0) {
             provisioning_->saveSparkRefreshToken(refTok);
+            provisioning_->saveSparkAuthMode(2);
           }
-          Serial.println(F("[AUTH] Firebase Spark Auth token acquired and cached."));
+          Serial.printf("[AUTH] Authenticated ESP32 device identity (%s).\n", devEmail.c_str());
           return true;
         }
       }
-    } else if (WiFi.status() == WL_CONNECTED) {
-      // Anonymous Sign-Up disabled in Firebase Console; latch for this boot so we never stall again
-      anonAuthUnsupported_ = true;
+    }
+
+    // 3. Secondary fallback: Anonymous Auth if enabled in Firebase Console
+    if (!anonAuthUnsupported_) {
+      String signUpUrl =
+          String("https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=") +
+          Secrets::FIREBASE_WEB_API_KEY;
+      String resp;
+      if (httpRequestJson("POST", signUpUrl, "{\"returnSecureToken\":true}", resp)) {
+        JsonDocument doc;
+        if (deserializeJson(doc, resp) == DeserializationError::Ok) {
+          const char* tok = doc["idToken"] | "";
+          const char* refTok = doc["refreshToken"] | "";
+          if (strlen(tok) > 0) {
+            idToken_             = tok;
+            idTokenObtainedAtMs_ = nowMs;
+            idTokenValid_        = true;
+            sparkDirectMode_     = true;
+            if (strlen(refTok) > 0) {
+              provisioning_->saveSparkRefreshToken(refTok);
+              provisioning_->saveSparkAuthMode(1);
+            }
+            Serial.println(F("[AUTH] Firebase Anonymous Auth token acquired."));
+            return true;
+          }
+        }
+      } else if (WiFi.status() == WL_CONNECTED) {
+        anonAuthUnsupported_ = true;
+      }
     }
   }
 
-  // Direct Spark RTDB mode (works with Spark database.rules.json without Cloud Functions)
+  // Direct Spark RTDB mode fallback
   idToken_             = "";
   idTokenValid_        = false;
   sparkDirectMode_     = true;
@@ -710,35 +762,51 @@ void FirebaseClientManager::syncMetaNode(
     EventNotificationManager& events,
     LcdManager& lcd) {
   String url = buildRtdbUrl("/devices/" + String(provisioning_->deviceId()) + "/meta.json");
+
+  // While in CLAIM_PENDING (Wi-Fi verified, awaiting Android completeDeviceClaim), publish ONLY a
+  // non-owning wifiVerifiedEpoch stamp so Android's fast REST check immediately confirms ESP32 is
+  // online via the router — WITHOUT setting ownershipState="OWNED" or claiming an owner!
+  if (provisioning_->isWifiVerifiedMarkerPending()) {
+    JsonDocument verifyDoc;
+    verifyDoc["deviceId"]           = provisioning_->deviceId();
+    verifyDoc["wifiVerifiedEpoch"]  = provisioning_->ownershipEpoch();
+    verifyDoc["wifiVerifiedBootId"] = provisioning_->bootId();
+    verifyDoc["wifiVerifiedAt"][".sv"] = "timestamp";
+    String verifyBody, verifyResp;
+    serializeJson(verifyDoc, verifyBody);
+    if (httpRequestJson("PATCH", url, verifyBody, verifyResp)) {
+      provisioning_->markWifiVerifiedMarkerSent();
+      Serial.printf("[PROV] Published non-owning wifiVerifiedEpoch=%lu stamp to Firebase /meta.\n",
+                    static_cast<unsigned long>(provisioning_->ownershipEpoch()));
+    }
+  }
+
   String resp;
   if (!httpRequestJson("GET", url, "", resp)) {
     return;
   }
 
+  cloudMetaVerifiedThisBoot_ = true;
   JsonDocument doc;
   const bool metaMissing = (deserializeJson(doc, resp) != DeserializationError::Ok || doc.isNull());
   if (metaMissing) {
+    // If Firebase /meta does not exist at all while ESP32 locally thought it was OWNED,
+    // there is NO owner in Firebase — release local ownership & re-open SPC-SETUP!
     if (provisioning_->ownershipState() == OwnershipState::OWNED) {
-      JsonDocument patchDoc;
-      patchDoc["deviceId"]       = provisioning_->deviceId();
-      patchDoc["ownershipState"] = "OWNED";
-      patchDoc["ownershipEpoch"] = provisioning_->ownershipEpoch();
-      patchDoc["displayName"]    = provisioning_->displayName();
-      patchDoc["resetRequired"]  = false;
-      patchDoc["claimedAt"]      = currentEpochMs();
-      String patchBody;
-      serializeJson(patchDoc, patchBody);
-      String patchResp;
-      if (httpRequestJson("PATCH", url, patchBody, patchResp)) {
-        lastSuccessfulSyncMs_ = nowMs;
-      }
+      Serial.println(F("[PROV] Cloud /meta missing while local state=OWNED — releasing to UNCLAIMED & re-opening SPC-SETUP!"));
+      provisioning_->initiateResetPendingLifecycle(
+          provisioning_->ownershipEpoch(), relays, irrigation, buzzer, events);
+      resetRtdbConnection();
+      provisioning_->finalizeLocalUnclaimAndEnterSetup(ioConfig, true);
     }
     return;
   }
 
-  const char* stateStr = doc["ownershipState"] | "UNCLAIMED";
-  uint32_t    epoch    = doc["ownershipEpoch"] | 0;
-  bool        resetReq = doc["resetRequired"] | false;
+  const char* stateStr      = doc["ownershipState"] | "UNCLAIMED";
+  const char* ownerUidStr   = doc["ownerUid"] | "";
+  const bool  hasRealOwner  = (strlen(ownerUidStr) > 0);
+  uint32_t    epoch         = doc["ownershipEpoch"] | 0;
+  bool        resetReq      = doc["resetRequired"] | false;
   const char* cloudDispName = doc["displayName"] | "";
 
   if (!doc["location"]["lat"].isNull() && !doc["location"]["lon"].isNull()) {
@@ -767,18 +835,19 @@ void FirebaseClientManager::syncMetaNode(
     }
   }
 
-  // If Owner renamed the plant box from Android Settings while OWNED, update NVS displayName
-  if (strlen(cloudDispName) > 0 && strcmp(cloudDispName, provisioning_->displayName()) != 0 &&
-      strcmp(stateStr, "OWNED") == 0) {
-    provisioning_->saveDisplayName(cloudDispName);
+  // 1. Explicit Factory Reset / Unclaim requested by Owner
+  if (resetReq || strcmp(stateStr, "RESET_PENDING") == 0) {
+    provisioning_->handleCloudMetaSnapshot(
+        "RESET_PENDING", epoch, true, ioConfig, relays, irrigation, buzzer, events, lcd);
+    lastSuccessfulSyncMs_ = nowMs;
+    return;
   }
 
-  // IMPORTANT (Firebase RTDB Rules Compatibility):
-  // Once /meta/ownershipState in Firebase is "OWNED", database.rules.json ONLY permits authenticated
-  // Android user writes (`auth != null`) to /meta AND requires /events to match /meta/ownershipEpoch!
-  // Therefore, when cloud /meta is "OWNED" (and !resetReq), ALWAYS adopt cloud `epoch` locally
-  // without attempting an unauthenticated PATCH on /meta.json (which would return 401 Permission denied).
-  if (!resetReq && strcmp(stateStr, "OWNED") == 0) {
+  // 2. Verified Active Owner in Firebase (`ownershipState == "OWNED"` AND non-empty `ownerUid`)
+  if (strcmp(stateStr, "OWNED") == 0 && hasRealOwner) {
+    if (strlen(cloudDispName) > 0 && strcmp(cloudDispName, provisioning_->displayName()) != 0) {
+      provisioning_->saveDisplayName(cloudDispName);
+    }
     const uint32_t adoptEpoch = (epoch > 0) ? epoch : provisioning_->ownershipEpoch();
     provisioning_->handleCloudMetaSnapshot(
         "OWNED", adoptEpoch, false, ioConfig, relays, irrigation, buzzer, events, lcd);
@@ -786,32 +855,26 @@ void FirebaseClientManager::syncMetaNode(
     return;
   }
 
-  // If the Owner just paired the ESP32 via the local Setup Hotspot (within 60s grace window)
-  // while cloud /meta is still UNCLAIMED or RESET_PENDING (where unauthenticated /meta write IS allowed),
-  // push the new OWNED state, epoch, and custom displayName up to Firebase /meta!
-  const uint32_t pairedAt = provisioning_->lastPairedAtMs();
-  const bool justPairedLocally =
-      (pairedAt > 0) && (uint32_t(nowMs - pairedAt) < 60000UL);
+  // 3. If currently in CLAIM_PENDING (waiting for Android app to write ownerUid + OWNED),
+  //    keep waiting cleanly (up to the 75s CLAIM_PENDING_TIMEOUT_MS rollback watchdog).
+  if (provisioning_->ownershipState() == OwnershipState::CLAIM_PENDING) {
+    lastSuccessfulSyncMs_ = nowMs;
+    return;
+  }
 
-  if (provisioning_->ownershipState() == OwnershipState::OWNED &&
-      justPairedLocally &&
-      (strcmp(stateStr, "UNCLAIMED") == 0 || strcmp(stateStr, "RESET_PENDING") == 0)) {
-    const uint32_t targetEpoch =
-        (epoch >= provisioning_->ownershipEpoch()) ? (epoch + 1UL) : provisioning_->ownershipEpoch();
-    if (targetEpoch != provisioning_->ownershipEpoch()) {
-      provisioning_->handleCloudMetaSnapshot(
-          "OWNED", targetEpoch, false, ioConfig, relays, irrigation, buzzer, events, lcd);
+  // 4. Orphan / Unowned Recovery:
+  //    If ESP32 locally thinks it is OWNED, yet Firebase /meta is UNCLAIMED, CLAIM_PENDING,
+  //    or OWNED WITHOUT an ownerUid, immediately release local ownership and re-open SPC-SETUP!
+  if (provisioning_->ownershipState() == OwnershipState::OWNED) {
+    Serial.printf("[PROV] Cloud /meta has NO owner (state=%s, ownerUid='%s') — releasing local OWNED state and re-opening SPC-SETUP!\n",
+                  stateStr, ownerUidStr);
+    const uint32_t targetEp = (epoch > provisioning_->ownershipEpoch()) ? epoch : provisioning_->ownershipEpoch();
+    provisioning_->initiateResetPendingLifecycle(targetEp, relays, irrigation, buzzer, events);
+    if (strcmp(stateStr, "OWNED") == 0 && !hasRealOwner) {
+      sendResetAckToBackend(nowMs);
     }
-    JsonDocument patchDoc;
-    patchDoc["ownershipState"] = "OWNED";
-    patchDoc["ownershipEpoch"] = targetEpoch;
-    patchDoc["displayName"]    = provisioning_->displayName();
-    patchDoc["resetRequired"]  = false;
-    patchDoc["claimedAt"]      = currentEpochMs();
-    String patchBody;
-    serializeJson(patchDoc, patchBody);
-    String patchResp;
-    httpRequestJson("PATCH", url, patchBody, patchResp);
+    resetRtdbConnection();
+    provisioning_->finalizeLocalUnclaimAndEnterSetup(ioConfig, true);
     lastSuccessfulSyncMs_ = nowMs;
     return;
   }
@@ -1274,9 +1337,16 @@ bool FirebaseClientManager::httpRequestJson(const char* method,
       }
 
       if (statusCode == 401 || statusCode == 403) {
-        idTokenValid_        = false;
-        idToken_             = "";
-        lastAuthAttemptAtMs_ = 0;
+        // Trigger immediate /meta check (e.g. device was unclaimed or still CLAIM_PENDING).
+        // Only invalidate cached ID token if /meta itself was denied or token is >=40m old
+        // so path-level rule denials never cause an endless re-auth loop!
+        urgentMetaCheck_ = true;
+        if (url.indexOf("/meta.json") >= 0 ||
+            (idTokenObtainedAtMs_ != 0 && uint32_t(millis() - idTokenObtainedAtMs_) >= 2400000UL)) {
+          idTokenValid_        = false;
+          idToken_             = "";
+          lastAuthAttemptAtMs_ = 0;
+        }
       }
       String errSnippet = rtdbHttp_.getString();
       if (errSnippet.length() > 100) {

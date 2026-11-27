@@ -1,50 +1,42 @@
 package com.example.smartplantcare.notification
 
+import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.content.SharedPreferences
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Build
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.example.smartplantcare.MainActivity
 import com.example.smartplantcare.R
-import com.example.smartplantcare.data.ImageUtils
 
 object NotificationHelper {
-    const val CHANNEL_ID = "treatment_reminder_channel"
-    const val DAILY_CHANNEL_ID = "daily_reminder_channel"
     const val IOT_ALERT_CHANNEL_ID = "iot_plant_alerts_channel"
+    const val ACCESS_ALERT_CHANNEL_ID = "device_access_alerts_channel"
+
+    const val EXTRA_NOTIFICATION_TYPE = "notif_type"
+    const val EXTRA_EVENT_ID = "event_id"
+    const val EXTRA_DEVICE_ID = "device_id"
+    const val TYPE_ACCESS_REVOKED = "ACCESS_REVOKED"
+
+    fun hasNotificationPermission(context: Context): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+        } else {
+            true
+        }
+    }
 
     fun createChannel(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            // Treatment reminders channel (high importance)
-            val channel = NotificationChannel(
-                CHANNEL_ID, "Plant Treatment Reminders", NotificationManager.IMPORTANCE_HIGH
-            ).apply {
-                description = "Daily reminders for your plant\'s recovery plan"
-                enableLights(true)
-                lightColor = android.graphics.Color.parseColor("#1D4B34")
-                enableVibration(true)
-                vibrationPattern = longArrayOf(0, 300, 200, 300)
-            }
-            context.getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
-
-            // Daily reminder channel (default importance)
-            val dailyChannel = NotificationChannel(
-                DAILY_CHANNEL_ID, "Daily Care Reminders", NotificationManager.IMPORTANCE_DEFAULT
-            ).apply {
-                description = "Daily morning and evening plant care reminders"
-                enableLights(true)
-                lightColor = android.graphics.Color.parseColor("#1D4B34")
-                enableVibration(true)
-                vibrationPattern = longArrayOf(0, 300, 200, 300)
-            }
-            context.getSystemService(NotificationManager::class.java).createNotificationChannel(dailyChannel)
+            val nm = context.getSystemService(NotificationManager::class.java) ?: return
 
             // SmartPlantCare IoT Hardware & Weather Alerts channel (high importance)
             val iotChannel = NotificationChannel(
@@ -52,227 +44,46 @@ object NotificationHelper {
             ).apply {
                 description = "Real-time ESP32 sensor, reservoir, rain suspension, and irrigation alerts"
                 enableLights(true)
-                lightColor = android.graphics.Color.parseColor("#1D4B34")
+                lightColor = Color.parseColor("#1D4B34")
                 enableVibration(true)
                 vibrationPattern = longArrayOf(0, 250, 150, 250)
             }
-            context.getSystemService(NotificationManager::class.java).createNotificationChannel(iotChannel)
+            nm.createNotificationChannel(iotChannel)
+
+            // Shared Device Access Alerts channel (high importance)
+            val accessChannel = NotificationChannel(
+                ACCESS_ALERT_CHANNEL_ID, "Shared Device Access Alerts", NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Notifications when shared ESP32 device monitoring access changes"
+                enableLights(true)
+                lightColor = Color.parseColor("#1D4B34")
+                enableVibration(true)
+                vibrationPattern = longArrayOf(0, 250, 150, 250)
+            }
+            nm.createNotificationChannel(accessChannel)
         }
     }
 
     /**
-     * Update vibration setting on both notification channels.
-     * When vibration is disabled, remove the vibration pattern.
+     * Update vibration setting across active notification channels.
      */
     fun updateVibrationSetting(context: Context, enabled: Boolean) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val notificationManager = context.getSystemService(NotificationManager::class.java)
+            val notificationManager = context.getSystemService(NotificationManager::class.java) ?: return
+            val pattern = if (enabled) longArrayOf(0, 300, 200, 300) else longArrayOf(0)
 
-            val treatmentChannel = notificationManager.getNotificationChannel(CHANNEL_ID)
-            if (treatmentChannel != null) {
-                treatmentChannel.enableVibration(enabled)
-                if (enabled) {
-                    treatmentChannel.vibrationPattern = longArrayOf(0, 300, 200, 300)
-                } else {
-                    treatmentChannel.vibrationPattern = longArrayOf(0)
+            listOf(IOT_ALERT_CHANNEL_ID, ACCESS_ALERT_CHANNEL_ID).forEach { id ->
+                notificationManager.getNotificationChannel(id)?.let { ch ->
+                    ch.enableVibration(enabled)
+                    ch.vibrationPattern = pattern
+                    notificationManager.createNotificationChannel(ch)
                 }
-                notificationManager.createNotificationChannel(treatmentChannel)
-            }
-
-            val dailyChannel = notificationManager.getNotificationChannel(DAILY_CHANNEL_ID)
-            if (dailyChannel != null) {
-                dailyChannel.enableVibration(enabled)
-                if (enabled) {
-                    dailyChannel.vibrationPattern = longArrayOf(0, 300, 200, 300)
-                } else {
-                    dailyChannel.vibrationPattern = longArrayOf(0)
-                }
-                notificationManager.createNotificationChannel(dailyChannel)
             }
         }
     }
 
     /**
-     * Show a daily recurring reminder (morning or evening).
-     * Respects the vibration preference from settings.
-     */
-    fun showDailyReminder(
-        context: Context,
-        notificationId: Int,
-        title: String,
-        message: String,
-        vibrationEnabled: Boolean = true
-    ) {
-        android.util.Log.d("NotificationHelper", "showDailyReminder called: id=$notificationId, title=$title")
-        
-        val intent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-        }
-        val pendingIntent = PendingIntent.getActivity(
-            context,
-            notificationId,
-            intent,
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-
-        val builder = NotificationCompat.Builder(context, DAILY_CHANNEL_ID)
-            .setSmallIcon(R.drawable.appsicon)
-            .setContentTitle(title)
-            .setContentText(message)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(message))
-            .setContentIntent(pendingIntent)
-            .setColor(Color.parseColor("#1D4B34"))
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .setCategory(NotificationCompat.CATEGORY_REMINDER)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setAutoCancel(true)
-            .setShowWhen(true)
-            .setWhen(System.currentTimeMillis())
-
-        // Only set vibration defaults if vibration is enabled
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-            // On API < 26, use defaults
-            if (vibrationEnabled) {
-                builder.setDefaults(NotificationCompat.DEFAULT_SOUND or NotificationCompat.DEFAULT_VIBRATE)
-            } else {
-                builder.setDefaults(NotificationCompat.DEFAULT_SOUND)
-            }
-        }
-
-        try {
-            context.getSystemService(NotificationManager::class.java)
-                .notify(notificationId, builder.build())
-            android.util.Log.d("NotificationHelper", "Daily reminder notification shown successfully")
-        } catch (e: Exception) {
-            android.util.Log.e("NotificationHelper", "Error showing daily reminder notification", e)
-        }
-    }
-
-    /**
-     * @param dayIndex 0-based day index (0..6)
-     * @param totalDays total length of the treatment plan, default 7
-     */
-    fun showReminder(
-        context: Context,
-        notificationId: Int,
-        title: String,
-        message: String,
-        dayIndex: Int = 0,
-        totalDays: Int = 7,
-        plantName: String = "",
-        plantImageUrl: String = "",
-        planId: String = ""
-    ) {
-        android.util.Log.d("NotificationHelper", "showReminder called: id=$notificationId, title=$title, day=$dayIndex, image=$plantImageUrl")
-
-        val day = dayIndex + 1
-        val daysLeft = totalDays - day
-
-        // Large icon — falls back gracefully if the drawable isn't present.
-        val largeIcon = runCatching {
-            BitmapFactory.decodeResource(context.resources, R.drawable.ic_launcher_foreground)
-        }.getOrNull()
-
-        val plantLabel = plantName.ifBlank { "Plant Care" }
-        val bigTitle = "🌱 $plantLabel — Day $day"
-
-        // Create a concise summary for the collapsed notification state to avoid text overflow
-        val collapsedText = run {
-            val sentenceBoundary = message.indexOf('.')
-            if (sentenceBoundary in 1..100) {
-                message.substring(0, sentenceBoundary + 1)
-            } else if (message.length > 80) {
-                message.take(80).trim() + "..."
-            } else {
-                message
-            }
-        }
-
-        val statusLine = when {
-            daysLeft <= 0 -> "🎉 Final day of recovery plan!"
-            daysLeft == 1 -> "🌱 1 day remaining in the treatment plan."
-            else          -> "🌱 $daysLeft days remaining in the treatment plan."
-        }
-
-        val expandedBody = buildString {
-            appendLine("📋 Diagnosis: $title")
-            appendLine()
-            appendLine("🌿 Action Plan:")
-            appendLine(message)
-            appendLine()
-            append(statusLine)
-        }
-
-        val tickerText = "$plantLabel — Day $day: $collapsedText"
-
-        // Create intent to open app when notification is tapped, including the plan_id
-        val intent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-            if (planId.isNotBlank()) {
-                putExtra("plan_id", planId)
-            }
-        }
-
-        val pendingIntent = PendingIntent.getActivity(
-            context,
-            notificationId,
-            intent,
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-
-        // Load scaled plant image for BigPictureStyle (800x400 fits standard 2:1 aspect ratio)
-        val plantBitmap = if (plantImageUrl.isNotBlank()) {
-            ImageUtils.loadResizedBitmap(context, plantImageUrl, 800, 400)
-        } else {
-            null
-        }
-
-        // Use BigPictureStyle if image loaded successfully, else fall back to BigTextStyle
-        val style = if (plantBitmap != null) {
-            NotificationCompat.BigPictureStyle()
-                .bigPicture(plantBitmap)
-                .bigLargeIcon(null as Bitmap?) // Removes large icon when expanded for a cleaner layout
-                .setBigContentTitle(bigTitle)
-                .setSummaryText(statusLine)
-        } else {
-            NotificationCompat.BigTextStyle()
-                .bigText(expandedBody)
-                .setBigContentTitle(bigTitle)
-                .setSummaryText("Treatment Plan Progress")
-        }
-
-        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.drawable.appsicon)
-            .setContentTitle(bigTitle)
-            .setContentText(collapsedText)
-            .setSubText("Day $day of $totalDays")
-            .setTicker(tickerText)
-            .setStyle(style)
-            .setLargeIcon(largeIcon)
-            .setContentIntent(pendingIntent)
-            .setColor(android.graphics.Color.parseColor("#1D4B34"))
-            .setColorized(true)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setCategory(NotificationCompat.CATEGORY_REMINDER)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setAutoCancel(true)
-            .setOngoing(false)
-            .setShowWhen(true)
-            .setWhen(System.currentTimeMillis())
-
-        try {
-            context.getSystemService(NotificationManager::class.java)
-                .notify(notificationId, builder.build())
-            android.util.Log.d("NotificationHelper", "Treatment reminder notification shown successfully")
-        } catch (e: Exception) {
-            android.util.Log.e("NotificationHelper", "Error showing treatment reminder notification", e)
-        }
-    }
-
-    /**
-     * Posts a deduplicated Android system notification for a real-time ESP32 IoT event transition
-     * (per V3.1 Specification Section 14.2: Rain Suspension, Forecast Advisory, Reservoir Low/Critical/Empty,
-     * Sensor Faults, High Temp / Low Humidity / Light Alerts, Emergency Stop, Irrigation Aborted).
+     * Posts a deduplicated Android system notification for a real-time ESP32 IoT event transition.
      */
     fun showIotDeviceAlert(
         context: Context,
@@ -282,7 +93,9 @@ object NotificationHelper {
         boxName: String = "SmartPlantCare Box",
         isCritical: Boolean = false
     ) {
+        if (!hasNotificationPermission(context)) return
         createChannel(context)
+
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
@@ -319,10 +132,59 @@ object NotificationHelper {
 
         try {
             context.getSystemService(NotificationManager::class.java)
-                .notify(notificationId, builder.build())
+                ?.notify(notificationId, builder.build())
         } catch (e: Exception) {
             android.util.Log.e("NotificationHelper", "Error showing IoT alert notification", e)
         }
     }
 
+    /**
+     * Posts a notification when a device owner revokes the user's shared monitoring access.
+     * Tapping opens MainActivity safely on the Home tab (NEVER opening the restricted device dashboard).
+     */
+    fun showAccessRevokedNotification(
+        context: Context,
+        eventId: String,
+        deviceId: String,
+        title: String,
+        message: String
+    ) {
+        if (!hasNotificationPermission(context)) return
+        createChannel(context)
+
+        val notificationId = "access_revoked_$eventId".hashCode()
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra(EXTRA_NOTIFICATION_TYPE, TYPE_ACCESS_REVOKED)
+            putExtra(EXTRA_EVENT_ID, eventId)
+            putExtra(EXTRA_DEVICE_ID, deviceId)
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            notificationId,
+            intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val builder = NotificationCompat.Builder(context, ACCESS_ALERT_CHANNEL_ID)
+            .setSmallIcon(R.drawable.appsicon)
+            .setContentTitle(title)
+            .setContentText(message)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(message).setBigContentTitle(title))
+            .setContentIntent(pendingIntent)
+            .setColor(Color.parseColor("#B91C1C"))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setAutoCancel(true)
+            .setShowWhen(true)
+            .setWhen(System.currentTimeMillis())
+
+        try {
+            context.getSystemService(NotificationManager::class.java)
+                ?.notify(notificationId, builder.build())
+        } catch (e: Exception) {
+            android.util.Log.e("NotificationHelper", "Error showing access revoked notification", e)
+        }
+    }
 }

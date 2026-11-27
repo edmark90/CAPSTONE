@@ -51,6 +51,11 @@ import androidx.compose.material.icons.outlined.EventAvailable
 import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.Spa
+import androidx.compose.ui.platform.LocalContext
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import java.io.File
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -224,10 +229,8 @@ fun HomeScreen(
         telemetryUpdatedAt = snapshot.telemetry.updatedAt
     )
 
-    // Active 7-day treatment plans for Today's Care Tasks
-    val activePlans = remember(plans) {
-        plans.filter { it.isActive && it.computedCurrentDayIndex < 7 && it.completedCount < 7 }
-    }
+    // Saved plants for the Care Guides quick card
+    val activePlans = plans
 
     // 7-day historical data (Philippine Time UTC+8)
     val historyWindow = myPlantsUiState?.historyDaysWindow
@@ -287,15 +290,16 @@ fun HomeScreen(
                 )
             }
 
-            // 3. Crop Zones (Responsive 3-Column / Stacked Cards — Full Crop Names & Values)
-            item(key = "crop_zones_section") {
-                HomeCropZonesSection(
-                    snapshot = snapshot,
-                    isConnected = snapshot != null,
-                    isCachedSnapshot = isCachedSnapshot,
-                    isDeviceOnline = isDeviceOnline,
-                    onManageZonesClick = onOpenMyPlants
-                )
+            // 3. Crop Zones (Shown ONLY when connected/linked to an ESP32 box)
+            if (hasLinkedDevice && snapshot != null) {
+                item(key = "crop_zones_section") {
+                    HomeCropZonesSection(
+                        snapshot = snapshot,
+                        isConnected = true,
+                        isDeviceOnline = isDeviceOnline && isPhoneOnline,
+                        onManageZonesClick = onOpenMyPlants
+                    )
+                }
             }
 
             // 4. Live Sensor Trends (By Hours 12 AM–11 PM & By Minutes All Day / :00–:59)
@@ -319,64 +323,17 @@ fun HomeScreen(
                 )
             }
 
-            // 5. Care Tasks & Smart Irrigation Status (Responsive 2-Column / Stacked)
-            item(key = "bottom_bento_cards") {
-                BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-                    val fontScale = LocalDensity.current.fontScale
-                    val useStackedLayout = maxWidth < 360.dp || fontScale >= 1.15f
-
-                    if (useStackedLayout) {
-                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            HomeCareTasksBentoCard(
-                                activePlans = activePlans,
-                                onScanClick = onScanClick,
-                                onPlanClick = onPlanClick,
-                                onDoctorClick = onDoctorClick,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                            HomeAutomationBentoCard(
-                                snapshot = snapshot,
-                                isConnected = snapshot != null,
-                                isCachedSnapshot = isCachedSnapshot,
-                                isDeviceOnline = isDeviceOnline && isPhoneOnline,
-                                todayHistory = todayHistorySnapshot,
-                                onClick = onOpenMyPlants,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
-                    } else {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(IntrinsicSize.Max),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            HomeCareTasksBentoCard(
-                                activePlans = activePlans,
-                                onScanClick = onScanClick,
-                                onPlanClick = onPlanClick,
-                                onDoctorClick = onDoctorClick,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxHeight()
-                            )
-                            HomeAutomationBentoCard(
-                                snapshot = snapshot,
-                                isConnected = snapshot != null,
-                                isCachedSnapshot = isCachedSnapshot,
-                                isDeviceOnline = isDeviceOnline && isPhoneOnline,
-                                todayHistory = todayHistorySnapshot,
-                                onClick = onOpenMyPlants,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxHeight()
-                            )
-                        }
-                    }
-                }
+            // 5. Care Guides (Redesigned Full-Width Section — Irrigation Section Removed)
+            item(key = "care_guides_section") {
+                HomeCareGuidesSection(
+                    savedPlants = activePlans,
+                    onScanClick = onScanClick,
+                    onPlanClick = onPlanClick,
+                    onDoctorClick = onDoctorClick
+                )
             }
 
-            // 6. Plant AI Tools (Scan Leaf Health & Identify Species — Zero Duplicate Links)
+            // 6. Plant AI Tools (Scan Leaf Health & Identify Species)
             item(key = "plant_ai_tools") {
                 HomePlantAiToolsSection(
                     onScanClick = onScanClick,
@@ -572,7 +529,7 @@ private fun SmartPlantCareHeroCard(
     onOpenMyPlants: () -> Unit
 ) {
     val isVerifiedLive = isConnected && snapshot != null && !isCachedSnapshot && isDeviceOnline && isPhoneOnline
-    val canDisplayTelemetry = snapshot != null && (isVerifiedLive || isCachedSnapshot)
+    val canDisplayTelemetry = isVerifiedLive
     val isAuto = snapshot?.config?.autoIrrigationEnabled ?: true
     val latestHeartbeatMs = snapshot?.let { maxOf(it.status.lastSeenAt, it.telemetry.updatedAt) } ?: 0L
 
@@ -585,10 +542,8 @@ private fun SmartPlantCareHeroCard(
     val syncStatusSubtitle = when {
         !isConnected -> "Pair your ESP32 box for automated 3-zone watering"
         snapshot == null && isSyncing -> "Syncing your linked SmartPlantCare box..."
-        isCachedSnapshot && isPhoneOnline -> "Cached snapshot • Verifying live ESP32 readings..."
-        isCachedSnapshot && !isPhoneOnline -> "Cached snapshot • Connect internet to sync live"
         !isPhoneOnline -> "No internet connection • Check Wi-Fi or mobile data"
-        !isDeviceOnline -> {
+        !isVerifiedLive -> {
             if (latestHeartbeatMs >= 1_700_000_000_000L) {
                 val ageMin = ((nowMs - latestHeartbeatMs) / 60_000L).coerceAtLeast(1L)
                 val ageText = if (ageMin < 60L) "${ageMin}m ago" else "${ageMin / 60L}h ago"
@@ -659,12 +614,6 @@ private fun SmartPlantCareHeroCard(
                             dot = HomeColors.MintGlow,
                             fg = Color.White,
                             text = "Ready to Pair"
-                        )
-                        isCachedSnapshot -> HeroBadgeSpec(
-                            bg = Color(0xFFF59E0B).copy(alpha = 0.24f),
-                            dot = Color(0xFFFDE68A),
-                            fg = Color(0xFFFDE68A),
-                            text = if (isPhoneOnline) "Cached • Syncing" else "Cached"
                         )
                         isVerifiedLive -> HeroBadgeSpec(
                             bg = Color(0xFF10B981).copy(alpha = 0.26f),
@@ -798,76 +747,82 @@ private fun SmartPlantCareHeroCard(
                 }
             }
 
-            // Readable 2x2 Climate & Reservoir Grid (Zero Truncation on Any Screen/Font Scale)
+            // Improved 2x2 Botanical Climate & Reservoir Tile Grid (Crisp Hierarchy, Zero Truncation)
             if (isConnected && snapshot != null) {
                 val telemetry = snapshot.telemetry
-                val tempText = if (canDisplayTelemetry && telemetry.dhtValid && telemetry.temperatureC != null) {
-                    String.format(Locale.US, "%.1f°C", telemetry.temperatureC)
-                } else "--"
-                val humText = if (canDisplayTelemetry && telemetry.dhtValid && telemetry.humidityPct != null) {
-                    String.format(Locale.US, "%.0f%%", telemetry.humidityPct)
-                } else "--"
-                val lightText = if (canDisplayTelemetry && telemetry.lightValid && telemetry.lightBrightnessPct != null) {
-                    String.format(Locale.US, "%.0f%%", telemetry.lightBrightnessPct)
-                } else "--"
-                val tankText = if (canDisplayTelemetry && telemetry.reservoirValid && telemetry.reservoirPct != null) {
-                    String.format(Locale.US, "%.0f%%", telemetry.reservoirPct)
-                } else "--"
+                val tempVal = if (canDisplayTelemetry && telemetry.dhtValid) telemetry.temperatureC else null
+                val humVal = if (canDisplayTelemetry && telemetry.dhtValid) telemetry.humidityPct else null
+                val lightVal = if (canDisplayTelemetry && telemetry.lightValid) telemetry.lightBrightnessPct else null
+                val tankVal = if (canDisplayTelemetry && telemetry.reservoirValid) telemetry.reservoirPct else null
 
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = Color.White.copy(alpha = 0.09f),
-                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.16f)),
-                    modifier = Modifier.fillMaxWidth()
+                val tempText = tempVal?.let { String.format(Locale.US, "%.1f°C", it) } ?: "--"
+                val humText = humVal?.let { String.format(Locale.US, "%.0f%%", it) } ?: "--"
+                val lightText = lightVal?.let { String.format(Locale.US, "%.0f%%", it) } ?: "--"
+                val tankText = tankVal?.let { String.format(Locale.US, "%.0f%%", it) } ?: "--"
+
+                val tempLevel = tempVal?.let { (it / 50f).coerceIn(0.08f, 1f) } ?: 0f
+                val humLevel = humVal?.let { (it / 100f).coerceIn(0.06f, 1f) } ?: 0f
+                val lightLevel = lightVal?.let { (it / 100f).coerceIn(0.06f, 1f) } ?: 0f
+                val tankLevel = tankVal?.let { (it / 100f).coerceIn(0.06f, 1f) } ?: 0f
+                val isLowTank = tankVal != null && tankVal <= 20f
+
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Column(
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                            .height(IntrinsicSize.Max),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            HeroMetricPairCell(
-                                icon = Icons.Filled.Thermostat,
-                                label = "Temperature",
-                                value = tempText,
-                                modifier = Modifier.weight(1f)
-                            )
-                            HeroVerticalDivider()
-                            HeroMetricPairCell(
-                                icon = Icons.Filled.WaterDrop,
-                                label = "Humidity",
-                                value = humText,
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                        Box(
+                        HeroSensorTile(
+                            icon = Icons.Filled.Thermostat,
+                            label = "Temperature",
+                            value = tempText,
+                            levelFraction = tempLevel,
+                            accentColor = Color(0xFFFBBF24),
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .height(1.dp)
-                                .background(Color.White.copy(alpha = 0.12f))
+                                .weight(1f)
+                                .fillMaxHeight()
                         )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            HeroMetricPairCell(
-                                icon = Icons.Filled.WbSunny,
-                                label = "Light",
-                                value = lightText,
-                                modifier = Modifier.weight(1f)
-                            )
-                            HeroVerticalDivider()
-                            HeroMetricPairCell(
-                                icon = Icons.Filled.Opacity,
-                                label = "Water Tank",
-                                value = tankText,
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
+                        HeroSensorTile(
+                            icon = Icons.Filled.WaterDrop,
+                            label = "Humidity",
+                            value = humText,
+                            levelFraction = humLevel,
+                            accentColor = Color(0xFF38BDF8),
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                        )
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(IntrinsicSize.Max),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        HeroSensorTile(
+                            icon = Icons.Filled.WbSunny,
+                            label = "Light",
+                            value = lightText,
+                            levelFraction = lightLevel,
+                            accentColor = Color(0xFFFDE047),
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                        )
+                        HeroSensorTile(
+                            icon = Icons.Filled.Opacity,
+                            label = "Water Tank",
+                            value = tankText,
+                            levelFraction = tankLevel,
+                            accentColor = if (isLowTank) Color(0xFFFBBF24) else Color(0xFF34D399),
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                        )
                     }
                 }
             } else if (!isConnected) {
@@ -909,72 +864,105 @@ private data class HeroBadgeSpec(
 )
 
 @Composable
-private fun HeroMetricPairCell(
+private fun HeroSensorTile(
     icon: ImageVector,
     label: String,
     value: String,
+    levelFraction: Float,
+    accentColor: Color,
     modifier: Modifier = Modifier
 ) {
-    Column(
-        modifier = modifier.padding(horizontal = 4.dp, vertical = 2.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp)
+    val isLiveValue = value != "--"
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = Color.White.copy(alpha = 0.10f),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.16f)),
+        modifier = modifier
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(5.dp)
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 11.dp),
+            verticalArrangement = Arrangement.spacedBy(9.dp)
         ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = Color.White.copy(alpha = 0.85f),
-                modifier = Modifier.size(14.dp)
-            )
-            Text(
-                text = label,
-                fontFamily = HomeInterFont,
-                fontSize = 11.5.sp,
-                fontWeight = FontWeight.Medium,
-                color = Color.White.copy(alpha = 0.84f),
-                maxLines = 1
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(RoundedCornerShape(9.dp))
+                        .background(accentColor.copy(alpha = if (isLiveValue) 0.20f else 0.12f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = if (isLiveValue) accentColor else Color.White.copy(alpha = 0.62f),
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(6.dp))
+
+                Text(
+                    text = value,
+                    fontFamily = HomeInterFont,
+                    fontSize = 18.sp,
+                    lineHeight = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = (-0.3).sp,
+                    color = if (isLiveValue) Color.White else Color.White.copy(alpha = 0.55f),
+                    maxLines = 1,
+                    softWrap = false
+                )
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = label,
+                    fontFamily = HomeInterFont,
+                    fontSize = 11.5.sp,
+                    lineHeight = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = Color.White.copy(alpha = 0.84f),
+                    maxLines = 1
+                )
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(Color.White.copy(alpha = 0.14f))
+                ) {
+                    if (isLiveValue && levelFraction > 0f) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(levelFraction)
+                                .fillMaxHeight()
+                                .clip(RoundedCornerShape(50))
+                                .background(accentColor.copy(alpha = 0.90f))
+                        )
+                    }
+                }
+            }
         }
-        Text(
-            text = value,
-            fontFamily = HomeInterFont,
-            fontSize = 17.sp,
-            fontWeight = FontWeight.Bold,
-            color = if (value == "--") Color.White.copy(alpha = 0.65f) else Color.White,
-            maxLines = 1
-        )
     }
 }
 
-@Composable
-private fun HeroVerticalDivider() {
-    Box(
-        modifier = Modifier
-            .padding(horizontal = 8.dp)
-            .width(1.dp)
-            .height(36.dp)
-            .background(Color.White.copy(alpha = 0.16f))
-    )
-}
-
-// ─── 3. Crop Zones (Responsive 3-Col / Full-Width Rows — Zero Clipping) ──────
+// ─── 3. Crop Zones (Always-Horizontal 3-Col Clean Cards Across All Devices) ──
 
 @Composable
 private fun HomeCropZonesSection(
-    snapshot: LiveDeviceSnapshot?,
+    snapshot: LiveDeviceSnapshot,
     isConnected: Boolean,
-    isCachedSnapshot: Boolean,
     isDeviceOnline: Boolean,
     onManageZonesClick: () -> Unit
 ) {
-    val zones = snapshot?.telemetry?.zones ?: listOf(
-        SoilZoneTelemetry("tomato", "Tomato", "Zone 1", "Tomato Zone"),
-        SoilZoneTelemetry("chili", "Chili", "Zone 2", "Chili Zone"),
-        SoilZoneTelemetry("eggplant", "Eggplant", "Zone 3", "Eggplant Zone")
-    )
+    val zones = snapshot.telemetry.zones
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(
@@ -1032,59 +1020,31 @@ private fun HomeCropZonesSection(
             }
         }
 
-        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-            val fontScale = LocalDensity.current.fontScale
-            val useStackedRows = maxWidth < 340.dp || fontScale >= 1.18f
+        // Always horizontal side-by-side across all devices — clean typography with zero "..." truncation
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(IntrinsicSize.Max),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            zones.forEach { zone ->
+                val cfg = resolveCropZoneConfig(snapshot, zone.slug)
+                val isWatering = isDeviceOnline &&
+                    snapshot.status.isActivelyIrrigating &&
+                    snapshot.status.activeValve.equals(zone.slug, ignoreCase = true)
 
-            if (useStackedRows) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    zones.forEach { zone ->
-                        val cfg = resolveCropZoneConfig(snapshot, zone.slug)
-                        val isWatering = isDeviceOnline &&
-                            snapshot?.status?.isActivelyIrrigating == true &&
-                            snapshot.status.activeValve.equals(zone.slug, ignoreCase = true)
-
-                        CropZoneAdaptiveCard(
-                            zone = zone,
-                            cropConfig = cfg,
-                            isConnected = isConnected,
-                            isCachedSnapshot = isCachedSnapshot,
-                            isOnline = isDeviceOnline,
-                            isWatering = isWatering,
-                            horizontalRowLayout = true,
-                            onClick = onManageZonesClick,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-                }
-            } else {
-                Row(
+                CropZoneHorizontalCard(
+                    zone = zone,
+                    cropConfig = cfg,
+                    photoUrl = snapshot.cropPhotos[zone.slug]?.url,
+                    isConnected = isConnected,
+                    isOnline = isDeviceOnline,
+                    isWatering = isWatering,
+                    onClick = onManageZonesClick,
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .height(IntrinsicSize.Max),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    zones.forEach { zone ->
-                        val cfg = resolveCropZoneConfig(snapshot, zone.slug)
-                        val isWatering = isDeviceOnline &&
-                            snapshot?.status?.isActivelyIrrigating == true &&
-                            snapshot.status.activeValve.equals(zone.slug, ignoreCase = true)
-
-                        CropZoneAdaptiveCard(
-                            zone = zone,
-                            cropConfig = cfg,
-                            isConnected = isConnected,
-                            isCachedSnapshot = isCachedSnapshot,
-                            isOnline = isDeviceOnline,
-                            isWatering = isWatering,
-                            horizontalRowLayout = false,
-                            onClick = onManageZonesClick,
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxHeight()
-                        )
-                    }
-                }
+                        .weight(1f)
+                        .fillMaxHeight()
+                )
             }
         }
     }
@@ -1108,24 +1068,22 @@ private fun resolveCropZoneConfig(snapshot: LiveDeviceSnapshot?, slug: String): 
 }
 
 @Composable
-private fun CropZoneAdaptiveCard(
+private fun CropZoneHorizontalCard(
     zone: SoilZoneTelemetry,
     cropConfig: CropZoneConfig,
+    photoUrl: String?,
     isConnected: Boolean,
-    isCachedSnapshot: Boolean,
     isOnline: Boolean,
     isWatering: Boolean,
-    horizontalRowLayout: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val canShowPct = isConnected && (isOnline || isCachedSnapshot) && zone.valid && zone.pct != null
+    val canShowPct = isConnected && isOnline && zone.valid && zone.pct != null
     val displayPctInt = if (canShowPct) zone.pct!!.roundToInt().coerceIn(0, 100) else null
     val isBelowStart = displayPctInt != null && displayPctInt < cropConfig.startPct
 
     val (badgeLabel, badgeBg, badgeFg, dotColor, barColor) = when {
         !isConnected -> ZoneCardStyle("Setup", HomeColors.PlaceholderBg, HomeColors.TextSecondary, HomeColors.TextMuted, HomeColors.CardBorder)
-        isCachedSnapshot -> ZoneCardStyle("Cached", HomeColors.WarningBg, HomeColors.WarningAmber, HomeColors.WarningAmber, HomeColors.ForestMedium)
         !isOnline -> ZoneCardStyle("Offline", HomeColors.PlaceholderBg, HomeColors.TextSecondary, HomeColors.TextMuted, HomeColors.CardBorder)
         isWatering -> ZoneCardStyle("Water", HomeColors.WaterBg, HomeColors.WaterBlue, HomeColors.WaterBlue, HomeColors.WaterBlue)
         !cropConfig.enabled -> ZoneCardStyle("Off", HomeColors.PlaceholderBg, HomeColors.TextMuted, HomeColors.TextMuted, HomeColors.CardBorder)
@@ -1135,10 +1093,13 @@ private fun CropZoneAdaptiveCard(
     }
 
     val progressFraction = when {
-        displayPctInt != null -> (displayPctInt / 100f).coerceIn(0.05f, 1f)
+        displayPctInt != null -> (displayPctInt / 100f).coerceIn(0.06f, 1f)
         !zone.valid && isOnline && isConnected -> 0.25f
         else -> 0f
     }
+
+    val context = LocalContext.current
+    val hasPhoto = !photoUrl.isNullOrBlank()
 
     Surface(
         color = HomeColors.SurfaceWhite,
@@ -1153,146 +1114,138 @@ private fun CropZoneAdaptiveCard(
             .clip(RoundedCornerShape(18.dp))
             .clickable(onClick = onClick)
     ) {
-        if (horizontalRowLayout) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 10.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            // Top Row: Clean Small Crop Photo Thumbnail (30.dp) + Live Moisture %
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(modifier = Modifier.weight(1f)) {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = if (hasPhoto) HomeColors.PlaceholderBg else HomeColors.SoftMint,
+                    border = BorderStroke(
+                        1.dp,
+                        if (hasPhoto) HomeColors.CardBorder else HomeColors.SoftMintStrong
+                    ),
+                    modifier = Modifier.size(30.dp)
+                ) {
+                    if (hasPhoto) {
+                        AsyncImage(
+                            model = ImageRequest.Builder(context)
+                                .data(photoUrl)
+                                .crossfade(true)
+                                .build(),
+                            contentDescription = "${zone.displayName} photo",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else {
+                        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                            Icon(
+                                imageVector = Icons.Outlined.Spa,
+                                contentDescription = null,
+                                tint = HomeColors.ForestMedium,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
+
+                Text(
+                    text = if (displayPctInt != null) "$displayPctInt%" else "--",
+                    fontFamily = HomeInterFont,
+                    fontSize = 17.5.sp,
+                    lineHeight = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = (-0.4).sp,
+                    color = if (displayPctInt != null) HomeColors.TextPrimary else HomeColors.TextMuted,
+                    maxLines = 1,
+                    softWrap = false
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Full-width crop name + compact status pill below (zero "..." truncation)
+            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text(
+                    text = zone.displayName,
+                    fontFamily = HomeInterFont,
+                    fontSize = 13.sp,
+                    lineHeight = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = HomeColors.TextPrimary,
+                    maxLines = 1,
+                    softWrap = false
+                )
+
+                Surface(
+                    color = badgeBg,
+                    shape = RoundedCornerShape(50)
+                ) {
                     Row(
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.5.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(8.dp)
+                                .size(5.dp)
                                 .clip(CircleShape)
                                 .background(dotColor)
                         )
                         Text(
-                            text = zone.displayName,
-                            fontFamily = HomeInterFont,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = HomeColors.TextPrimary
-                        )
-                        Surface(color = badgeBg, shape = RoundedCornerShape(50)) {
-                            Text(
-                                text = badgeLabel,
-                                fontFamily = HomeInterFont,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = badgeFg,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                            )
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Target ${cropConfig.startPct.toInt()}–${cropConfig.stopPct.toInt()}% moisture",
-                        fontFamily = HomeInterFont,
-                        fontSize = 11.5.sp,
-                        color = HomeColors.TextSecondary
-                    )
-                }
-                Spacer(modifier = Modifier.width(12.dp))
-                Text(
-                    text = if (displayPctInt != null) "$displayPctInt%" else "--",
-                    fontFamily = HomeInterFont,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = if (displayPctInt != null) HomeColors.TextPrimary else HomeColors.TextMuted
-                )
-            }
-        } else {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(11.dp),
-                verticalArrangement = Arrangement.SpaceBetween
-            ) {
-                // Full-width crop name so "Tomato", "Chili", "Eggplant" never clip
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(5.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(7.dp)
-                            .clip(CircleShape)
-                            .background(dotColor)
-                    )
-                    Text(
-                        text = zone.displayName,
-                        fontFamily = HomeInterFont,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = HomeColors.TextPrimary,
-                        maxLines = 1
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(6.dp))
-
-                // Prominent soil moisture % on its own line + clean status pill below (zero clipping!)
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        text = if (displayPctInt != null) "$displayPctInt%" else "--",
-                        fontFamily = HomeInterFont,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = if (displayPctInt != null) HomeColors.TextPrimary else HomeColors.TextMuted,
-                        maxLines = 1
-                    )
-                    Surface(
-                        color = badgeBg,
-                        shape = RoundedCornerShape(6.dp)
-                    ) {
-                        Text(
                             text = badgeLabel,
                             fontFamily = HomeInterFont,
-                            fontSize = 11.sp,
+                            fontSize = 10.5.sp,
+                            lineHeight = 12.sp,
                             fontWeight = FontWeight.Bold,
                             color = badgeFg,
                             maxLines = 1,
-                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                            softWrap = false
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Clean moisture progress track + compact target range (no ellipsis)
+            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(5.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(HomeColors.PillTrackBg)
+                ) {
+                    if (progressFraction > 0f) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(progressFraction)
+                                .fillMaxHeight()
+                                .clip(RoundedCornerShape(50))
+                                .background(barColor)
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(5.5.dp)
-                            .clip(RoundedCornerShape(50))
-                            .background(HomeColors.PillTrackBg)
-                    ) {
-                        if (progressFraction > 0f) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth(progressFraction)
-                                    .fillMaxHeight()
-                                    .clip(RoundedCornerShape(50))
-                                    .background(barColor)
-                            )
-                        }
-                    }
-
-                    Text(
-                        text = "${cropConfig.startPct.toInt()}–${cropConfig.stopPct.toInt()}% goal",
-                        fontFamily = HomeInterFont,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = HomeColors.TextSecondary,
-                        maxLines = 1
-                    )
-                }
+                Text(
+                    text = "${cropConfig.startPct.toInt()}–${cropConfig.stopPct.toInt()}% goal",
+                    fontFamily = HomeInterFont,
+                    fontSize = 10.5.sp,
+                    lineHeight = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = HomeColors.TextSecondary,
+                    maxLines = 1,
+                    softWrap = false
+                )
             }
         }
     }
@@ -1889,402 +1842,329 @@ private fun LiveSensorTrendsCard(
     }
 }
 
-// ─── 5. Care Tasks & Smart Irrigation Cards ──────────────────────────────────
+// ─── 5. Redesigned Full-Width Care Guides Section ────────────────────────────
 
 @Composable
-private fun HomeCareTasksBentoCard(
-    activePlans: List<TreatmentPlan>,
+private fun HomeCareGuidesSection(
+    savedPlants: List<TreatmentPlan>,
     onScanClick: () -> Unit,
     onPlanClick: (String) -> Unit,
-    onDoctorClick: () -> Unit,
-    modifier: Modifier = Modifier
+    onDoctorClick: () -> Unit
 ) {
-    val topPlan = activePlans.firstOrNull()
+    val topPlan = savedPlants.firstOrNull()
+    val context = LocalContext.current
 
-    Surface(
-        color = HomeColors.SurfaceWhite,
-        shape = RoundedCornerShape(20.dp),
-        border = BorderStroke(1.dp, HomeColors.CardBorder),
-        modifier = modifier
-            .shadow(
-                elevation = 2.dp,
-                shape = RoundedCornerShape(20.dp),
-                spotColor = HomeColors.ForestDark.copy(alpha = 0.05f)
-            )
-            .clip(RoundedCornerShape(20.dp))
-            .clickable {
-                if (topPlan != null) onPlanClick(topPlan.id) else onDoctorClick()
-            }
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(14.dp),
-            verticalArrangement = Arrangement.SpaceBetween
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                horizontalArrangement = Arrangement.spacedBy(7.dp)
             ) {
                 Icon(
-                    imageVector = Icons.Outlined.EventAvailable,
+                    imageVector = Icons.Outlined.Spa,
                     contentDescription = null,
                     tint = HomeColors.ForestPrimary,
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier.size(19.dp)
                 )
                 Text(
-                    text = "Care Tasks",
+                    text = "Care Guides",
                     fontFamily = HomeInterFont,
-                    fontSize = 13.5.sp,
+                    fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
-                    color = HomeColors.TextPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    color = HomeColors.TextPrimary
                 )
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
-
-            if (topPlan == null) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
+            if (savedPlants.isNotEmpty()) {
+                Surface(
+                    color = HomeColors.SurfaceWhite,
+                    shape = RoundedCornerShape(50),
+                    border = BorderStroke(1.dp, HomeColors.CardBorder),
+                    modifier = Modifier
+                        .defaultMinSize(minHeight = 34.dp)
+                        .clip(RoundedCornerShape(50))
+                        .clickable(onClick = onDoctorClick)
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(34.dp)
-                            .clip(CircleShape)
-                            .background(HomeColors.SoftMint),
-                        contentAlignment = Alignment.Center
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(3.dp)
                     ) {
+                        Text(
+                            text = "View All (${savedPlants.size})",
+                            fontFamily = HomeInterFont,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = HomeColors.ForestPrimary
+                        )
                         Icon(
-                            imageVector = Icons.Filled.CheckCircle,
+                            imageVector = Icons.Filled.ChevronRight,
                             contentDescription = null,
                             tint = HomeColors.ForestPrimary,
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(16.dp)
                         )
                     }
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "All caught up",
-                            fontFamily = HomeInterFont,
-                            fontSize = 12.5.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = HomeColors.TextPrimary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                }
+            }
+        }
+
+        Surface(
+            color = HomeColors.SurfaceWhite,
+            shape = RoundedCornerShape(22.dp),
+            border = BorderStroke(1.dp, HomeColors.CardBorder),
+            modifier = Modifier
+                .fillMaxWidth()
+                .shadow(
+                    elevation = 3.dp,
+                    shape = RoundedCornerShape(22.dp),
+                    spotColor = HomeColors.ForestDark.copy(alpha = 0.05f)
+                )
+                .clip(RoundedCornerShape(22.dp))
+                .clickable {
+                    if (topPlan != null) onPlanClick(topPlan.id) else onScanClick()
+                }
+        ) {
+            if (topPlan == null) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(HomeColors.SoftMint),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Spa,
+                                contentDescription = null,
+                                tint = HomeColors.ForestPrimary,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            Text(
+                                text = "No saved care guides yet",
+                                fontFamily = HomeInterFont,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = HomeColors.TextPrimary
+                            )
+                            Text(
+                                text = "Scan a plant leaf to save its diagnosis, causes, and tailored care tips.",
+                                fontFamily = HomeInterFont,
+                                fontSize = 12.5.sp,
+                                lineHeight = 18.sp,
+                                color = HomeColors.TextSecondary
+                            )
+                        }
+                    }
+
+                    Button(
+                        onClick = onScanClick,
+                        shape = RoundedCornerShape(13.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = HomeColors.ForestPrimary,
+                            contentColor = Color.White
+                        ),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 11.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .defaultMinSize(minHeight = 44.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.CenterFocusWeak,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(17.dp)
                         )
-                        Spacer(modifier = Modifier.height(2.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Scan a leaf for a 7-day plan",
+                            text = "Scan a Leaf",
                             fontFamily = HomeInterFont,
-                            fontSize = 11.sp,
-                            color = HomeColors.TextSecondary,
-                            lineHeight = 14.5.sp,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.clickable(onClick = onScanClick)
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
                         )
                     }
                 }
             } else {
-                val dayIndex = topPlan.computedCurrentDayIndex.coerceIn(0, 6)
-                val rawTask = topPlan.sevenDayPlan.getOrNull(dayIndex) ?: "Check plant leaves."
-                val taskSummary = remember(rawTask) {
-                    rawTask.substringAfter(":").trim().ifBlank { rawTask }
+                val diseaseKey = remember(topPlan.className, topPlan.diseaseName, topPlan.isHealthy) {
+                    resolveDiseaseRepositoryKey(topPlan.className, topPlan.diseaseName, topPlan.isHealthy)
                 }
-                val progress = (topPlan.completedCount / 7f).coerceIn(0f, 1f)
+                val careSummary = remember(diseaseKey) {
+                    com.example.smartplantcare.ML.DiseaseRepository.getDiseaseInfo(diseaseKey).careTips
+                }
+                val imageRequest = remember(topPlan.imageUrl) {
+                    if (topPlan.imageUrl.isNotBlank()) {
+                        val data: Any = if (topPlan.imageUrl.startsWith("/")) File(topPlan.imageUrl) else topPlan.imageUrl
+                        ImageRequest.Builder(context)
+                            .data(data)
+                            .size(200)
+                            .crossfade(false)
+                            .build()
+                    } else null
+                }
 
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(60.dp)
+                                .clip(RoundedCornerShape(15.dp))
+                                .background(HomeColors.SoftMint),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (imageRequest != null) {
+                                AsyncImage(
+                                    model = imageRequest,
+                                    contentDescription = topPlan.plantName,
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentScale = ContentScale.Crop
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Filled.LocalFlorist,
+                                    contentDescription = null,
+                                    tint = HomeColors.ForestPrimary,
+                                    modifier = Modifier.size(26.dp)
+                                )
+                            }
+                        }
+
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = topPlan.plantName.ifBlank { "Saved Plant" },
+                                    fontFamily = HomeInterFont,
+                                    fontSize = 15.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = HomeColors.TextPrimary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Surface(
+                                    color = if (topPlan.isHealthy) HomeColors.SuccessBg else HomeColors.AlertBg,
+                                    shape = RoundedCornerShape(50)
+                                ) {
+                                    Text(
+                                        text = if (topPlan.isHealthy) "Healthy" else "Needs Care",
+                                        fontFamily = HomeInterFont,
+                                        fontSize = 10.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (topPlan.isHealthy) HomeColors.SuccessGreen else HomeColors.AlertRed,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp)
+                                    )
+                                }
+                            }
+
+                            if (!topPlan.isHealthy && topPlan.diseaseName.isNotBlank()) {
+                                Text(
+                                    text = topPlan.diseaseName,
+                                    fontFamily = HomeInterFont,
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = HomeColors.ForestMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+
+                            Text(
+                                text = careSummary,
+                                fontFamily = HomeInterFont,
+                                fontSize = 12.sp,
+                                color = HomeColors.TextSecondary,
+                                lineHeight = 17.sp,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(color = HomeColors.DividerLine, thickness = 1.dp)
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = topPlan.plantName.ifBlank { "Plant" },
+                            text = if (savedPlants.size > 1) {
+                                "Latest guide • +${savedPlants.size - 1} more in AI Doctor"
+                            } else {
+                                "Tap to read full guide or listen"
+                            },
                             fontFamily = HomeInterFont,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = HomeColors.TextPrimary,
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = HomeColors.TextMuted,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f)
                         )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Surface(
-                            color = HomeColors.SoftMint,
-                            shape = RoundedCornerShape(50)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
                             Text(
-                                text = "Day ${dayIndex + 1}/7",
+                                text = "Open Guide",
                                 fontFamily = HomeInterFont,
-                                fontSize = 11.sp,
+                                fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = HomeColors.ForestPrimary,
-                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                            Icon(
+                                imageVector = Icons.Filled.ChevronRight,
+                                contentDescription = null,
+                                tint = HomeColors.ForestPrimary,
+                                modifier = Modifier.size(16.dp)
                             )
                         }
                     }
-
-                    Text(
-                        text = taskSummary,
-                        fontFamily = HomeInterFont,
-                        fontSize = 11.5.sp,
-                        color = HomeColors.TextSecondary,
-                        lineHeight = 15.sp,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-
-                    LinearProgressIndicator(
-                        progress = { progress },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(5.dp)
-                            .clip(RoundedCornerShape(50)),
-                        color = HomeColors.ForestPrimary,
-                        trackColor = HomeColors.SoftMint
-                    )
-
-                    if (activePlans.size > 1) {
-                        Text(
-                            text = "+${activePlans.size - 1} more in AI Doctor",
-                            fontFamily = HomeInterFont,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = HomeColors.ForestMedium,
-                            modifier = Modifier.clickable(onClick = onDoctorClick)
-                        )
-                    }
                 }
             }
         }
     }
 }
-
-@Composable
-private fun HomeAutomationBentoCard(
-    snapshot: LiveDeviceSnapshot?,
-    isConnected: Boolean,
-    isCachedSnapshot: Boolean,
-    isDeviceOnline: Boolean,
-    todayHistory: DailyHistorySnapshot?,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val todayRuns = todayHistory?.irrigations.orEmpty()
-    val lastRun = todayRuns.firstOrNull()
-    val lastRunTimeText = remember(lastRun?.startedAt) {
-        if (lastRun != null && lastRun.startedAt >= 1_700_000_000_000L) {
-            IotDomainLogic.formatPhTimeLabel(lastRun.startedAt)
-        } else null
-    }
-
-    val status = snapshot?.status
-    val isAuto = snapshot?.config?.autoIrrigationEnabled == true
-
-    val (title, subtitle, pillText, pillBg, pillFg, dropTint) = when {
-        !isConnected -> AutomationCardInfo(
-            title = "Pair Plant Box",
-            subtitle = "Enable smart watering",
-            pill = "Setup",
-            pillBg = HomeColors.SoftMint,
-            pillFg = HomeColors.ForestPrimary,
-            dropTint = HomeColors.WaterBlue
-        )
-        isCachedSnapshot -> AutomationCardInfo(
-            title = if (isAuto) "Automatic Watering" else "Manual Watering",
-            subtitle = "Verifying live ESP32 state...",
-            pill = "Cached",
-            pillBg = HomeColors.WarningBg,
-            pillFg = HomeColors.WarningAmber,
-            dropTint = HomeColors.ForestMedium
-        )
-        !isDeviceOnline -> AutomationCardInfo(
-            title = "Device Offline",
-            subtitle = if (todayRuns.isNotEmpty()) "${todayRuns.size} run(s) logged today" else "Check ESP32 Wi-Fi",
-            pill = "Offline",
-            pillBg = HomeColors.AlertBg,
-            pillFg = HomeColors.AlertRed,
-            dropTint = HomeColors.TextMuted
-        )
-        status?.emergencyStop == true || status?.faultLockout == true -> AutomationCardInfo(
-            title = "Safety Locked",
-            subtitle = "Outputs paused",
-            pill = "Locked",
-            pillBg = HomeColors.AlertBg,
-            pillFg = HomeColors.AlertRed,
-            dropTint = HomeColors.AlertRed
-        )
-        status?.isActivelyIrrigating == true -> {
-            val crop = status.activeValve.replaceFirstChar { it.uppercase(Locale.US) }
-            AutomationCardInfo(
-                title = "Watering $crop",
-                subtitle = "${status.activePumpElapsedSec}s / ${status.activeTargetDurationSec}s",
-                pill = "Active",
-                pillBg = HomeColors.WaterBg,
-                pillFg = HomeColors.WaterBlue,
-                dropTint = HomeColors.WaterBlue
-            )
-        }
-        status?.rainSuspensionActive == true -> AutomationCardInfo(
-            title = "Paused by Rain",
-            subtitle = "Resumes when dry",
-            pill = "Rain Guard",
-            pillBg = HomeColors.WaterBg,
-            pillFg = HomeColors.WaterBlue,
-            dropTint = HomeColors.WaterBlue
-        )
-        isAuto -> {
-            val sub = when {
-                todayRuns.isNotEmpty() && lastRunTimeText != null ->
-                    "Last: $lastRunTimeText (${todayRuns.size}x)"
-                todayRuns.isNotEmpty() ->
-                    "${todayRuns.size} watering ${if (todayRuns.size == 1) "run" else "runs"} today"
-                snapshot?.telemetry?.zones?.any { it.valid && it.needsWater } == true ->
-                    "Dry zone detected"
-                else -> "Monitoring soil levels"
-            }
-            AutomationCardInfo(
-                title = "Auto Watering",
-                subtitle = sub,
-                pill = "ON",
-                pillBg = HomeColors.SuccessBg,
-                pillFg = HomeColors.SuccessGreen,
-                dropTint = HomeColors.WaterBlue
-            )
-        }
-        else -> {
-            val sub = when {
-                todayRuns.isNotEmpty() && lastRunTimeText != null ->
-                    "Last: $lastRunTimeText (${todayRuns.size}x)"
-                else -> "Ready for manual control"
-            }
-            AutomationCardInfo(
-                title = "Manual Mode",
-                subtitle = sub,
-                pill = "Manual",
-                pillBg = HomeColors.SoftMint,
-                pillFg = HomeColors.ForestPrimary,
-                dropTint = HomeColors.WaterBlue
-            )
-        }
-    }
-
-    Surface(
-        color = HomeColors.SurfaceWhite,
-        shape = RoundedCornerShape(20.dp),
-        border = BorderStroke(1.dp, HomeColors.CardBorder),
-        modifier = modifier
-            .shadow(
-                elevation = 2.dp,
-                shape = RoundedCornerShape(20.dp),
-                spotColor = HomeColors.ForestDark.copy(alpha = 0.05f)
-            )
-            .clip(RoundedCornerShape(20.dp))
-            .clickable(onClick = onClick)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(14.dp),
-            verticalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Schedule,
-                        contentDescription = null,
-                        tint = HomeColors.ForestPrimary,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Text(
-                        text = "Irrigation",
-                        fontFamily = HomeInterFont,
-                        fontSize = 13.5.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = HomeColors.TextPrimary,
-                        maxLines = 1
-                    )
-                }
-
-                Surface(
-                    color = pillBg,
-                    shape = RoundedCornerShape(50)
-                ) {
-                    Text(
-                        text = pillText,
-                        fontFamily = HomeInterFont,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = pillFg,
-                        maxLines = 1,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.5.dp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(34.dp)
-                        .clip(CircleShape)
-                        .background(HomeColors.WaterBg),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.WaterDrop,
-                        contentDescription = null,
-                        tint = dropTint,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-                Spacer(modifier = Modifier.width(10.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = title,
-                        fontFamily = HomeInterFont,
-                        fontSize = 12.5.sp,
-                        lineHeight = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = HomeColors.TextPrimary,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = subtitle,
-                        fontFamily = HomeInterFont,
-                        fontSize = 11.sp,
-                        color = HomeColors.TextSecondary,
-                        lineHeight = 14.5.sp,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-        }
-    }
-}
-
-private data class AutomationCardInfo(
-    val title: String,
-    val subtitle: String,
-    val pill: String,
-    val pillBg: Color,
-    val pillFg: Color,
-    val dropTint: Color
-)
 
 // ─── 6. Plant AI Tools (Scan Leaf & Identify Species — Clean & Non-Redundant) ─
 
@@ -2293,64 +2173,85 @@ private fun HomePlantAiToolsSection(
     onScanClick: () -> Unit,
     onIdentifyClick: () -> Unit
 ) {
-    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-        val fontScale = LocalDensity.current.fontScale
-        val stackTools = maxWidth < 340.dp || fontScale >= 1.25f
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(7.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Filled.AutoAwesome,
+                contentDescription = null,
+                tint = HomeColors.ForestPrimary,
+                modifier = Modifier.size(18.dp)
+            )
+            Text(
+                text = "Quick AI Tools",
+                fontFamily = HomeInterFont,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                color = HomeColors.TextPrimary
+            )
+        }
 
-        if (stackTools) {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                AiToolActionCard(
-                    icon = Icons.Filled.CenterFocusWeak,
-                    iconBg = HomeColors.ForestPrimary,
-                    iconTint = Color.White,
-                    title = "Scan Leaf Health",
-                    subtitle = "Disease diagnosis & 7-day plan",
-                    horizontalLayout = true,
-                    onClick = onScanClick,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                AiToolActionCard(
-                    icon = Icons.Filled.LocalFlorist,
-                    iconBg = HomeColors.SoftMint,
-                    iconTint = HomeColors.ForestPrimary,
-                    title = "Identify Species",
-                    subtitle = "Instant camera plant lookup",
-                    horizontalLayout = true,
-                    onClick = onIdentifyClick,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        } else {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(IntrinsicSize.Max),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                AiToolActionCard(
-                    icon = Icons.Filled.CenterFocusWeak,
-                    iconBg = HomeColors.ForestPrimary,
-                    iconTint = Color.White,
-                    title = "Scan Leaf Health",
-                    subtitle = "Diagnose & 7-day plan",
-                    horizontalLayout = false,
-                    onClick = onScanClick,
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            val fontScale = LocalDensity.current.fontScale
+            val stackTools = maxWidth < 340.dp || fontScale >= 1.25f
+
+            if (stackTools) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    AiToolActionCard(
+                        icon = Icons.Filled.CenterFocusWeak,
+                        iconBg = HomeColors.ForestPrimary,
+                        iconTint = Color.White,
+                        title = "Scan Leaf Health",
+                        subtitle = "AI leaf diagnosis & care tips",
+                        horizontalLayout = true,
+                        onClick = onScanClick,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    AiToolActionCard(
+                        icon = Icons.Filled.LocalFlorist,
+                        iconBg = HomeColors.SoftMint,
+                        iconTint = HomeColors.ForestPrimary,
+                        title = "Identify Species",
+                        subtitle = "Instant camera plant lookup",
+                        horizontalLayout = true,
+                        onClick = onIdentifyClick,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            } else {
+                Row(
                     modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                )
-                AiToolActionCard(
-                    icon = Icons.Filled.LocalFlorist,
-                    iconBg = HomeColors.SoftMint,
-                    iconTint = HomeColors.ForestPrimary,
-                    title = "Identify Species",
-                    subtitle = "Camera plant lookup",
-                    horizontalLayout = false,
-                    onClick = onIdentifyClick,
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                )
+                        .fillMaxWidth()
+                        .height(IntrinsicSize.Max),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    AiToolActionCard(
+                        icon = Icons.Filled.CenterFocusWeak,
+                        iconBg = HomeColors.ForestPrimary,
+                        iconTint = Color.White,
+                        title = "Scan Leaf Health",
+                        subtitle = "Diagnose & care tips",
+                        horizontalLayout = false,
+                        onClick = onScanClick,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                    )
+                    AiToolActionCard(
+                        icon = Icons.Filled.LocalFlorist,
+                        iconBg = HomeColors.SoftMint,
+                        iconTint = HomeColors.ForestPrimary,
+                        title = "Identify Species",
+                        subtitle = "Camera plant lookup",
+                        horizontalLayout = false,
+                        onClick = onIdentifyClick,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                    )
+                }
             }
         }
     }

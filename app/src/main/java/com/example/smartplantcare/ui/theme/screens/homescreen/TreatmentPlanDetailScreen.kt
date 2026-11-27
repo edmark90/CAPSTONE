@@ -5,15 +5,12 @@ import android.os.Handler
 import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
-import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -21,24 +18,26 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Eco
 import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LocalFlorist
 import androidx.compose.material.icons.filled.MedicalServices
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.outlined.Biotech
+import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.Spa
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -66,7 +65,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
@@ -88,6 +86,14 @@ private data class WordSpan(
     val startChar: Int,
     val endChar: Int,
     val globalIndex: Int
+)
+
+private data class TtsSpokenSections(
+    val fullText: String,
+    val descSpans: List<WordSpan>,
+    val causeSpans: List<WordSpan>,
+    val careTipsSpans: List<WordSpan>,
+    val allSpans: List<WordSpan>
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -120,7 +126,7 @@ fun TreatmentPlanDetailScreen(
                         ) {
                             Text(
                                 text = currentPlan?.plantName?.ifBlank { "Plant" }
-                                    ?: if (isDetailLoading) "Loading..." else "Treatment Plan",
+                                    ?: if (isDetailLoading) "Loading..." else "Care Guide",
                                 fontFamily = HomeInterFont,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 16.sp,
@@ -146,8 +152,7 @@ fun TreatmentPlanDetailScreen(
                             val badgeText = when {
                                 currentPlan == null -> if (isDetailLoading) "Loading" else "Unavailable"
                                 isHealthy -> "Healthy"
-                                currentPlan.completedCount >= 7 -> "Completed"
-                                else -> "In Care"
+                                else -> currentPlan.diseaseName.ifBlank { "Care Guide" }
                             }
                             Surface(color = badgeColor, shape = RoundedCornerShape(50)) {
                                 Text(
@@ -157,8 +162,8 @@ fun TreatmentPlanDetailScreen(
                                     lineHeight = 12.sp,
                                     color = badgeTextColor,
                                     maxLines = 1,
-                                    softWrap = false,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 1.dp),
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
                                     fontWeight = FontWeight.SemiBold
                                 )
                             }
@@ -193,11 +198,6 @@ fun TreatmentPlanDetailScreen(
         when {
             plan != null -> {
                 val p = plan!!
-                val currentDayIndex = p.computedCurrentDayIndex
-                val tasks = remember(p.sevenDayPlan) {
-                    if (p.sevenDayPlan.size >= 7) p.sevenDayPlan.take(7)
-                    else p.sevenDayPlan + List(7 - p.sevenDayPlan.size) { "Upcoming treatment" }
-                }
 
                 LazyColumn(
                     modifier = Modifier
@@ -213,65 +213,11 @@ fun TreatmentPlanDetailScreen(
                 ) {
                     item { ImageHeaderSection(p.imageUrl, p.confidence) }
 
-                    item { ProgressSection(p.completedCount, currentDayIndex) }
-
-                    item { DiseaseInformationSection(p.diseaseName, p.isHealthy) }
-
                     item {
-                        DoctorNotesSection(
-                            isHealthy = p.isHealthy,
-                            isCompleted = p.completedCount >= 7
-                        )
-                    }
-
-                    item {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 4.dp)
-                        ) {
-                            Text(
-                                text = "Treatment Schedule",
-                                fontFamily = HomeInterFont,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 17.sp,
-                                color = HomeColors.TextPrimary,
-                                modifier = Modifier.weight(1f, fill = false)
-                            )
-                            Surface(color = HomeColors.SoftMint, shape = RoundedCornerShape(50)) {
-                                Text(
-                                    text = "7 Days",
-                                    fontFamily = HomeInterFont,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = HomeColors.ForestMedium,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    itemsIndexed(tasks) { index, task ->
-                        val dayNum = index + 1
-                        val isCompleted = p.completedDays.getOrElse(index) { false }
-                        val isCurrent = index == currentDayIndex
-                        val isLocked = index > currentDayIndex
-                        val isLast = index == tasks.lastIndex
-                        val displayTask = if (isCompleted || isCurrent) task else "Upcoming treatment"
-
-                        TimelineItem(
-                            dayNum = dayNum,
-                            task = displayTask,
-                            isCompleted = isCompleted,
-                            isCurrent = isCurrent,
-                            isLocked = isLocked,
-                            isLast = isLast,
-                            onMarkDone = { viewModel.toggleDayComplete(planId, index) },
-                            onUndo = { viewModel.undoDayComplete(planId, index) }
+                        DiseaseInformationSection(
+                            className = p.className,
+                            diseaseName = p.diseaseName,
+                            isHealthy = p.isHealthy
                         )
                     }
 
@@ -306,7 +252,7 @@ fun TreatmentPlanDetailScreen(
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         Text(
-                            text = "Treatment plan not found",
+                            text = "Saved plant not found",
                             fontFamily = HomeInterFont,
                             fontSize = 17.sp,
                             fontWeight = FontWeight.Bold,
@@ -314,7 +260,7 @@ fun TreatmentPlanDetailScreen(
                             textAlign = TextAlign.Center
                         )
                         Text(
-                            text = "This plan may have been removed or is no longer available.",
+                            text = "This plant record may have been removed or is no longer available.",
                             fontFamily = HomeInterFont,
                             fontSize = 13.sp,
                             color = HomeColors.TextSecondary,
@@ -409,138 +355,61 @@ fun ImageHeaderSection(imageUrl: String, confidence: Float) {
     }
 }
 
-@Composable
-fun ProgressSection(completedCount: Int, currentDayIndex: Int) {
-    val progress = (completedCount / 7f).coerceIn(0f, 1f)
-    val percent = ((completedCount / 7f) * 100).toInt()
-    val isComplete = completedCount >= 7
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(containerColor = HomeColors.SurfaceWhite),
-        border = BorderStroke(1.dp, HomeColors.CardBorder),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-    ) {
-        Row(
-            modifier = Modifier.padding(18.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(contentAlignment = Alignment.Center, modifier = Modifier.size(68.dp)) {
-                CircularProgressIndicator(
-                    progress = { progress },
-                    modifier = Modifier.fillMaxSize(),
-                    color = if (isComplete) HomeColors.SuccessGreen else HomeColors.ForestPrimary,
-                    trackColor = HomeColors.SoftMint,
-                    strokeWidth = 6.dp,
-                    strokeCap = StrokeCap.Round
-                )
-                Text(
-                    text = "$percent%",
-                    fontFamily = HomeInterFont,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = HomeColors.TextPrimary,
-                    maxLines = 1,
-                    softWrap = false
-                )
-            }
-            Spacer(modifier = Modifier.width(18.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = if (isComplete) "Plan Completed" else "Day ${currentDayIndex + 1} of 7",
-                    fontFamily = HomeInterFont,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 17.sp,
-                    color = HomeColors.TextPrimary
-                )
-                Spacer(modifier = Modifier.height(3.dp))
-                Text(
-                    text = if (isComplete) "Great job! Your 7-day plan is finished."
-                    else "$completedCount of 7 treatment days completed",
-                    fontFamily = HomeInterFont,
-                    fontSize = 13.sp,
-                    color = HomeColors.TextSecondary,
-                    lineHeight = 18.sp
-                )
-            }
-            if (isComplete) {
-                Box(
-                    modifier = Modifier
-                        .size(38.dp)
-                        .clip(CircleShape)
-                        .background(HomeColors.SuccessBg),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Check,
-                        contentDescription = null,
-                        tint = HomeColors.SuccessGreen,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-            }
+internal fun resolveDiseaseRepositoryKey(
+    className: String,
+    diseaseName: String,
+    isHealthy: Boolean
+): String? {
+    if (className.isNotBlank() && DiseaseRepository.getAllSupportedKeys().contains(className)) {
+        return className
+    }
+    return when {
+        isHealthy -> when {
+            diseaseName.contains("Chili", ignoreCase = true) -> "Chili_Healthy_Leaf"
+            diseaseName.contains("Eggplant", ignoreCase = true) -> "Eggplant_Healthy Leaf"
+            diseaseName.contains("Tomato", ignoreCase = true) -> "Tomato_healthy"
+            else -> null
         }
+        diseaseName.contains("Bacterial Spot", ignoreCase = true) -> when {
+            diseaseName.contains("Chili", ignoreCase = true) -> "Chili_Bacterial_Spot"
+            diseaseName.contains("Tomato", ignoreCase = true) -> "Tomato_Bacterial_spot"
+            else -> null
+        }
+        diseaseName.contains("Cercospora", ignoreCase = true) -> when {
+            diseaseName.contains("Chili", ignoreCase = true) -> "Chili_Cercospora_Leaf_Spot"
+            diseaseName.contains("Eggplant", ignoreCase = true) -> "Eggplant_Cercospora Leaf Spot"
+            else -> null
+        }
+        diseaseName.contains("Leaf Curl", ignoreCase = true) || diseaseName.contains("Curl Virus", ignoreCase = true) -> when {
+            diseaseName.contains("Chili", ignoreCase = true) -> "Chili_Curl_Virus"
+            diseaseName.contains("Tomato", ignoreCase = true) -> "Tomato__Tomato_YellowLeaf__Curl_Virus"
+            else -> null
+        }
+        diseaseName.contains("Mosaic", ignoreCase = true) -> when {
+            diseaseName.contains("Tomato", ignoreCase = true) -> "Tomato__Tomato_mosaic_virus"
+            else -> "Eggplant_Mosaic Virus Disease"
+        }
+        diseaseName.contains("Nutrient", ignoreCase = true) || diseaseName.contains("Deficiency", ignoreCase = true) -> "Chili_Nutrition_Deficiency"
+        diseaseName.contains("White Spot", ignoreCase = true) -> "Chili_White_Spot"
+        diseaseName.contains("Insect", ignoreCase = true) || diseaseName.contains("Pest", ignoreCase = true) -> "Eggplant_Insect Pest Disease"
+        diseaseName.contains("Septoria", ignoreCase = true) -> "Tomato_Septoria_leaf_spot"
+        diseaseName.contains("Leaf Spot", ignoreCase = true) -> "Eggplant_Leaf Spot Disease"
+        diseaseName.contains("Powdery", ignoreCase = true) -> "Eggplant_Powdery Mildew"
+        diseaseName.contains("Early Blight", ignoreCase = true) -> "Tomato_Early_blight"
+        diseaseName.contains("Late Blight", ignoreCase = true) -> "Tomato_Late_blight"
+        diseaseName.contains("Leaf Mold", ignoreCase = true) -> "Tomato_Leaf_Mold"
+        diseaseName.contains("Spider", ignoreCase = true) || diseaseName.contains("Mite", ignoreCase = true) -> "Tomato_Spider_mites_Two_spotted_spider_mite"
+        diseaseName.contains("Target Spot", ignoreCase = true) -> "Tomato__Target_Spot"
+        else -> null
     }
 }
 
 @Composable
-fun DoctorNotesSection(
-    isHealthy: Boolean = false,
-    isCompleted: Boolean = false
+fun DiseaseInformationSection(
+    className: String = "",
+    diseaseName: String,
+    isHealthy: Boolean
 ) {
-    val noteBody = when {
-        isHealthy -> "Your plant leaf looks healthy! Maintain consistent morning watering, good sunlight, and weekly leaf underside checks."
-        isCompleted -> "Your 7-day treatment schedule is finished. Keep monitoring new leaves for spots over the coming week."
-        else -> "Follow each daily step in order without skipping. Water cleanly at the soil base and inspect leaves for new spots daily."
-    }
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(containerColor = HomeColors.SoftMint),
-        border = BorderStroke(1.dp, HomeColors.SoftMintStrong),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-    ) {
-        Column(modifier = Modifier.padding(18.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(34.dp)
-                        .clip(CircleShape)
-                        .background(HomeColors.SurfaceWhite),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.MedicalServices,
-                        contentDescription = null,
-                        tint = HomeColors.ForestMedium,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-                Spacer(modifier = Modifier.width(10.dp))
-                Text(
-                    text = "Care Guidance",
-                    fontFamily = HomeInterFont,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp,
-                    color = HomeColors.ForestPrimary
-                )
-            }
-            Spacer(modifier = Modifier.height(10.dp))
-            Text(
-                text = noteBody,
-                fontFamily = HomeInterFont,
-                fontSize = 13.sp,
-                color = HomeColors.TextSecondary,
-                lineHeight = 19.sp
-            )
-        }
-    }
-}
-
-@Composable
-fun DiseaseInformationSection(diseaseName: String, isHealthy: Boolean) {
     val context = LocalContext.current
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
     var tts by remember { mutableStateOf<TextToSpeech?>(null) }
@@ -548,89 +417,72 @@ fun DiseaseInformationSection(diseaseName: String, isHealthy: Boolean) {
     var isSpeaking by remember { mutableStateOf(false) }
     var ttsInitialized by remember { mutableStateOf(false) }
 
-    val diseaseKey = remember(diseaseName, isHealthy) {
-        when {
-            isHealthy -> when {
-                diseaseName.contains("Chili", ignoreCase = true) -> "Chili_Healthy_Leaf"
-                diseaseName.contains("Eggplant", ignoreCase = true) -> "Eggplant_Healthy Leaf"
-                diseaseName.contains("Tomato", ignoreCase = true) -> "Tomato_healthy"
-                else -> null
-            }
-            diseaseName.contains("Bacterial Spot", ignoreCase = true) -> when {
-                diseaseName.contains("Chili", ignoreCase = true) -> "Chili_Bacterial_Spot"
-                diseaseName.contains("Tomato", ignoreCase = true) -> "Tomato_Bacterial_spot"
-                else -> null
-            }
-            diseaseName.contains("Cercospora", ignoreCase = true) -> when {
-                diseaseName.contains("Chili", ignoreCase = true) -> "Chili_Cercospora_Leaf_Spot"
-                diseaseName.contains("Eggplant", ignoreCase = true) -> "Eggplant_Cercospora Leaf Spot"
-                else -> null
-            }
-            diseaseName.contains("Leaf Curl", ignoreCase = true) || diseaseName.contains("Curl Virus", ignoreCase = true) -> when {
-                diseaseName.contains("Chili", ignoreCase = true) -> "Chili_Curl_Virus"
-                diseaseName.contains("Tomato", ignoreCase = true) -> "Tomato__Tomato_YellowLeaf__Curl_Virus"
-                else -> null
-            }
-            diseaseName.contains("Nutrient", ignoreCase = true) || diseaseName.contains("Deficiency", ignoreCase = true) -> "Chili_Nutrition_Deficiency"
-            diseaseName.contains("White Spot", ignoreCase = true) -> "Chili_White_Spot"
-            diseaseName.contains("Insect", ignoreCase = true) || diseaseName.contains("Pest", ignoreCase = true) -> "Eggplant_Insect Pest Disease"
-            diseaseName.contains("Leaf Spot", ignoreCase = true) -> "Eggplant_Leaf Spot Disease"
-            diseaseName.contains("Mosaic", ignoreCase = true) -> "Eggplant_Mosaic Virus Disease"
-            diseaseName.contains("Powdery", ignoreCase = true) -> "Eggplant_Powdery Mildew"
-            diseaseName.contains("Early Blight", ignoreCase = true) -> "Tomato_Early_blight"
-            diseaseName.contains("Late Blight", ignoreCase = true) -> "Tomato_Late_blight"
-            diseaseName.contains("Leaf Mold", ignoreCase = true) -> "Tomato_Leaf_Mold"
-            diseaseName.contains("Septoria", ignoreCase = true) -> "Tomato_Septoria_leaf_spot"
-            diseaseName.contains("Spider", ignoreCase = true) || diseaseName.contains("Mite", ignoreCase = true) -> "Tomato_Spider_mites_Two_spotted_spider_mite"
-            diseaseName.contains("Target Spot", ignoreCase = true) -> "Tomato__Target_Spot"
-            else -> null
-        }
+    val diseaseKey = remember(className, diseaseName, isHealthy) {
+        resolveDiseaseRepositoryKey(className, diseaseName, isHealthy)
     }
 
     val diseaseData = remember(diseaseKey) { DiseaseRepository.getDiseaseInfo(diseaseKey) }
     val description = diseaseData.description
     val causes = diseaseData.causes
+    val careTips = diseaseData.careTips
 
-    // Precompute spoken text & word character intervals once when text changes (zero per-word allocations)
-    val ttsData = remember(description, causes) {
+    // Precompute spoken text & word character intervals across Description, Causes, and Care Tips
+    val ttsSections = remember(description, causes, careTips) {
         val descPrefix = "Description. "
         val causesPrefix = ". Causes. "
-        val fullText = "$descPrefix$description$causesPrefix$causes"
+        val careTipsPrefix = ". Care Tips. "
+        val fullText = "$descPrefix$description$causesPrefix$causes$careTipsPrefix$careTips"
 
-        val descWords = description.split(" ")
-        val causesWords = causes.split(" ")
-        val spans = ArrayList<WordSpan>(descWords.size + causesWords.size + 4)
+        val descWords = description.split(" ").filter { it.isNotEmpty() }
+        val causesWords = causes.split(" ").filter { it.isNotEmpty() }
+        val careTipsWords = careTips.split(" ").filter { it.isNotEmpty() }
+        val allSpans = ArrayList<WordSpan>(descWords.size + causesWords.size + careTipsWords.size + 4)
 
         var cursor = descPrefix.length
         var globalIdx = 1
+
         val descSpans = ArrayList<WordSpan>(descWords.size)
         for (word in descWords) {
-            val end = cursor + word.length
-            val span = WordSpan(word, cursor, end, globalIdx++)
+            val start = fullText.indexOf(word, cursor).takeIf { it >= 0 } ?: cursor
+            val end = start + word.length
+            val span = WordSpan(word, start, end, globalIdx++)
             descSpans.add(span)
-            spans.add(span)
-            cursor = end + 1
+            allSpans.add(span)
+            cursor = end
         }
 
-        cursor += causesPrefix.length - 1
+        cursor = (descPrefix.length + description.length + causesPrefix.length)
         val causeSpans = ArrayList<WordSpan>(causesWords.size)
         for (word in causesWords) {
-            val end = cursor + word.length
-            val span = WordSpan(word, cursor, end, globalIdx++)
+            val start = fullText.indexOf(word, cursor).takeIf { it >= 0 } ?: cursor
+            val end = start + word.length
+            val span = WordSpan(word, start, end, globalIdx++)
             causeSpans.add(span)
-            spans.add(span)
-            cursor = end + 1
+            allSpans.add(span)
+            cursor = end
         }
 
-        Triple(fullText, descSpans, causeSpans) to spans
+        cursor = (descPrefix.length + description.length + causesPrefix.length + causes.length + careTipsPrefix.length)
+        val careTipsSpans = ArrayList<WordSpan>(careTipsWords.size)
+        for (word in careTipsWords) {
+            val start = fullText.indexOf(word, cursor).takeIf { it >= 0 } ?: cursor
+            val end = start + word.length
+            val span = WordSpan(word, start, end, globalIdx++)
+            careTipsSpans.add(span)
+            allSpans.add(span)
+            cursor = end
+        }
+
+        TtsSpokenSections(
+            fullText = fullText,
+            descSpans = descSpans,
+            causeSpans = causeSpans,
+            careTipsSpans = careTipsSpans,
+            allSpans = allSpans
+        )
     }
 
-    val speakText = ttsData.first.first
-    val descSpans = ttsData.first.second
-    val causeSpans = ttsData.first.third
-    val allSpans = ttsData.second
-
-    DisposableEffect(context, allSpans) {
+    DisposableEffect(context, ttsSections.allSpans) {
         lateinit var textToSpeech: TextToSpeech
         textToSpeech = TextToSpeech(context) { status ->
             if (status == TextToSpeech.SUCCESS) {
@@ -662,7 +514,7 @@ fun DiseaseInformationSection(diseaseName: String, isHealthy: Boolean) {
             }
 
             override fun onRangeStart(utteranceId: String?, start: Int, end: Int, frame: Int) {
-                val match = allSpans.firstOrNull { start >= it.startChar && start < it.endChar }
+                val match = ttsSections.allSpans.firstOrNull { start >= it.startChar && start < it.endChar }
                 if (match != null) {
                     mainHandler.post { currentWordIndex = match.globalIndex }
                 }
@@ -681,61 +533,80 @@ fun DiseaseInformationSection(diseaseName: String, isHealthy: Boolean) {
         }
     }
 
-    val annotatedDescription = remember(currentWordIndex, descSpans) {
-        buildAnnotatedString {
-            descSpans.forEachIndexed { i, span ->
-                if (currentWordIndex == span.globalIndex) {
-                    withStyle(SpanStyle(background = HomeColors.ForestPrimary, color = Color.White)) {
-                        append(span.word)
-                    }
-                } else {
-                    append(span.word)
-                }
-                if (i < descSpans.lastIndex) append(" ")
-            }
-        }
+    val annotatedDescription = remember(currentWordIndex, ttsSections.descSpans) {
+        buildHighlightedText(ttsSections.descSpans, currentWordIndex)
     }
 
-    val annotatedCauses = remember(currentWordIndex, causeSpans) {
-        buildAnnotatedString {
-            causeSpans.forEachIndexed { i, span ->
-                if (currentWordIndex == span.globalIndex) {
-                    withStyle(SpanStyle(background = HomeColors.ForestPrimary, color = Color.White)) {
-                        append(span.word)
-                    }
-                } else {
-                    append(span.word)
-                }
-                if (i < causeSpans.lastIndex) append(" ")
-            }
-        }
+    val annotatedCauses = remember(currentWordIndex, ttsSections.causeSpans) {
+        buildHighlightedText(ttsSections.causeSpans, currentWordIndex)
+    }
+
+    val annotatedCareTips = remember(currentWordIndex, ttsSections.careTipsSpans) {
+        buildHighlightedText(ttsSections.careTipsSpans, currentWordIndex)
     }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(22.dp),
         colors = CardDefaults.cardColors(containerColor = HomeColors.SurfaceWhite),
         border = BorderStroke(1.dp, HomeColors.CardBorder),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
-        Column(modifier = Modifier.padding(18.dp)) {
+        Column(
+            modifier = Modifier.padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            // Card Header: Icon + Title + Listen/Stop TTS Pill
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(
-                    text = if (isHealthy) "Plant Health" else "Disease Information",
-                    fontFamily = HomeInterFont,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 17.sp,
-                    color = HomeColors.TextPrimary,
-                    modifier = Modifier.weight(1f)
-                )
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(if (isHealthy) HomeColors.SuccessBg else HomeColors.SoftMint),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = if (isHealthy) Icons.Filled.Eco else Icons.Filled.MedicalServices,
+                        contentDescription = null,
+                        tint = if (isHealthy) HomeColors.SuccessGreen else HomeColors.ForestPrimary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (isHealthy) "Plant Health Guide" else "Disease Information",
+                        fontFamily = HomeInterFont,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 17.sp,
+                        lineHeight = 21.sp,
+                        color = HomeColors.TextPrimary
+                    )
+                    Text(
+                        text = if (isSpeaking) "Reading guide aloud..." else "Summary, causes & care tips",
+                        fontFamily = HomeInterFont,
+                        fontSize = 11.5.sp,
+                        color = if (isSpeaking) HomeColors.ForestMedium else HomeColors.TextMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
 
                 Surface(
                     color = if (isSpeaking) HomeColors.AlertBg else if (ttsInitialized) HomeColors.SoftMint else HomeColors.PlaceholderBg,
                     shape = RoundedCornerShape(50),
+                    border = BorderStroke(
+                        1.dp,
+                        when {
+                            isSpeaking -> HomeColors.AlertRed.copy(alpha = 0.25f)
+                            ttsInitialized -> HomeColors.SoftMintStrong
+                            else -> HomeColors.CardBorder
+                        }
+                    ),
                     modifier = Modifier
                         .clip(RoundedCornerShape(50))
                         .clickable(enabled = ttsInitialized) {
@@ -749,13 +620,18 @@ fun DiseaseInformationSection(diseaseName: String, isHealthy: Boolean) {
                                     currentWordIndex = -1
                                     val params = Bundle()
                                     params.putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, "tts_utterance")
-                                    textToSpeech.speak(speakText, TextToSpeech.QUEUE_FLUSH, params, "tts_utterance")
+                                    textToSpeech.speak(
+                                        ttsSections.fullText,
+                                        TextToSpeech.QUEUE_FLUSH,
+                                        params,
+                                        "tts_utterance"
+                                    )
                                 }
                             }
                         }
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                        modifier = Modifier.padding(horizontal = 13.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(5.dp)
                     ) {
@@ -786,254 +662,123 @@ fun DiseaseInformationSection(diseaseName: String, isHealthy: Boolean) {
                 }
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+            HorizontalDivider(color = HomeColors.DividerLine, thickness = 1.dp)
 
-            Text(
-                text = "Description",
-                fontFamily = HomeInterFont,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 13.sp,
-                color = HomeColors.ForestMedium
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = annotatedDescription,
-                fontFamily = HomeInterFont,
-                fontSize = 13.sp,
-                color = HomeColors.TextSecondary,
-                lineHeight = 20.sp
+            // 1. Description Panel
+            CareGuideSectionPanel(
+                icon = Icons.Outlined.Description,
+                iconBg = HomeColors.SoftMint,
+                iconTint = HomeColors.ForestPrimary,
+                title = "Description",
+                titleColor = HomeColors.ForestDark,
+                containerColor = HomeColors.SubtleSurface,
+                borderColor = HomeColors.CardBorder,
+                body = annotatedDescription,
+                bodyColor = HomeColors.TextSecondary
             )
 
-            Spacer(modifier = Modifier.height(14.dp))
-
-            Text(
-                text = "Causes",
-                fontFamily = HomeInterFont,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 13.sp,
-                color = HomeColors.ForestMedium
+            // 2. Causes Panel
+            CareGuideSectionPanel(
+                icon = Icons.Outlined.Biotech,
+                iconBg = if (isHealthy) HomeColors.SuccessBg else HomeColors.WarningBg,
+                iconTint = if (isHealthy) HomeColors.SuccessGreen else HomeColors.WarningAmber,
+                title = "Causes",
+                titleColor = HomeColors.ForestDark,
+                containerColor = HomeColors.SubtleSurface,
+                borderColor = HomeColors.CardBorder,
+                body = annotatedCauses,
+                bodyColor = HomeColors.TextSecondary
             )
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = annotatedCauses,
-                fontFamily = HomeInterFont,
-                fontSize = 13.sp,
-                color = HomeColors.TextSecondary,
-                lineHeight = 20.sp
+
+            // 3. Care Tips Panel (Highlighted Actionable Guidance)
+            CareGuideSectionPanel(
+                icon = Icons.Outlined.Spa,
+                iconBg = HomeColors.SurfaceWhite,
+                iconTint = HomeColors.ForestPrimary,
+                title = "Care Tips",
+                titleColor = HomeColors.ForestPrimary,
+                containerColor = HomeColors.SoftMint.copy(alpha = 0.65f),
+                borderColor = HomeColors.SoftMintStrong,
+                body = annotatedCareTips,
+                bodyColor = HomeColors.TextPrimary.copy(alpha = 0.88f)
             )
         }
     }
 }
 
 @Composable
-fun TimelineItem(
-    dayNum: Int,
-    task: String,
-    isCompleted: Boolean,
-    isCurrent: Boolean,
-    isLocked: Boolean,
-    isLast: Boolean,
-    onMarkDone: () -> Unit,
-    onUndo: () -> Unit
+private fun CareGuideSectionPanel(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    iconBg: Color,
+    iconTint: Color,
+    title: String,
+    titleColor: Color,
+    containerColor: Color,
+    borderColor: Color,
+    body: androidx.compose.ui.text.AnnotatedString,
+    bodyColor: Color
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(IntrinsicSize.Min)
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = containerColor,
+        border = BorderStroke(1.dp, borderColor)
     ) {
         Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.width(40.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 15.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Box(
-                modifier = Modifier
-                    .size(34.dp)
-                    .clip(CircleShape)
-                    .background(
-                        when {
-                            isCompleted -> HomeColors.ForestPrimary
-                            isLocked -> HomeColors.PlaceholderBg
-                            else -> HomeColors.SurfaceWhite
-                        }
-                    )
-                    .border(
-                        width = if (isCurrent || isCompleted) 2.dp else 1.dp,
-                        color = if (isCurrent || isCompleted) HomeColors.ForestPrimary else HomeColors.CardBorder,
-                        shape = CircleShape
-                    ),
-                contentAlignment = Alignment.Center
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(9.dp)
             ) {
-                when {
-                    isCompleted -> Icon(Icons.Default.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(17.dp))
-                    isLocked -> Icon(Icons.Default.Lock, contentDescription = null, tint = HomeColors.TextMuted, modifier = Modifier.size(15.dp))
-                    isCurrent -> Text("$dayNum", fontFamily = HomeInterFont, fontWeight = FontWeight.Bold, color = HomeColors.ForestPrimary, fontSize = 13.sp)
-                    else -> Text("$dayNum", fontFamily = HomeInterFont, fontWeight = FontWeight.Bold, color = HomeColors.TextMuted, fontSize = 13.sp)
-                }
-            }
-
-            if (!isLast) {
                 Box(
                     modifier = Modifier
-                        .width(2.dp)
-                        .weight(1f)
-                        .padding(vertical = 4.dp)
-                        .background(
-                            if (isCompleted) HomeColors.ForestPrimary.copy(alpha = 0.3f)
-                            else HomeColors.DividerLine
-                        )
+                        .size(28.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(iconBg),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = iconTint,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+                Text(
+                    text = title,
+                    fontFamily = HomeInterFont,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                    color = titleColor,
+                    letterSpacing = (-0.1).sp
                 )
             }
-        }
 
-        Spacer(modifier = Modifier.width(12.dp))
-
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .padding(bottom = if (isLast) 0.dp else 14.dp)
-        ) {
-            val context = LocalContext.current
-            if (isCurrent) {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = HomeColors.SurfaceWhite),
-                    border = BorderStroke(1.5.dp, HomeColors.ForestPrimary),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Surface(color = HomeColors.SoftMint, shape = RoundedCornerShape(50)) {
-                            Text(
-                                text = "Day $dayNum • Today",
-                                fontFamily = HomeInterFont,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = HomeColors.ForestPrimary,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text(
-                            text = task,
-                            fontFamily = HomeInterFont,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium,
-                            lineHeight = 20.sp,
-                            color = HomeColors.TextPrimary
-                        )
-                        Spacer(modifier = Modifier.height(14.dp))
-
-                        Button(
-                            onClick = {
-                                onMarkDone()
-                                Toast.makeText(
-                                    context,
-                                    "Day $dayNum marked as completed.",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(min = 46.dp),
-                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = HomeColors.ForestPrimary,
-                                contentColor = Color.White
-                            ),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Icon(Icons.Default.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "Mark as Done",
-                                color = Color.White,
-                                fontFamily = HomeInterFont,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp,
-                                textAlign = TextAlign.Center
-                            )
-                        }
-                    }
-                }
-            } else {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (isLocked) Color(0xFFF3F6F4) else HomeColors.SurfaceWhite
-                    ),
-                    border = BorderStroke(1.dp, HomeColors.CardBorder),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(14.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(
-                                modifier = Modifier.weight(1f),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "Day $dayNum",
-                                    fontFamily = HomeInterFont,
-                                    fontSize = 12.sp,
-                                    color = if (isLocked) HomeColors.TextMuted else HomeColors.TextSecondary,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    softWrap = false
-                                )
-                                if (isCompleted) {
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Surface(color = HomeColors.SuccessBg, shape = RoundedCornerShape(50)) {
-                                        Text(
-                                            text = "Completed",
-                                            fontFamily = HomeInterFont,
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = HomeColors.SuccessGreen,
-                                            maxLines = 1,
-                                            softWrap = false,
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                                        )
-                                    }
-                                }
-                            }
-
-                            if (isCompleted) {
-                                Text(
-                                    text = "Undo",
-                                    fontFamily = HomeInterFont,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = HomeColors.AlertRed,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .clickable { onUndo() }
-                                        .padding(vertical = 4.dp, horizontal = 8.dp)
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        Text(
-                            text = task,
-                            fontFamily = HomeInterFont,
-                            fontSize = 13.sp,
-                            color = if (isLocked) HomeColors.TextMuted else HomeColors.TextPrimary,
-                            lineHeight = 19.sp
-                        )
-                    }
-                }
-            }
+            Text(
+                text = body,
+                fontFamily = HomeInterFont,
+                fontSize = 13.5.sp,
+                color = bodyColor,
+                lineHeight = 22.sp
+            )
         }
     }
 }
+
+private fun buildHighlightedText(spans: List<WordSpan>, currentWordIndex: Int) =
+    buildAnnotatedString {
+        spans.forEachIndexed { i, span ->
+            if (currentWordIndex == span.globalIndex) {
+                withStyle(SpanStyle(background = HomeColors.ForestPrimary, color = Color.White)) {
+                    append(span.word)
+                }
+            } else {
+                append(span.word)
+            }
+            if (i < spans.lastIndex) append(" ")
+        }
+    }

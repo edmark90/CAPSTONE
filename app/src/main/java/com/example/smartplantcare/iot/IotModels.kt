@@ -301,6 +301,15 @@ enum class PointInspectionStatus {
 }
 
 @Immutable
+data class CropZonePhoto(
+    val url: String = "",
+    val publicId: String = "",
+    val updatedAt: Long = 0L,
+    val updatedByUid: String = "",
+    val updatedByName: String = ""
+)
+
+@Immutable
 data class LiveDeviceSnapshot(
     val deviceId: String,
     val meta: DeviceMeta = DeviceMeta(deviceId = deviceId),
@@ -308,6 +317,7 @@ data class LiveDeviceSnapshot(
     val telemetry: DeviceTelemetry = DeviceTelemetry(),
     val weather: DeviceWeather = DeviceWeather(),
     val config: DeviceConfig = DeviceConfig(),
+    val cropPhotos: Map<String, CropZonePhoto> = emptyMap(),
     val members: List<AclMember> = emptyList(),
     val activeInvites: List<ShareInvite> = emptyList(),
     val events: List<DeviceEvent> = emptyList(),

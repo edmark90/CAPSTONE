@@ -65,9 +65,11 @@ class ProvisioningPairingManager {
   void saveHardwareCalibration(const RuntimeConfig& cfg);
   void loadHardwareCalibration(RuntimeConfig& ioConfig);
 
-  // Persist optional Spark Firebase Auth refresh token so reboots renew cleanly
+  // Persist optional Spark Firebase Auth refresh token & mode so reboots renew cleanly
   void loadSparkRefreshToken(char* outToken, size_t maxLen);
   void saveSparkRefreshToken(const char* token);
+  uint8_t loadSparkAuthMode();
+  void saveSparkAuthMode(uint8_t mode);
 
   // Evaluate cloud /devices/{deviceId}/meta state & epoch
   void handleCloudMetaSnapshot(const char* cloudOwnershipStateStr,
@@ -109,6 +111,11 @@ class ProvisioningPairingManager {
   const char*    setupApSsid() const { return setupApSsid_; }
   bool           isSetupApActive() const { return setupApActive_; }
   bool           isWifiTestInProgress() const { return wifiTestState_ == WifiTestState::TESTING; }
+  bool           isClaimPending() const { return ownershipState_ == OwnershipState::CLAIM_PENDING; }
+  bool           isWifiVerifiedMarkerPending() const {
+    return ownershipState_ == OwnershipState::CLAIM_PENDING && !wifiVerifiedMarkerSent_;
+  }
+  void           markWifiVerifiedMarkerSent() { wifiVerifiedMarkerSent_ = true; }
   uint32_t       lastPairedAtMs() const { return lastPairedAtMs_; }
   OwnershipState ownershipState() const { return ownershipState_; }
   uint32_t       ownershipEpoch() const { return ownershipEpoch_; }
@@ -174,6 +181,9 @@ class ProvisioningPairingManager {
   volatile bool    loggedStaConnected_      = false;
   volatile bool    loggedStaGotIp_          = false;
   bool             clientReadConnectedAck_  = false;
+  bool             serialWifiTestOnly_      = false;
+  bool             wifiVerifiedMarkerSent_  = false;
+  uint32_t         claimPendingStartedAtMs_ = 0;
   char             pendingSsid_[36]         = {0};
   char             pendingPass_[68]         = {0};
   char             pendingBoxName_[36]      = {0};

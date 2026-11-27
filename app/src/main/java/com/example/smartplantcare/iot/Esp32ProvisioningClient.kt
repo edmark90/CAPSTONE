@@ -86,6 +86,20 @@ class Esp32ProvisioningClient(private val appContext: Context) {
     }
 
     /**
+     * Returns true ONLY if [network] has an IPv4 interface on the ESP32 SoftAP subnet (`192.168.4.x`),
+     * preventing `http://192.168.4.1` polls from ever leaking onto a `192.168.1.x` home Wi-Fi router
+     * after the SoftAP switches channels or closes.
+     */
+    private fun isEspSoftApNetwork(network: Network?): Boolean {
+        if (network == null) return false
+        val lp = runCatching { connectivityManager.getLinkProperties(network) }.getOrNull() ?: return false
+        return lp.linkAddresses.any { la ->
+            val host = la.address?.hostAddress.orEmpty()
+            host.startsWith("192.168.4.")
+        }
+    }
+
+    /**
      * Checks all Android OS prerequisites required for [WifiManager.getScanResults] to return
      * nearby Wi-Fi networks (Wi-Fi ON, Precise Location granted, System Location/GPS ON).
      */
@@ -412,7 +426,8 @@ class Esp32ProvisioningClient(private val appContext: Context) {
         displayName: String,
         ownerUid: String,
         nextOwnershipEpoch: Long,
-        onStatusUpdate: (String) -> Unit = {}
+        onStatusUpdate: (String) -> Unit = {},
+        onSoftApInterruptedCheckCloud: (suspend () -> Boolean)? = null
     ): ProvisionResult = withContext(Dispatchers.IO) {
         runCatching {
             val cleanSsid = IotDomainLogic.sanitizeWifiSsid(wifiSsid)
@@ -478,17 +493,49 @@ class Esp32ProvisioningClient(private val appContext: Context) {
             while (System.currentTimeMillis() < pollDeadlineMs) {
                 val secLeft = ((pollDeadlineMs - System.currentTimeMillis()) / 1000L).coerceAtLeast(1L)
 
-                // Dynamically pick up refreshed boundNetwork or active Wi-Fi network if SoftAP hopped/reappeared
-                val currentNet = boundNetwork ?: connectivityManager.allNetworks.firstOrNull { net ->
-                    connectivityManager.getNetworkCapabilities(net)
-                        ?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+                // Only use boundNetwork or a verified 192.168.4.x ESP32 SoftAP network — NEVER route
+                // 192.168.4.1 onto the phone's home Wi-Fi router when SoftAP hops channels!
+                val currentNet = boundNetwork?.takeIf { isEspSoftApNetwork(it) }
+                    ?: connectivityManager.allNetworks.firstOrNull { net ->
+                        connectivityManager.getNetworkCapabilities(net)
+                            ?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true &&
+                            isEspSoftApNetwork(net)
+                    }
+
+                if (currentNet == null) {
+                    consecutiveNetErrors++
+                    Log.w(TAG, "ESP32 SoftAP link dropped during router test (#$consecutiveNetErrors) — probing cloud fallback")
+                    onStatusUpdate("ESP32 switched to router channel — checking cloud link... (${secLeft}s)")
+                    if (onSoftApInterruptedCheckCloud != null && runCatching { onSoftApInterruptedCheckCloud() }.getOrDefault(false)) {
+                        return@withContext ProvisionResult(
+                            success = true,
+                            deviceId = initialDeviceId,
+                            displayName = initialDisplayName,
+                            ownershipEpoch = initialEpoch
+                        )
+                    }
+                    // Release WifiNetworkSpecifier quickly after 3 misses (~4.5s) so Android restores
+                    // full home Wi-Fi / mobile data internet for Stage 2/3 cloud verification!
+                    if (consecutiveNetErrors >= 3) {
+                        return@withContext ProvisionResult(
+                            success = false,
+                            deviceId = initialDeviceId,
+                            displayName = initialDisplayName,
+                            ownershipEpoch = initialEpoch,
+                            contactLostAfterAccept = true,
+                            errorMessage = "Could not verify Wi-Fi connection on ESP32. Please check your Wi-Fi password (2.4 GHz) and reconnect to SPC-SETUP."
+                        )
+                    }
+                    delay(1500L)
+                    continue
                 }
+
                 if (currentNet != activePollNetwork) {
                     activePollNetwork = currentNet
                     pollClient = buildHttpClient(
                         network = activePollNetwork,
-                        connectTimeoutMs = 2500L,
-                        readTimeoutMs = 3000L
+                        connectTimeoutMs = 2200L,
+                        readTimeoutMs = 2800L
                     )
                 }
 
@@ -513,18 +560,28 @@ class Esp32ProvisioningClient(private val appContext: Context) {
                     consecutiveNetErrors++
                     Log.w(TAG, "Poll /api/provision-status transient miss #$consecutiveNetErrors (http=$httpCode)")
                     onStatusUpdate("ESP32 is testing router connection... (${secLeft}s)")
-                    // Allow up to 10 misses (~18s) while ESP32 tests router channel / pure-STA fallback
-                    if (consecutiveNetErrors >= 10) {
+                    if (consecutiveNetErrors >= 3 && onSoftApInterruptedCheckCloud != null) {
+                        if (runCatching { onSoftApInterruptedCheckCloud() }.getOrDefault(false)) {
+                            return@withContext ProvisionResult(
+                                success = true,
+                                deviceId = initialDeviceId,
+                                displayName = initialDisplayName,
+                                ownershipEpoch = initialEpoch
+                            )
+                        }
+                    }
+                    // Hand off to Stage 2/3 cloud check after 6 consecutive HTTP misses so phone regains internet promptly
+                    if (consecutiveNetErrors >= 6) {
                         return@withContext ProvisionResult(
                             success = false,
                             deviceId = initialDeviceId,
                             displayName = initialDisplayName,
                             ownershipEpoch = initialEpoch,
                             contactLostAfterAccept = true,
-                            errorMessage = "Lost contact with ESP32 while checking Wi-Fi password. Reconnect to SPC-SETUP and try again."
+                            errorMessage = "Could not verify Wi-Fi connection on ESP32. Please check your Wi-Fi password (2.4 GHz) and reconnect to SPC-SETUP."
                         )
                     }
-                    delay(1800L)
+                    delay(1600L)
                     continue
                 }
 

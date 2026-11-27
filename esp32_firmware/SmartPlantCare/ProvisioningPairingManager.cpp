@@ -21,8 +21,9 @@ constexpr uint32_t    RETRY_SETTLE_DELAY_MS     = 400UL;    // Pause between con
 constexpr uint32_t    AP_STA_PHASE_MAX_MS       = 16000UL;  // Max time in dual AP+STA before pure-STA fallback
 constexpr uint32_t    PURE_STA_PHASE_MAX_MS     = 10000UL;  // Max time in pure-STA fallback
 constexpr uint32_t    WIFI_L2_CONFIRM_HOLD_MS   = 2500UL;   // 2.5s stable STA_CONNECTED proves WPA2 key valid
-constexpr uint32_t    AP_CLOSE_GRACE_MS         = 8000UL;   // Keep AP open up to 8s so Android reads CONNECTED
-constexpr uint32_t    AP_CLOSE_AFTER_ACK_MS     = 1500UL;   // Close AP 1.5s after Android confirms CONNECTED
+constexpr uint32_t    AP_CLOSE_GRACE_MS         = 14000UL;  // Keep AP open up to 14s so Android reads CONNECTED
+constexpr uint32_t    AP_CLOSE_AFTER_ACK_MS     = 1200UL;   // Close AP 1.2s after Android confirms CONNECTED
+constexpr uint32_t    CLAIM_PENDING_TIMEOUT_MS  = 75000UL;  // Auto-rollback to UNCLAIMED if Firebase has no ownerUid within 75s
 
 struct WifiScanEntry {
   char    ssid[33];
@@ -178,9 +179,15 @@ void ProvisioningPairingManager::begin(RuntimeConfig& ioConfig) {
   if (resetAckPendingToCloud_ && !hasWifiCredentials()) {
     ownershipState_ = OwnershipState::RESET_PENDING;
     Serial.println(F("[PROV] Resumed incomplete RESET_PENDING checkpoint from NVS."));
+  } else if (!hasWifiCredentials() && ownershipState_ != OwnershipState::UNCLAIMED) {
+    // Safety invariant: without saved Wi-Fi credentials in NVS, box cannot be OWNED — reset to UNCLAIMED
+    ownershipState_         = OwnershipState::UNCLAIMED;
+    resetAckPendingToCloud_ = false;
+    prefs_.putUChar("ownState", static_cast<uint8_t>(OwnershipState::UNCLAIMED));
+    prefs_.putBool("rstPending", false);
+    Serial.println(F("[PROV] Cleared stale non-UNCLAIMED state (no saved Wi-Fi credentials in NVS)."));
   } else if (hasWifiCredentials() && ownershipState_ != OwnershipState::OWNED) {
-    // Self-heal: if Wi-Fi credentials exist in NVS from a completed pairing, ensure the board
-    // boots in OWNED station mode so power-cycling NEVER drops an active owner offline!
+    // If NVS has saved Wi-Fi from a previously completed claim, boot in OWNED so cloud /meta can verify ownerUid
     ownershipState_         = OwnershipState::OWNED;
     if (ownershipEpoch_ == 0) {
       ownershipEpoch_ = 1;
@@ -189,7 +196,7 @@ void ProvisioningPairingManager::begin(RuntimeConfig& ioConfig) {
     prefs_.putUChar("ownState", static_cast<uint8_t>(OwnershipState::OWNED));
     prefs_.putULong("ownEpoch", ownershipEpoch_);
     prefs_.putBool("rstPending", false);
-    Serial.println(F("[PROV] Self-healed NVS ownershipState -> OWNED (saved Wi-Fi credentials present)."));
+    Serial.println(F("[PROV] Restored NVS ownershipState -> OWNED (will verify cloud ownerUid on connect)."));
   }
 
   prefs_.end();
@@ -315,6 +322,8 @@ void ProvisioningPairingManager::queueLiveWifiCredentialTest(const char* ssid,
   wifiTestPhase_           = WifiTestPhase::NONE;
   pendingApShutdown_       = false;
   clientReadConnectedAck_  = false;
+  serialWifiTestOnly_      = false;
+  wifiVerifiedMarkerSent_  = false;
   connectProfileIdx_       = 0;
   pureStaRetryUsed_        = false;
   ignoreDisconnectEvents_  = false;
@@ -366,6 +375,7 @@ void ProvisioningPairingManager::startSerialWifiTest(const char* ssid, const cha
     return;
   }
   queueLiveWifiCredentialTest(ssid, password ? password : "", displayName_, ownershipEpoch_ + 1);
+  serialWifiTestOnly_ = true;
   wifiTestActionAtMs_ = millis();  // Start immediately from Serial CLI
 }
 
@@ -462,7 +472,11 @@ void ProvisioningPairingManager::launchWifiConnectAttempt(uint8_t profileIdx, bo
   // Use WIFI_AUTH_WEP minimum threshold when password is provided so WPA, WPA2, WPA/WPA2,
   // WPA3, and WPA2/WPA3 routers are ALL accepted without false AUTHMODE_THRESHOLD (211) drops.
   const wifi_auth_mode_t minAuth = (passLen > 0) ? WIFI_AUTH_WEP : WIFI_AUTH_OPEN;
-  WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
+  const bool hasKnownChannel =
+      (cached != nullptr && cached->channel >= 1 && cached->channel <= 13);
+  const wifi_scan_method_t scanMethod =
+      (profileIdx == 0 && hasKnownChannel) ? WIFI_FAST_SCAN : WIFI_ALL_CHANNEL_SCAN;
+  WiFi.setScanMethod(scanMethod);
   WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
   WiFi.setMinSecurity(minAuth);
 
@@ -476,7 +490,7 @@ void ProvisioningPairingManager::launchWifiConnectAttempt(uint8_t profileIdx, bo
   memset(&conf, 0, sizeof(conf));
   esp_err_t getErr = esp_wifi_get_config(WIFI_IF_STA, &conf);
   if (getErr == ESP_OK) {
-    conf.sta.scan_method        = WIFI_ALL_CHANNEL_SCAN;
+    conf.sta.scan_method        = scanMethod;
     conf.sta.sort_method        = WIFI_CONNECT_AP_BY_SIGNAL;
     conf.sta.threshold.rssi     = -127;
     conf.sta.threshold.authmode = minAuth;
@@ -486,6 +500,11 @@ void ProvisioningPairingManager::launchWifiConnectAttempt(uint8_t profileIdx, bo
       conf.sta.channel   = static_cast<uint8_t>(cached->channel);
       conf.sta.bssid_set = 1;
       memcpy(conf.sta.bssid, cached->bssid, 6);
+    } else if (profileIdx == 0 && hasKnownChannel) {
+      // Fast-scan directly on the router's scanned channel first to avoid 2.5s 13-channel SoftAP blackouts
+      conf.sta.channel   = static_cast<uint8_t>(cached->channel);
+      conf.sta.bssid_set = 0;
+      memset(conf.sta.bssid, 0, 6);
     } else {
       conf.sta.channel   = 0;
       conf.sta.bssid_set = 0;
@@ -542,29 +561,46 @@ void ProvisioningPairingManager::finalizeWifiTestSuccess(
   WiFi.setTxPower(WIFI_POWER_19_5dBm);
   WiFi.setAutoReconnect(true);
 
-  saveDisplayName(pendingBoxName_);
-  saveWifiCredentials(pendingSsid_, pendingPass_);
-  handleCloudMetaSnapshot(
-      "OWNED", pendingNextEpoch_, false, ioConfig, relays, irrigation, buzzer, events, lcd);
+  if (serialWifiTestOnly_) {
+    saveDisplayName(pendingBoxName_);
+    saveWifiCredentials(pendingSsid_, pendingPass_);
+    handleCloudMetaSnapshot(
+        "OWNED", pendingNextEpoch_, false, ioConfig, relays, irrigation, buzzer, events, lcd);
+  } else {
+    // STRICT TWO-PHASE PAIRING:
+    // Hold Wi-Fi & custom displayName in RAM ONLY and enter CLAIM_PENDING (NOT OWNED!).
+    // NVS ownership & Wi-Fi are ONLY persisted once Firebase /meta confirms a real ownerUid!
+    // If Android fails or cancels before claiming in Firebase, 75s watchdog rolls back to UNCLAIMED!
+    snprintf(displayName_, sizeof(displayName_), "%s",
+             strlen(pendingBoxName_) > 0 ? pendingBoxName_ : DEFAULT_DISPLAY_NAME);
+    snprintf(wifiSsid_, sizeof(wifiSsid_), "%s", pendingSsid_);
+    snprintf(wifiPassword_, sizeof(wifiPassword_), "%s", pendingPass_);
+    ownershipState_          = OwnershipState::CLAIM_PENDING;
+    ownershipEpoch_          = pendingNextEpoch_;
+    claimPendingStartedAtMs_ = (nowMs == 0) ? 1UL : nowMs;
+    wifiVerifiedMarkerSent_  = false;
+    resetAckPendingToCloud_  = false;
+    events.setIdentity(deviceId_, bootId_, ownershipEpoch_);
 
-  // Guarantee audible confirmation beep on GPIO18 upon successful Wi-Fi connection!
-  buzzer.clearEventLatch(BuzzerEventId::PAIRING_SUCCESS);
-  buzzer.triggerEventTransition(BuzzerEventId::PAIRING_SUCCESS);
+    buzzer.clearEventLatch(BuzzerEventId::WIFI_CONNECTED_SUCCESS);
+    buzzer.triggerEventTransition(BuzzerEventId::WIFI_CONNECTED_SUCCESS);
+
+    lcd.triggerTemporaryOverlay(
+        displayName_,
+        "WIFI VERIFIED!",
+        gotValidIp ? WiFi.localIP().toString().c_str() : "ROUTER LINK OK",
+        "FINISHING CLAIM...",
+        5000);
+  }
 
   const int32_t activeCh = WiFi.channel();
-  Serial.printf("[PROV] Wi-Fi PASSWORD VERIFIED (%s)! Connected to '%s' (IP=%s, ch=%ld, RSSI=%d dBm). Buzzer beeped!\n",
+  Serial.printf("[PROV] Wi-Fi PASSWORD VERIFIED (%s)! Connected to '%s' (IP=%s, ch=%ld, RSSI=%d dBm). State=%s (awaiting Firebase owner binding).\n",
                 gotValidIp ? "GOT_IP" : "STA_WPA_HANDSHAKE_OK",
                 pendingSsid_,
                 gotValidIp ? WiFi.localIP().toString().c_str() : "pending-dhcp",
                 static_cast<long>(activeCh),
-                WiFi.RSSI());
-
-  lcd.triggerTemporaryOverlay(
-      displayName_,
-      "WIFI CONNECTED!",
-      gotValidIp ? WiFi.localIP().toString().c_str() : "PASSWORD VERIFIED",
-      "DEVICE PAIRED",
-      5000);
+                WiFi.RSSI(),
+                ownershipStateToString(ownershipState_));
 
   // If Tier 2 pure-STA succeeded while SoftAP was paused, briefly re-open SoftAP on the
   // router's EXACT channel so Android can read CONNECTED if it rejoined; then close cleanly.
@@ -818,7 +854,7 @@ void ProvisioningPairingManager::registerHttpRoutes(
       resp["success"]        = true;
       resp["displayName"]    = displayName_;
       resp["ipAddress"]      = WiFi.localIP().toString();
-      resp["ownershipState"] = "OWNED";
+      resp["ownershipState"] = ownershipStateToString(ownershipState_);
       resp["ownershipEpoch"] = ownershipEpoch_;
       if (!clientReadConnectedAck_) {
         clientReadConnectedAck_ = true;
@@ -890,8 +926,30 @@ void ProvisioningPairingManager::serviceProvisioningPortal(
     BuzzerManager& buzzer,
     EventNotificationManager& events,
     LcdManager& lcd) {
+  // STRICT NO-ORPHAN-OWNER WATCHDOG:
+  // If Wi-Fi succeeded (CLAIM_PENDING) and SoftAP closed, but the Android app never finished
+  // binding an ownerUid in Firebase within 75s, automatically wipe pending RAM Wi-Fi and
+  // return to UNCLAIMED with SPC-SETUP-* open so the box NEVER gets stuck with a phantom owner!
+  if (ownershipState_ == OwnershipState::CLAIM_PENDING &&
+      claimPendingStartedAtMs_ != 0 &&
+      uint32_t(nowMs - claimPendingStartedAtMs_) >= CLAIM_PENDING_TIMEOUT_MS) {
+    Serial.println(F("[PROV] CLAIM_PENDING timed out (75s without Firebase ownerUid) — rolling back to UNCLAIMED and re-opening SPC-SETUP!"));
+    pendingResetTargetEpoch_ = ownershipEpoch_;
+    claimPendingStartedAtMs_ = 0;
+    wifiVerifiedMarkerSent_  = false;
+    pendingApShutdown_       = false;
+    finalizeLocalUnclaimAndEnterSetup(ioConfig, true);
+    lcd.triggerTemporaryOverlay(
+        "CLAIM INCOMPLETE",
+        "NO OWNER BOUND",
+        "REOPENED SETUP:",
+        setupApSsid_,
+        5000);
+    return;
+  }
+
   // CRITICAL: Keep servicing even if SoftAP is temporarily paused during PURE_STA_TEST!
-  if (!setupApActive_ && wifiTestState_ != WifiTestState::TESTING) {
+  if (!setupApActive_ && wifiTestState_ != WifiTestState::TESTING && !pendingApShutdown_) {
     return;
   }
 
@@ -1216,6 +1274,19 @@ void ProvisioningPairingManager::saveSparkRefreshToken(const char* token) {
   prefs_.end();
 }
 
+uint8_t ProvisioningPairingManager::loadSparkAuthMode() {
+  prefs_.begin(NVS_NAMESPACE, true);
+  uint8_t mode = prefs_.getUChar("fbAuthMd", 0);
+  prefs_.end();
+  return mode;
+}
+
+void ProvisioningPairingManager::saveSparkAuthMode(uint8_t mode) {
+  prefs_.begin(NVS_NAMESPACE, false);
+  prefs_.putUChar("fbAuthMd", mode);
+  prefs_.end();
+}
+
 void ProvisioningPairingManager::handleCloudMetaSnapshot(
     const char* cloudOwnershipStateStr,
     uint32_t cloudOwnershipEpoch,
@@ -1229,6 +1300,8 @@ void ProvisioningPairingManager::handleCloudMetaSnapshot(
   OwnershipState cloudState = parseOwnershipState(cloudOwnershipStateStr);
 
   if (resetRequired || cloudState == OwnershipState::RESET_PENDING) {
+    claimPendingStartedAtMs_ = 0;
+    wifiVerifiedMarkerSent_  = false;
     if (!resetAckPendingToCloud_ || ownershipState_ != OwnershipState::RESET_PENDING) {
       initiateResetPendingLifecycle(cloudOwnershipEpoch, relays, irrigation, buzzer, events);
     }
@@ -1239,11 +1312,20 @@ void ProvisioningPairingManager::handleCloudMetaSnapshot(
     bool newlyPaired = (ownershipState_ != OwnershipState::OWNED) ||
                        (cloudOwnershipEpoch > ownershipEpoch_);
 
-    ownershipState_         = OwnershipState::OWNED;
-    ownershipEpoch_         = cloudOwnershipEpoch;
-    resetAckPendingToCloud_ = false;
+    ownershipState_          = OwnershipState::OWNED;
+    ownershipEpoch_          = cloudOwnershipEpoch;
+    resetAckPendingToCloud_  = false;
+    claimPendingStartedAtMs_ = 0;
+    wifiVerifiedMarkerSent_  = true;
 
+    // Persist Wi-Fi credentials, custom displayName, and OWNED state to NVS ONLY NOW
+    // that Firebase /meta has confirmed a real owner!
     prefs_.begin(NVS_NAMESPACE, false);
+    if (strlen(wifiSsid_) > 0) {
+      prefs_.putString("wifiSsid", wifiSsid_);
+      prefs_.putString("wifiPass", wifiPassword_);
+    }
+    prefs_.putString("dispName", displayName_);
     prefs_.putUChar("ownState", static_cast<uint8_t>(ownershipState_));
     prefs_.putULong("ownEpoch", ownershipEpoch_);
     prefs_.putBool("rstPending", false);
@@ -1334,11 +1416,14 @@ void ProvisioningPairingManager::finalizeLocalUnclaimAndEnterSetup(
   prefs_.begin(NVS_NAMESPACE, false);
   loadHardwareCalibration(ioConfig);
 
-  ownershipState_         = OwnershipState::UNCLAIMED;
-  ownershipEpoch_         = pendingResetTargetEpoch_;
-  resetAckPendingToCloud_ = false;
-  wifiTestState_          = WifiTestState::IDLE;
-  wifiTestPhase_          = WifiTestPhase::NONE;
+  ownershipState_          = OwnershipState::UNCLAIMED;
+  ownershipEpoch_          = pendingResetTargetEpoch_;
+  resetAckPendingToCloud_  = false;
+  claimPendingStartedAtMs_ = 0;
+  wifiVerifiedMarkerSent_  = false;
+  pendingApShutdown_       = false;
+  wifiTestState_           = WifiTestState::IDLE;
+  wifiTestPhase_           = WifiTestPhase::NONE;
   snprintf(displayName_, sizeof(displayName_), "%s", DEFAULT_DISPLAY_NAME);
 
   prefs_.putUChar("ownState", static_cast<uint8_t>(OwnershipState::UNCLAIMED));

@@ -199,13 +199,26 @@ class AuthViewModel(private val context: Context? = null) : ViewModel() {
     }
 
     fun signOut() {
-        if (!_uiState.value.isGuest) {
-            auth.signOut()
-        }
-        // Clear guest mode
+        val wasGuest = _uiState.value.isGuest
+        val appContext = context?.applicationContext
+        // Clear guest mode & local UI state immediately
         prefs?.edit()?.putBoolean("is_guest_mode", false)?.apply()
         _userProfile.value = UserProfile()
         _uiState.value = AuthUiState(isAuthenticated = false, isGuest = false)
+
+        if (!wasGuest) {
+            if (appContext != null) {
+                viewModelScope.launch {
+                    runCatching {
+                        com.example.smartplantcare.notification.FcmTokenManager
+                            .unregisterCurrentDeviceToken(appContext)
+                    }
+                    auth.signOut()
+                }
+            } else {
+                auth.signOut()
+            }
+        }
     }
 
     fun refreshAuthState() {

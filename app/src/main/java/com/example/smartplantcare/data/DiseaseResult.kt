@@ -6,5 +6,5 @@ data class DiseaseResult(
     val causes: String,
     val treatment: String,
     val preventionTips: String,
-    val sevenDayPlan: List<String>
+    val careTips: String = treatment
 )

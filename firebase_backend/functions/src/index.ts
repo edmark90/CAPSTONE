@@ -218,7 +218,7 @@ export const createShareInvite = onCall(async (request) => {
   const expiresAt = now + 24 * 60 * 60 * 1000; // 24 hours
   const epoch = Number(metaSnap.child("ownershipEpoch").val() || 1);
 
-  await db.ref(`/devices/${deviceId}/acl/invitations/${inviteCode}`).set({
+  const inviteRecord = {
     inviteCode,
     deviceId,
     role,
@@ -227,7 +227,12 @@ export const createShareInvite = onCall(async (request) => {
     createdAt: now,
     expiresAt,
     status: "PENDING",
-  });
+  };
+
+  const updates: Record<string, unknown> = {};
+  updates[`/devices/${deviceId}/acl/invitations/${inviteCode}`] = inviteRecord;
+  updates[`/sharedInvites/${inviteCode}`] = inviteRecord;
+  await db.ref().update(updates);
 
   return { inviteCode, deviceId, role, expiresAt };
 });
@@ -239,9 +244,26 @@ export const acceptShareInvite = onCall(async (request) => {
     throw new HttpsError("unauthenticated", "Sign in with a full account to accept a device share invite.");
   }
 
-  const { deviceId, inviteCode } = request.data || {};
-  if (typeof deviceId !== "string" || typeof inviteCode !== "string") {
-    throw new HttpsError("invalid-argument", "deviceId and inviteCode are required.");
+  const rawCode = typeof request.data?.inviteCode === "string"
+    ? request.data.inviteCode.trim().toUpperCase()
+    : "";
+  let deviceId = typeof request.data?.deviceId === "string"
+    ? request.data.deviceId.trim()
+    : "";
+
+  if (!rawCode) {
+    throw new HttpsError("invalid-argument", "inviteCode is required.");
+  }
+
+  if (!deviceId) {
+    const sharedSnap = await db.ref(`/sharedInvites/${rawCode}`).get();
+    if (!sharedSnap.exists()) {
+      throw new HttpsError("not-found", "Invitation not found.");
+    }
+    deviceId = String(sharedSnap.child("deviceId").val() || "");
+  }
+  if (!deviceId) {
+    throw new HttpsError("not-found", "Invitation device not found.");
   }
 
   const metaSnap = await db.ref(`/devices/${deviceId}/meta`).get();
@@ -250,7 +272,7 @@ export const acceptShareInvite = onCall(async (request) => {
   }
   const currentEpoch = Number(metaSnap.child("ownershipEpoch").val() || 0);
 
-  const inviteRef = db.ref(`/devices/${deviceId}/acl/invitations/${inviteCode}`);
+  const inviteRef = db.ref(`/devices/${deviceId}/acl/invitations/${rawCode}`);
   const inviteSnap = await inviteRef.get();
   if (!inviteSnap.exists()) {
     throw new HttpsError("not-found", "Invitation not found.");
@@ -267,14 +289,22 @@ export const acceptShareInvite = onCall(async (request) => {
   }
 
   const role = invite.role === "operator" ? "operator" : "viewer";
+  const resolvedProfile = await resolveUserDisplayInfo(uid);
+
   const updates: Record<string, unknown> = {};
-  updates[`/devices/${deviceId}/acl/invitations/${inviteCode}/status`] = "ACCEPTED";
-  updates[`/devices/${deviceId}/acl/invitations/${inviteCode}/acceptedByUid`] = uid;
-  updates[`/devices/${deviceId}/acl/invitations/${inviteCode}/acceptedAt`] = now;
+  updates[`/devices/${deviceId}/acl/invitations/${rawCode}/status`] = "ACCEPTED";
+  updates[`/devices/${deviceId}/acl/invitations/${rawCode}/acceptedByUid`] = uid;
+  updates[`/devices/${deviceId}/acl/invitations/${rawCode}/acceptedAt`] = now;
+  updates[`/sharedInvites/${rawCode}/status`] = "ACCEPTED";
+  updates[`/sharedInvites/${rawCode}/acceptedByUid`] = uid;
+  updates[`/sharedInvites/${rawCode}/acceptedAt`] = now;
   updates[`/devices/${deviceId}/acl/members/${uid}`] = {
     role,
+    email: resolvedProfile.email,
+    displayName: resolvedProfile.displayName,
     addedAt: now,
     addedBy: invite.createdByUid,
+    inviteCode: rawCode,
   };
   updates[`/users/${uid}/devices/${deviceId}`] = {
     role,
@@ -286,6 +316,80 @@ export const acceptShareInvite = onCall(async (request) => {
   return { success: true, deviceId, role };
 });
 
+async function resolveUserDisplayInfo(
+  uid: string,
+  deviceIdForAclFallback?: string
+): Promise<{ displayName: string; email: string }> {
+  let displayName = "";
+  let email = "";
+
+  if (deviceIdForAclFallback) {
+    const aclMemberSnap = await db
+      .ref(`/devices/${deviceIdForAclFallback}/acl/members/${uid}`)
+      .get();
+    if (aclMemberSnap.exists()) {
+      displayName = String(aclMemberSnap.child("displayName").val() || "").trim();
+      email = String(aclMemberSnap.child("email").val() || "").trim();
+    }
+  }
+
+  if (!displayName || !email) {
+    const rtdbProfileSnap = await db.ref(`/users/${uid}/profile`).get();
+    if (rtdbProfileSnap.exists()) {
+      if (!displayName) {
+        displayName = String(
+          rtdbProfileSnap.child("displayName").val() ||
+            rtdbProfileSnap.child("name").val() ||
+            ""
+        ).trim();
+      }
+      if (!email) {
+        email = String(rtdbProfileSnap.child("email").val() || "").trim();
+      }
+    }
+  }
+
+  if (!displayName || !email) {
+    try {
+      const fsDoc = await firestore.collection("users").doc(uid).get();
+      if (fsDoc.exists) {
+        const data = fsDoc.data() || {};
+        if (!displayName) {
+          displayName = String(data.name || data.displayName || "").trim();
+        }
+        if (!email) {
+          email = String(data.email || "").trim();
+        }
+      }
+    } catch {
+      // Non-fatal fallback
+    }
+  }
+
+  if (!displayName || !email) {
+    try {
+      const authUser = await admin.auth().getUser(uid);
+      if (!displayName) {
+        displayName = String(authUser.displayName || "").trim();
+      }
+      if (!email) {
+        email = String(authUser.email || "").trim();
+      }
+    } catch {
+      // Non-fatal fallback
+    }
+  }
+
+  if (!displayName && email.includes("@")) {
+    displayName = email.split("@")[0];
+  }
+
+  return {
+    displayName: displayName || "Device Owner",
+    email,
+  };
+}
+
 export const revokeMemberAccess = onCall(async (request) => {
   const callerUid = request.auth?.uid;
   if (!callerUid) {
@@ -293,12 +397,21 @@ export const revokeMemberAccess = onCall(async (request) => {
   }
 
   const { deviceId, targetUid } = request.data || {};
-  if (typeof deviceId !== "string" || typeof targetUid !== "string") {
+  if (typeof deviceId !== "string" || typeof targetUid !== "string" || !deviceId || !targetUid) {
     throw new HttpsError("invalid-argument", "deviceId and targetUid are required.");
   }
 
-  const metaSnap = await db.ref(`/devices/${deviceId}/meta`).get();
-  const ownerUid = String(metaSnap.child("ownerUid").val() || "");
+  const [metaSnap, aclOwnerSnap, memberSnap, userLinkSnap] = await Promise.all([
+    db.ref(`/devices/${deviceId}/meta`).get(),
+    db.ref(`/devices/${deviceId}/acl/ownerUid`).get(),
+    db.ref(`/devices/${deviceId}/acl/members/${targetUid}`).get(),
+    db.ref(`/users/${targetUid}/devices/${deviceId}`).get(),
+  ]);
+
+  const ownerUid = String(aclOwnerSnap.val() || metaSnap.child("ownerUid").val() || "");
+  if (!ownerUid) {
+    throw new HttpsError("not-found", "Device owner could not be verified.");
+  }
 
   if (targetUid === ownerUid) {
     throw new HttpsError("failed-precondition", "Owner cannot be revoked via member removal; use unclaimDevice.");
@@ -307,12 +420,121 @@ export const revokeMemberAccess = onCall(async (request) => {
     throw new HttpsError("permission-denied", "Only the owner or the member themselves can remove access.");
   }
 
+  // Prevent duplicate revocation events/notifications if the member was already removed
+  if (!memberSnap.exists() && !userLinkSnap.exists()) {
+    return { success: true, deviceId, removedUid: targetUid, alreadyRemoved: true };
+  }
+
+  const now = Date.now();
+  const isOwnerInitiatedRevocation = callerUid === ownerUid;
+  const deviceName = String(metaSnap.child("displayName").val() || "").trim() || "SmartPlantCare Box";
+  const eventId = `rev_${now}_${crypto.randomBytes(6).toString("hex")}`;
+
   const updates: Record<string, unknown> = {};
   updates[`/devices/${deviceId}/acl/members/${targetUid}`] = null;
   updates[`/users/${targetUid}/devices/${deviceId}`] = null;
+
+  // Invalidate any invite codes previously accepted by targetUid so they cannot be reused
+  const invitationsSnap = await db.ref(`/devices/${deviceId}/acl/invitations`).get();
+  if (invitationsSnap.exists()) {
+    invitationsSnap.forEach((invChild) => {
+      const code = invChild.key;
+      if (!code) return;
+      const acceptedBy = String(invChild.child("acceptedByUid").val() || "");
+      const memberInviteCode = String(memberSnap.child("inviteCode").val() || "");
+      if (acceptedBy === targetUid || (memberInviteCode && code === memberInviteCode)) {
+        updates[`/devices/${deviceId}/acl/invitations/${code}/status`] = "REVOKED";
+        updates[`/devices/${deviceId}/acl/invitations/${code}/revokedAt`] = now;
+        updates[`/sharedInvites/${code}`] = null;
+      }
+    });
+  }
+
+  let ownerName = "Device Owner";
+  if (isOwnerInitiatedRevocation) {
+    const ownerInfo = await resolveUserDisplayInfo(ownerUid, deviceId);
+    ownerName = ownerInfo.displayName;
+
+    // Single source of truth: atomically persist immutable revocation event with membership removal
+    updates[`/users/${targetUid}/revocations/${eventId}`] = {
+      eventId,
+      type: "ACCESS_REVOKED",
+      deviceId,
+      deviceName,
+      ownerUid,
+      ownerName,
+      revokedAt: now,
+      acknowledged: false,
+    };
+  }
+
+  // Commit atomic access revocation + revocation record first
   await db.ref().update(updates);
 
-  return { success: true, deviceId, removedUid: targetUid };
+  // Dispatch targeted data-only FCM push ONLY after revocation is confirmed, and ONLY to targetUid.
+  // Push failure never reverses revocation because the persistent revocation record is already stored.
+  if (isOwnerInitiatedRevocation) {
+    try {
+      const tokensSnap = await db.ref(`/users/${targetUid}/fcmTokens`).get();
+      const tokenEntries: Array<{ tokenId: string; token: string }> = [];
+      if (tokensSnap.exists()) {
+        tokensSnap.forEach((tokChild) => {
+          const tok = tokChild.child("token").val();
+          if (typeof tok === "string" && tok.length >= 20 && tokChild.key) {
+            tokenEntries.push({ tokenId: tokChild.key, token: tok });
+          }
+        });
+      }
+
+      if (tokenEntries.length > 0) {
+        const notifTitle = "Monitoring Access Removed";
+        const notifBody = `${ownerName} has removed your monitoring access to ${deviceName}.`;
+        const multicastResponse = await admin.messaging().sendEachForMulticast({
+          tokens: tokenEntries.map((t) => t.token),
+          data: {
+            type: "ACCESS_REVOKED",
+            eventId,
+            targetUid,
+            deviceId,
+            deviceName,
+            ownerUid,
+            ownerName,
+            revokedAt: String(now),
+            title: notifTitle,
+            body: notifBody,
+          },
+          android: {
+            priority: "high",
+          },
+        });
+
+        const pruneUpdates: Record<string, null> = {};
+        multicastResponse.responses.forEach((resp, idx) => {
+          if (!resp.success && resp.error) {
+            const code = resp.error.code;
+            if (
+              code === "messaging/registration-token-not-registered" ||
+              code === "messaging/invalid-registration-token"
+            ) {
+              pruneUpdates[`/users/${targetUid}/fcmTokens/${tokenEntries[idx].tokenId}`] = null;
+            }
+          }
+        });
+        if (Object.keys(pruneUpdates).length > 0) {
+          await db.ref().update(pruneUpdates);
+        }
+      }
+    } catch (fcmError) {
+      console.error("Failed to dispatch ACCESS_REVOKED FCM push (revocation still committed):", fcmError);
+    }
+  }
+
+  return {
+    success: true,
+    deviceId,
+    removedUid: targetUid,
+    eventId: isOwnerInitiatedRevocation ? eventId : null,
+  };
 });
 
 // ============================================================================

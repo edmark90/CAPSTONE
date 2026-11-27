@@ -138,7 +138,7 @@ fun ResultScreen(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = if (isHealthy) "Save Healthy Record & 7-Day Care" else "Save & View 7-Day Treatment Plan",
+                                text = if (isHealthy) "Save Healthy Record & View Care Guide" else "Save Plant & View Care Guide",
                                 fontFamily = HomeInterFont,
                                 fontSize = 14.sp,
                                 lineHeight = 18.sp,

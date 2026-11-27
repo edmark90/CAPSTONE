@@ -14,7 +14,6 @@
     <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" />
 
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <application
         android:allowBackup="true"
@@ -51,20 +50,20 @@
         </provider>
 
         <receiver
-            android:name=".notification.AlarmReceiver"
-            android:exported="true" />
-
-        <receiver
-            android:name=".notification.DailyReminderReceiver"
-            android:exported="true" />
-
-        <receiver
             android:name=".notification.BootReceiver"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+
+        <service
+            android:name=".notification.SmartPlantCareMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
 
         <!-- Required: set your sentry.io project identifier (DSN) -->
         <meta-data android:name="io.sentry.dsn" android:value="https://600b7f89c5bcaa8961044db2a7a18529@o4511892134690816.ingest.us.sentry.io/4511892136525824" />

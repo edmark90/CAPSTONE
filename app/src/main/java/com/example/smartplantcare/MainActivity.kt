@@ -11,27 +11,32 @@ import androidx.compose.runtime.setValue
 import androidx.core.view.WindowCompat
 import coil.ImageLoader
 import com.example.smartplantcare.navigation.AppNavigation
-import com.example.smartplantcare.notification.DailyAlarmScheduler
+import com.example.smartplantcare.notification.LegacyTreatmentCleanup
 import com.example.smartplantcare.notification.NotificationHelper
 import com.example.smartplantcare.ui.theme.SmartPlantCareTheme
 import com.example.smartplantcare.ui.theme.screens.homescreen.SettingsViewModel
 import com.example.smartplantcare.util.NetworkMonitor
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import java.util.Locale
 
 class MainActivity : ComponentActivity() {
 
-    var pendingPlanId by mutableStateOf<String?>(null)
+    var pendingAccessRevokedSync by mutableStateOf(false)
         private set
 
-    fun consumePendingPlanId() {
-        pendingPlanId = null
-        intent?.removeExtra("plan_id")
+    fun consumePendingAccessRevokedSync() {
+        pendingAccessRevokedSync = false
+        intent?.removeExtra(NotificationHelper.EXTRA_NOTIFICATION_TYPE)
+        intent?.removeExtra(NotificationHelper.EXTRA_EVENT_ID)
+        intent?.removeExtra(NotificationHelper.EXTRA_DEVICE_ID)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        pendingPlanId = intent?.getStringExtra("plan_id")?.takeIf { it.isNotBlank() }
+        handleNotificationIntent(intent)
 
         // Apply saved language preference before UI is created
         SettingsViewModel.setAppLanguage(applicationContext)
@@ -41,35 +46,12 @@ class MainActivity : ComponentActivity() {
 
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
-        // Create notification channel for treatment reminders
+        // Create active notification channels (IoT Alerts, Device Access Alerts)
         NotificationHelper.createChannel(applicationContext)
 
-        // Ensure daily reminder alarms respect saved user settings (enabled state and time)
-        val prefs = applicationContext.getSharedPreferences("smartplantcare_settings", MODE_PRIVATE)
-        if (prefs.getBoolean("morning_reminder", true)) {
-            DailyAlarmScheduler.schedule(
-                applicationContext,
-                "morning_reminder",
-                prefs.getInt("morning_hour", 8),
-                prefs.getInt("morning_minute", 0),
-                "\uD83C\uDF05 Good Morning!",
-                "Time to check on your plants and start the day's care routine."
-            )
-        } else {
-            DailyAlarmScheduler.cancel(applicationContext, "morning_reminder")
-        }
-
-        if (prefs.getBoolean("evening_reminder", true)) {
-            DailyAlarmScheduler.schedule(
-                applicationContext,
-                "evening_reminder",
-                prefs.getInt("evening_hour", 18),
-                prefs.getInt("evening_minute", 0),
-                "\uD83C\uDF06 Good Evening!",
-                "Don't forget to give your plants evening care before the night."
-            )
-        } else {
-            DailyAlarmScheduler.cancel(applicationContext, "evening_reminder")
+        // One-time cleanup of any legacy 7-day treatment & daily reminder alarms, channels, and prefs
+        CoroutineScope(Dispatchers.IO).launch {
+            LegacyTreatmentCleanup.runOnceIfNeeded(applicationContext)
         }
 
         // Configure Coil ImageLoader with optimized caching
@@ -102,8 +84,15 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        intent.getStringExtra("plan_id")?.takeIf { it.isNotBlank() }?.let {
-            pendingPlanId = it
+        handleNotificationIntent(intent)
+    }
+
+    private fun handleNotificationIntent(intent: Intent?) {
+        if (intent == null) return
+        val notifType = intent.getStringExtra(NotificationHelper.EXTRA_NOTIFICATION_TYPE)
+            ?: intent.getStringExtra("type")
+        if (notifType == NotificationHelper.TYPE_ACCESS_REVOKED) {
+            pendingAccessRevokedSync = true
         }
     }
 

@@ -7,6 +7,7 @@ import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.ValueEventListener
+import com.google.firebase.functions.FirebaseFunctions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.awaitClose
@@ -235,6 +236,104 @@ class IotFirebaseRepository {
         awaitClose { ref.removeEventListener(listener) }
     }
 
+    suspend fun fetchUserRevocationsViaRest(uid: String): Result<List<AccessRevocationEvent>> = runCatching {
+        val resp = executeAuthenticatedRest(
+            method = "GET",
+            pathWithJsonAndOptionalQuery = "/users/$uid/revocations.json",
+            requireAuth = true
+        )
+        if (resp.code !in 200..299) {
+            throw IllegalStateException("User revocations REST returned HTTP ${resp.code}")
+        }
+        val trimmed = resp.body.trim()
+        if (trimmed.isEmpty() || trimmed == "null") {
+            emptyList()
+        } else {
+            val obj = JSONObject(trimmed)
+            val list = mutableListOf<AccessRevocationEvent>()
+            val keys = obj.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                val child = obj.optJSONObject(key) ?: continue
+                val eventId = child.str("eventId", key).ifBlank { key }
+                val deviceId = child.str("deviceId", "")
+                if (deviceId.isBlank()) continue
+                list.add(
+                    AccessRevocationEvent(
+                        eventId = eventId,
+                        deviceId = deviceId,
+                        deviceName = child.str("deviceName", "SmartPlantCare Box").ifBlank { "SmartPlantCare Box" },
+                        ownerUid = child.str("ownerUid", ""),
+                        ownerName = child.str("ownerName", "Device Owner").ifBlank { "Device Owner" },
+                        revokedAt = child.lng("revokedAt", 0L),
+                        acknowledged = child.optBoolean("acknowledged", false)
+                    )
+                )
+            }
+            list.sortedByDescending { it.revokedAt }
+        }
+    }
+
+    fun observeUserRevocations(uid: String): Flow<List<AccessRevocationEvent>> = callbackFlow {
+        runCatching { db.goOnline() }
+        val ref = rootRef.child("users").child(uid).child("revocations")
+        runCatching { ref.keepSynced(true) }
+        val listener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val list = snapshot.children.mapNotNull { child ->
+                    val key = child.key ?: return@mapNotNull null
+                    val eventId = child.child("eventId").getValue(String::class.java)?.takeIf { it.isNotBlank() } ?: key
+                    val deviceId = child.child("deviceId").getValue(String::class.java).orEmpty()
+                    if (deviceId.isBlank()) return@mapNotNull null
+                    AccessRevocationEvent(
+                        eventId = eventId,
+                        deviceId = deviceId,
+                        deviceName = child.child("deviceName").getValue(String::class.java)
+                            ?.takeIf { it.isNotBlank() } ?: "SmartPlantCare Box",
+                        ownerUid = child.child("ownerUid").getValue(String::class.java).orEmpty(),
+                        ownerName = child.child("ownerName").getValue(String::class.java)
+                            ?.takeIf { it.isNotBlank() } ?: "Device Owner",
+                        revokedAt = child.child("revokedAt").asLong(0L),
+                        acknowledged = child.child("acknowledged").asBool(false)
+                    )
+                }.sortedByDescending { it.revokedAt }
+                trySend(list)
+            }
+
+            override fun onCancelled(error: DatabaseError) {
+                Log.w(TAG, "observeUserRevocations cancelled: ${error.message}")
+            }
+        }
+        ref.addValueEventListener(listener)
+        awaitClose { ref.removeEventListener(listener) }
+    }
+
+    suspend fun acknowledgeRevocation(uid: String, eventId: String): Result<Unit> = runCatching {
+        if (uid.isBlank() || eventId.isBlank()) return@runCatching
+        val now = System.currentTimeMillis()
+        val ref = rootRef.child("users").child(uid).child("revocations").child(eventId)
+        val payload = JSONObject().apply {
+            put("acknowledged", true)
+            put("acknowledgedAt", now)
+        }.toString()
+        val restRes = runCatching {
+            executeAuthenticatedRest(
+                method = "PATCH",
+                pathWithJsonAndOptionalQuery = "/users/$uid/revocations/$eventId.json",
+                jsonBody = payload,
+                requireAuth = true
+            )
+        }.getOrNull()
+        if (restRes == null || restRes.code !in 200..299) {
+            ref.updateChildren(
+                mapOf(
+                    "acknowledged" to true,
+                    "acknowledgedAt" to now
+                )
+            ).await()
+        }
+    }
+
     fun observeDevice(deviceId: String): Flow<LiveDeviceSnapshot?> = callbackFlow {
         runCatching { db.goOnline() }
         val ref = rootRef.child("devices").child(deviceId)
@@ -401,32 +500,68 @@ class IotFirebaseRepository {
     }
 
     /**
-     * Checks whether the ESP32 unit has already verified Wi-Fi and checked in online to Firebase
-     * (used as a seamless cloud verification fallback if SoftAP temporarily paused during pure-STA test).
+     * Fast authenticated HTTPS/2 REST check (avoiding post-SoftAP WebSocket stalls) to determine
+     * whether the ESP32 unit has verified the router Wi-Fi password and checked in online to Firebase.
+     * Supports both:
+     * 1) Two-phase `CLAIM_PENDING` non-owning stamp (`wifiVerifiedEpoch >= expectedEpoch`), and
+     * 2) Legacy firmware check-in (`ownershipState == "OWNED"` without another owner, or fresh `/status`).
      */
     suspend fun isDeviceProvisionedOnline(
         deviceId: String,
         expectedEpoch: Long,
         minEpochTimestampMs: Long
-    ): Boolean = runCatching {
-        val deviceSnap = rootRef.child("devices").child(deviceId).get().await()
-        if (!deviceSnap.exists()) return@runCatching false
+    ): Boolean = withContext(Dispatchers.IO) {
+        runCatching {
+            val currentUid = FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
+            val metaResp = executeAuthenticatedRest(
+                method = "GET",
+                pathWithJsonAndOptionalQuery = "/devices/$deviceId/meta.json",
+                requireAuth = true
+            )
+            if (metaResp.code in 200..299) {
+                val trimmed = metaResp.body.trim()
+                if (trimmed.startsWith("{")) {
+                    val metaJson = JSONObject(trimmed)
+                    val wifiVerifiedEpoch = metaJson.lng("wifiVerifiedEpoch", 0L)
+                    val wifiVerifiedAt = metaJson.lng("wifiVerifiedAt", 0L)
+                    if (wifiVerifiedEpoch >= expectedEpoch &&
+                        (wifiVerifiedAt == 0L || wifiVerifiedAt >= minEpochTimestampMs)
+                    ) {
+                        return@runCatching true
+                    }
 
-        val metaSnap = deviceSnap.child("meta")
-        val state = metaSnap.child("ownershipState").getValue(String::class.java).orEmpty()
-        val metaEpoch = metaSnap.child("ownershipEpoch").asLong(0L)
-        val claimedAt = metaSnap.child("claimedAt").asLong(0L)
+                    val state = metaJson.str("ownershipState", "")
+                    val metaOwner = metaJson.str("ownerUid", "")
+                    val metaEpoch = metaJson.lng("ownershipEpoch", 0L)
+                    val claimedAt = metaJson.lng("claimedAt", 0L)
+                    val ownerCompatible = metaOwner.isBlank() || metaOwner == currentUid
+                    if (state.equals("OWNED", ignoreCase = true) &&
+                        ownerCompatible &&
+                        metaEpoch >= expectedEpoch &&
+                        (claimedAt >= minEpochTimestampMs || claimedAt in 1L..999_999_999L)
+                    ) {
+                        return@runCatching true
+                    }
+                }
+            }
 
-        val statusSnap = deviceSnap.child("status")
-        val online = statusSnap.child("online").asBool(false)
-        val statusEpoch = statusSnap.child("ownershipEpoch").asLong(0L)
-        val lastSeenAt = statusSnap.child("lastSeenAt").asLong(0L)
-
-        val epochMatches = state.equals("OWNED", ignoreCase = true) &&
-            (metaEpoch >= expectedEpoch || statusEpoch >= expectedEpoch)
-        val freshlySeen = (lastSeenAt >= minEpochTimestampMs) || (claimedAt >= minEpochTimestampMs)
-        epochMatches && (online || freshlySeen)
-    }.getOrDefault(false)
+            val statusResp = executeAuthenticatedRest(
+                method = "GET",
+                pathWithJsonAndOptionalQuery = "/devices/$deviceId/status.json",
+                requireAuth = true
+            )
+            if (statusResp.code in 200..299 && statusResp.body.trim().startsWith("{")) {
+                val stJson = JSONObject(statusResp.body.trim())
+                val online = stJson.optBoolean("online", false)
+                val stEpoch = stJson.lng("ownershipEpoch", 0L)
+                val lastSeenAt = stJson.lng("lastSeenAt", 0L)
+                if (stEpoch >= expectedEpoch && (online || lastSeenAt >= minEpochTimestampMs)) {
+                    return@runCatching true
+                }
+            }
+            false
+        }.getOrDefault(false)
+    }
 
     /**
      * Registers the logged-in user as Owner of [deviceId] after ESP32 provisioning succeeds,
@@ -456,9 +591,11 @@ class IotFirebaseRepository {
 
         val configExists = cfgCheck != null && cfgCheck.code in 200..299 &&
             cfgCheck.body.trim().let { it.isNotEmpty() && it != "null" }
-        val existingCloudEpoch = metaCheck?.takeIf { it.code in 200..299 && it.body.trim().startsWith("{") }
-            ?.let { runCatching { JSONObject(it.body.trim()).lng("ownershipEpoch", 0L) }.getOrDefault(0L) }
-            ?: 0L
+        val metaExistingJson = metaCheck?.takeIf { it.code in 200..299 && it.body.trim().startsWith("{") }
+            ?.let { runCatching { JSONObject(it.body.trim()) }.getOrNull() }
+        val existingCloudEpoch = metaExistingJson?.lng("ownershipEpoch", 0L) ?: 0L
+        val existingMetaState = metaExistingJson?.str("ownershipState", "UNCLAIMED").orEmpty()
+        val existingMetaOwner = metaExistingJson?.str("ownerUid", "").orEmpty()
         val finalEpoch = maxOf(ownershipEpoch, existingCloudEpoch + 1L)
         val existingAclOwner = aclCheck?.takeIf { it.code in 200..299 }
             ?.body?.trim()?.removeSurrounding("\"")?.takeIf { it != "null" }.orEmpty()
@@ -467,7 +604,10 @@ class IotFirebaseRepository {
 
         // Fast authenticated REST claim commit (preserving exact database.rules.json write ordering)
         val restCommitted = runCatching {
-            if (existingAclOwner.isNotBlank() && existingAclOwner != ownerUid) {
+            val needsClaimPendingStep =
+                (existingAclOwner.isNotBlank() && existingAclOwner != ownerUid) ||
+                    (existingMetaState.equals("OWNED", ignoreCase = true) && existingMetaOwner != ownerUid)
+            if (needsClaimPendingStep) {
                 executeAuthenticatedRest(
                     "PUT",
                     "/devices/$deviceId/meta/ownershipState.json",
@@ -495,6 +635,9 @@ class IotFirebaseRepository {
                 put("ownershipEpoch", finalEpoch)
                 put("resetRequired", false)
                 put("claimedAt", now)
+                put("wifiVerifiedEpoch", JSONObject.NULL)
+                put("wifiVerifiedBootId", JSONObject.NULL)
+                put("wifiVerifiedAt", JSONObject.NULL)
                 put("location", JSONObject().apply {
                     put("lat", lat)
                     put("lon", lon)
@@ -922,10 +1065,26 @@ class IotFirebaseRepository {
         val explicitDeviceId = if (parts.size == 2) parts[0].trim() else null
         val inviteCode = (if (parts.size == 2) parts[1] else parts[0]).trim().uppercase()
 
+        // 0. Prefer trusted backend Cloud Function for atomic single-use invite redemption
+        val callableAttempt = runCatching {
+            val payload = mutableMapOf<String, Any>("inviteCode" to inviteCode)
+            if (!explicitDeviceId.isNullOrBlank()) payload["deviceId"] = explicitDeviceId
+            val res = FirebaseFunctions.getInstance()
+                .getHttpsCallable("acceptShareInvite")
+                .call(payload)
+                .await()
+            val map = res.data as? Map<*, *>
+            val devId = map?.get("deviceId") as? String
+            devId?.takeIf { it.isNotBlank() }
+        }.getOrNull()
+        if (!callableAttempt.isNullOrBlank()) {
+            return@runCatching callableAttempt
+        }
+
         var targetDeviceId: String? = explicitDeviceId
         var inviteSnap: DataSnapshot? = null
 
-        // 1. Fast O(1) global sharedInvites lookup (works across accounts with zero /devices scan!)
+        // 1. Fast O(1) direct sharedInvites lookup (never scans /devices collection)
         val sharedSnap = runCatching {
             rootRef.child("sharedInvites").child(inviteCode).get().await()
         }.getOrNull()
@@ -949,21 +1108,6 @@ class IotFirebaseRepository {
             }
         }
 
-        // 3. Fallback search through devices if collection read is allowed
-        if (inviteSnap == null) {
-            val devicesSnap = runCatching { rootRef.child("devices").get().await() }.getOrNull()
-            if (devicesSnap != null) {
-                for (devChild in devicesSnap.children) {
-                    val cand = devChild.child("acl").child("invitations").child(inviteCode)
-                    if (cand.exists()) {
-                        targetDeviceId = devChild.key
-                        inviteSnap = cand
-                        break
-                    }
-                }
-            }
-        }
-
         val resolvedDevId = targetDeviceId ?: error("Invite code not found. Double-check the code.")
         val resolvedSnap = inviteSnap ?: error("Invite code not found.")
 
@@ -971,20 +1115,15 @@ class IotFirebaseRepository {
         val expiresAt = resolvedSnap.child("expiresAt").asLong(0L)
         val role = DeviceRole.fromSlug(resolvedSnap.child("role").getValue(String::class.java))
         val createdBy = resolvedSnap.child("createdByUid").getValue(String::class.java) ?: ""
+        val ownershipEpoch = resolvedSnap.child("ownershipEpoch").asLong(1L)
         val now = System.currentTimeMillis()
 
         if (status != "PENDING") {
-            error("This invite code has already been used.")
+            error("This invite code is no longer valid.")
         }
         if (expiresAt > 0L && now > expiresAt) {
             error("This invite code has expired. Ask the owner for a new code.")
         }
-
-        val metaSnap = rootRef.child("devices").child(resolvedDevId).child("meta").get().await()
-        if (metaSnap.child("ownershipState").getValue(String::class.java) != "OWNED") {
-            error("This plant box is not currently active.")
-        }
-        val currentEpoch = metaSnap.child("ownershipEpoch").asLong(1L)
 
         // 1. Mark invite accepted in /sharedInvites AND in /devices/$resolvedDevId/acl/invitations
         runCatching {
@@ -1006,7 +1145,7 @@ class IotFirebaseRepository {
             )
         ).await()
 
-        // 2. Add member entry to device ACL
+        // 2. Add member entry to device ACL (validated against accepted invitation by security rules)
         rootRef.child("devices").child(resolvedDevId).child("acl").child("members").child(uid)
             .setValue(
                 mapOf(
@@ -1024,7 +1163,7 @@ class IotFirebaseRepository {
             .setValue(
                 mapOf(
                     "role" to role.slug,
-                    "ownershipEpoch" to currentEpoch,
+                    "ownershipEpoch" to ownershipEpoch,
                     "addedAt" to now
                 )
             ).await()
@@ -1032,11 +1171,101 @@ class IotFirebaseRepository {
         resolvedDevId
     }
 
+    /**
+     * Revokes shared member access or lets a shared member leave on their own.
+     * Works 100% natively on Free Firebase Spark Plan (and Blaze) via direct Realtime Database
+     * security-rule-enforced multi-path updates:
+     * - Self-leave (`targetUid == currentAuthUid`): removes member from device ACL & own user link.
+     * - Owner revocation: atomically removes member ACL + user device link, marks their invite codes
+     *   REVOKED, writes the immutable `ACCESS_REVOKED` event to `/users/$targetUid/revocations/$eventId`,
+     *   and cleans up any remaining `/sharedInvites/$code` entry safely.
+     */
     suspend fun revokeMember(deviceId: String, targetUid: String): Result<Unit> = runCatching {
-        rootRef.child("devices").child(deviceId).child("acl").child("members").child(targetUid)
-            .removeValue().await()
-        rootRef.child("users").child(targetUid).child("devices").child(deviceId)
-            .removeValue().await()
+        runCatching { db.goOnline() }
+        val currentAuth = FirebaseAuth.getInstance().currentUser
+        val currentAuthUid = currentAuth?.uid
+            ?: throw IllegalStateException("Not authenticated")
+
+        // Case 1: Shared member leaving the plant box on their own
+        if (targetUid == currentAuthUid) {
+            val selfLeaveUpdates = hashMapOf<String, Any?>(
+                "devices/$deviceId/acl/members/$currentAuthUid" to null,
+                "users/$currentAuthUid/devices/$deviceId" to null
+            )
+            rootRef.updateChildren(selfLeaveUpdates).await()
+            Log.i(TAG, "Member $currentAuthUid left shared device $deviceId")
+            return@runCatching
+        }
+
+        // Case 2: Device Owner revoking a shared member (Viewer / Operator)
+        val aclOwnerUid = runCatching {
+            rootRef.child("devices").child(deviceId).child("acl").child("ownerUid").get().await()
+                .getValue(String::class.java)
+        }.getOrNull()
+        val metaSnap = runCatching {
+            rootRef.child("devices").child(deviceId).child("meta").get().await()
+        }.getOrNull()
+        val metaOwnerUid = metaSnap?.child("ownerUid")?.getValue(String::class.java)
+
+        if (aclOwnerUid != currentAuthUid && metaOwnerUid != currentAuthUid) {
+            throw IllegalStateException("Only the device owner can remove shared members")
+        }
+
+        val deviceName = metaSnap?.child("displayName")?.getValue(String::class.java)
+            ?.takeIf { it.isNotBlank() } ?: deviceId
+        val ownerName = currentAuth.displayName?.takeIf { it.isNotBlank() }
+            ?: currentAuth.email?.substringBefore("@")?.takeIf { it.isNotBlank() }
+            ?: "Device Owner"
+
+        val eventId = "rev_${System.currentTimeMillis()}_${java.util.UUID.randomUUID().toString().take(8)}"
+        val now = System.currentTimeMillis()
+
+        val revocationPayload = mapOf(
+            "eventId" to eventId,
+            "type" to "ACCESS_REVOKED",
+            "deviceId" to deviceId,
+            "deviceName" to deviceName,
+            "ownerUid" to currentAuthUid,
+            "ownerName" to ownerName,
+            "revokedAt" to now,
+            "acknowledged" to false
+        )
+
+        val matchingInviteCodes = mutableListOf<String>()
+        runCatching {
+            val invitationsSnap = rootRef.child("devices").child(deviceId)
+                .child("acl").child("invitations").get().await()
+            for (invChild in invitationsSnap.children) {
+                val acceptedBy = invChild.child("acceptedByUid").getValue(String::class.java)
+                if (acceptedBy == targetUid) {
+                    invChild.key?.takeIf { it.isNotBlank() }?.let { matchingInviteCodes.add(it) }
+                }
+            }
+        }
+
+        // Core atomic revocation (no leading slashes; never coupled to optional /sharedInvites cleanup)
+        val coreUpdates = hashMapOf<String, Any?>(
+            "devices/$deviceId/acl/members/$targetUid" to null,
+            "users/$targetUid/devices/$deviceId" to null,
+            "users/$targetUid/revocations/$eventId" to revocationPayload
+        )
+        for (code in matchingInviteCodes) {
+            coreUpdates["devices/$deviceId/acl/invitations/$code/status"] = "REVOKED"
+        }
+
+        rootRef.updateChildren(coreUpdates).await()
+
+        // Best-effort cleanup of /sharedInvites/$code (skipped safely if already absent)
+        for (code in matchingInviteCodes) {
+            runCatching {
+                val sharedRef = rootRef.child("sharedInvites").child(code)
+                if (sharedRef.get().await().exists()) {
+                    sharedRef.removeValue().await()
+                }
+            }
+        }
+
+        Log.i(TAG, "Spark Plan member revocation committed atomically for $targetUid on $deviceId")
     }
 
     /**
@@ -1051,9 +1280,81 @@ class IotFirebaseRepository {
         ownerUid: String
     ): Result<Unit> = runCatching {
         val nextEpoch = currentEpoch + 1L
-        val devRef = rootRef.child("devices").child(deviceId)
+        val now = System.currentTimeMillis()
+        val sharedMemberUids = memberUids.distinct().filter { it.isNotBlank() && it != ownerUid }
 
-        // 1. Transition meta to RESET_PENDING so ESP32 executes durable NVS wipe & stops loads
+        // Execute strictly in permission-valid order BEFORE removing ownerUid from /meta and /acl!
+        val restSucceeded = runCatching {
+            // 1. Clean 7-day history, pending commands, invitations, and shared members while still Owner
+            coroutineScope {
+                val histJob = async {
+                    executeAuthenticatedRest("DELETE", "/deviceHistory/$deviceId.json", requireAuth = true)
+                }
+                val cmdJob = async {
+                    executeAuthenticatedRest("DELETE", "/devices/$deviceId/commandRequests.json", requireAuth = true)
+                }
+                val invJob = async {
+                    executeAuthenticatedRest("DELETE", "/devices/$deviceId/acl/invitations.json", requireAuth = true)
+                }
+                val photoJob = async {
+                    executeAuthenticatedRest("DELETE", "/devices/$deviceId/cropPhotos.json", requireAuth = true)
+                }
+                val memJobs = sharedMemberUids.map { mUid ->
+                    async {
+                        executeAuthenticatedRest("DELETE", "/users/$mUid/devices/$deviceId.json", requireAuth = true)
+                        executeAuthenticatedRest("DELETE", "/devices/$deviceId/acl/members/$mUid.json", requireAuth = true)
+                    }
+                }
+                histJob.await()
+                cmdJob.await()
+                invJob.await()
+                photoJob.await()
+                memJobs.forEach { it.await() }
+            }
+
+            // 2. Transition /meta to RESET_PENDING (ESP32 stops pump/valves, wipes Wi-Fi, re-opens SPC-SETUP-*)
+            val resetMeta = JSONObject().apply {
+                put("ownershipState", "RESET_PENDING")
+                put("ownerUid", JSONObject.NULL)
+                put("ownershipEpoch", nextEpoch)
+                put("resetRequired", true)
+                put("displayName", "SmartPlantCare Box")
+                put("unclaimedAt", now)
+                put("wifiVerifiedEpoch", JSONObject.NULL)
+                put("wifiVerifiedBootId", JSONObject.NULL)
+                put("wifiVerifiedAt", JSONObject.NULL)
+            }
+            val metaResp = executeAuthenticatedRest(
+                "PATCH",
+                "/devices/$deviceId/meta.json",
+                resetMeta.toString(),
+                requireAuth = true
+            )
+            if (metaResp.code !in 200..299) error("Unclaim meta PATCH HTTP ${metaResp.code}")
+
+            // 3. Remove owner's own ACL & device link LAST
+            if (ownerUid.isNotBlank()) {
+                executeAuthenticatedRest("DELETE", "/devices/$deviceId/acl/members/$ownerUid.json", requireAuth = true)
+                executeAuthenticatedRest("DELETE", "/users/$ownerUid/devices/$deviceId.json", requireAuth = true)
+            }
+            executeAuthenticatedRest("DELETE", "/devices/$deviceId/acl/ownerUid.json", requireAuth = true)
+            true
+        }.getOrDefault(false)
+
+        if (restSucceeded) {
+            return@runCatching
+        }
+
+        // SDK fallback (preserving the exact same permission-valid order)
+        val devRef = rootRef.child("devices").child(deviceId)
+        runCatching { rootRef.child("deviceHistory").child(deviceId).removeValue().await() }
+        runCatching { devRef.child("commandRequests").removeValue().await() }
+        runCatching { devRef.child("acl").child("invitations").removeValue().await() }
+        runCatching { devRef.child("cropPhotos").removeValue().await() }
+        for (uid in sharedMemberUids) {
+            runCatching { rootRef.child("users").child(uid).child("devices").child(deviceId).removeValue().await() }
+            runCatching { devRef.child("acl").child("members").child(uid).removeValue().await() }
+        }
         devRef.child("meta").updateChildren(
             mapOf(
                 "ownershipState" to "RESET_PENDING",
@@ -1061,28 +1362,88 @@ class IotFirebaseRepository {
                 "ownershipEpoch" to nextEpoch,
                 "resetRequired" to true,
                 "displayName" to "SmartPlantCare Box",
-                "unclaimedAt" to System.currentTimeMillis()
+                "unclaimedAt" to now,
+                "wifiVerifiedEpoch" to null,
+                "wifiVerifiedBootId" to null,
+                "wifiVerifiedAt" to null
             )
         ).await()
-
-        // 2. Remove device from all members + owner
-        val allUids = (memberUids + ownerUid).distinct().filter { it.isNotBlank() }
-        for (uid in allUids) {
-            runCatching {
-                rootRef.child("users").child(uid).child("devices").child(deviceId)
-                    .removeValue().await()
-            }
-        }
-
-        // 3. Clean ACL (owner has write permission via ownerUid before removal)
-        runCatching { devRef.child("acl").child("invitations").removeValue().await() }
-        for (uid in allUids) {
-            runCatching { devRef.child("acl").child("members").child(uid).removeValue().await() }
+        if (ownerUid.isNotBlank()) {
+            runCatching { devRef.child("acl").child("members").child(ownerUid).removeValue().await() }
+            runCatching { rootRef.child("users").child(ownerUid).child("devices").child(deviceId).removeValue().await() }
         }
         runCatching { devRef.child("acl").child("ownerUid").removeValue().await() }
+    }
 
-        // 4. Wipe 7-day historical monitoring records on device reset
-        runCatching { rootRef.child("deviceHistory").child(deviceId).removeValue().await() }
+    /**
+     * Saves Cloudinary crop photo metadata under `/devices/$deviceId/cropPhotos/$cropSlug`.
+     * Enforced by RTDB rules: Owner & Operator only; Viewers are rejected with 401.
+     */
+    suspend fun saveCropPhotoMetadata(
+        deviceId: String,
+        cropSlug: String,
+        photo: CropZonePhoto
+    ): Result<Unit> = runCatching {
+        val normalizedSlug = cropSlug.lowercase().trim()
+        require(normalizedSlug == "tomato" || normalizedSlug == "chili" || normalizedSlug == "eggplant") {
+            "Unsupported crop zone: $cropSlug"
+        }
+        val payloadJson = JSONObject().apply {
+            put("url", photo.url)
+            put("publicId", photo.publicId)
+            put("updatedAt", photo.updatedAt)
+            put("updatedByUid", photo.updatedByUid)
+            put("updatedByName", photo.updatedByName)
+        }.toString()
+
+        val restOk = runCatching {
+            executeAuthenticatedRest(
+                method = "PUT",
+                pathWithJsonAndOptionalQuery = "/devices/$deviceId/cropPhotos/$normalizedSlug.json",
+                jsonBody = payloadJson,
+                requireAuth = true
+            ).code in 200..299
+        }.getOrDefault(false)
+
+        if (!restOk) {
+            rootRef.child("devices").child(deviceId)
+                .child("cropPhotos").child(normalizedSlug)
+                .setValue(
+                    mapOf(
+                        "url" to photo.url,
+                        "publicId" to photo.publicId,
+                        "updatedAt" to photo.updatedAt,
+                        "updatedByUid" to photo.updatedByUid,
+                        "updatedByName" to photo.updatedByName
+                    )
+                )
+                .await()
+        }
+    }
+
+    /**
+     * Removes crop photo metadata from `/devices/$deviceId/cropPhotos/$cropSlug`.
+     * Enforced by RTDB rules: Owner & Operator only; Viewers are rejected with 401.
+     */
+    suspend fun deleteCropPhotoMetadata(
+        deviceId: String,
+        cropSlug: String
+    ): Result<Unit> = runCatching {
+        val normalizedSlug = cropSlug.lowercase().trim()
+        val restOk = runCatching {
+            executeAuthenticatedRest(
+                method = "DELETE",
+                pathWithJsonAndOptionalQuery = "/devices/$deviceId/cropPhotos/$normalizedSlug.json",
+                requireAuth = true
+            ).code in 200..299
+        }.getOrDefault(false)
+
+        if (!restOk) {
+            rootRef.child("devices").child(deviceId)
+                .child("cropPhotos").child(normalizedSlug)
+                .removeValue()
+                .await()
+        }
     }
 
     // ─── 7-Day Historical Monitoring & Irrigation Records RTDB Operations ─────
@@ -1797,6 +2158,25 @@ class IotFirebaseRepository {
             )
         }.sortedByDescending { it.createdAt }.take(50)
 
+        val cropPhotos = buildMap {
+            for (pChild in root.child("cropPhotos").children) {
+                val slug = pChild.key?.lowercase() ?: continue
+                val url = pChild.child("url").asStr("")
+                if (url.isNotBlank()) {
+                    put(
+                        slug,
+                        CropZonePhoto(
+                            url = url,
+                            publicId = pChild.child("publicId").asStr(""),
+                            updatedAt = pChild.child("updatedAt").asLong(0L),
+                            updatedByUid = pChild.child("updatedByUid").asStr(""),
+                            updatedByName = pChild.child("updatedByName").asStr("")
+                        )
+                    )
+                }
+            }
+        }
+
         val cmdResults = buildMap {
             for (rChild in root.child("commandResults").children) {
                 val id = rChild.key ?: continue
@@ -1819,6 +2199,7 @@ class IotFirebaseRepository {
             telemetry = telemetry,
             weather = weather,
             config = config,
+            cropPhotos = cropPhotos,
             members = members,
             activeInvites = invites,
             events = events,
@@ -2091,6 +2472,30 @@ class IotFirebaseRepository {
             }
         }.sortedByDescending { it.createdAt }.take(50)
 
+        val cropPhotosObj = root.optJSONObject("cropPhotos")
+        val cropPhotos = buildMap {
+            if (cropPhotosObj != null) {
+                val keys = cropPhotosObj.keys()
+                while (keys.hasNext()) {
+                    val rawSlug = keys.next()
+                    val pChild = cropPhotosObj.optJSONObject(rawSlug) ?: continue
+                    val url = pChild.str("url", "")
+                    if (url.isNotBlank()) {
+                        put(
+                            rawSlug.lowercase(),
+                            CropZonePhoto(
+                                url = url,
+                                publicId = pChild.str("publicId", ""),
+                                updatedAt = pChild.lng("updatedAt", 0L),
+                                updatedByUid = pChild.str("updatedByUid", ""),
+                                updatedByName = pChild.str("updatedByName", "")
+                            )
+                        )
+                    }
+                }
+            }
+        }
+
         val cmdResultsObj = root.optJSONObject("commandResults")
         val cmdResults = buildMap {
             if (cmdResultsObj != null) {
@@ -2118,6 +2523,7 @@ class IotFirebaseRepository {
             telemetry = telemetry,
             weather = weather,
             config = config,
+            cropPhotos = cropPhotos,
             members = members,
             activeInvites = invites,
             events = events,

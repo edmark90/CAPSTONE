@@ -9,9 +9,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.smartplantcare.MainActivity
 import com.example.smartplantcare.auth.AuthViewModel
-import com.example.smartplantcare.notification.DailyAlarmScheduler
+import com.example.smartplantcare.notification.AlertPreferences
 import com.example.smartplantcare.notification.NotificationHelper
-import com.example.smartplantcare.notification.NotificationScheduler
 import com.google.firebase.auth.FirebaseAuth
 import com.example.smartplantcare.util.NetworkMonitor
 import kotlinx.coroutines.tasks.await
@@ -24,12 +23,9 @@ import java.util.Locale
 
 data class SettingsState(
     val language: String = "en",
-    val morningReminder: Boolean = true,
-    val eveningReminder: Boolean = true,
-    val morningHour: Int = 8,
-    val morningMinute: Int = 0,
-    val eveningHour: Int = 18,
-    val eveningMinute: Int = 0,
+    val waterTankAlertsEnabled: Boolean = true,
+    val irrigationRainAlertsEnabled: Boolean = true,
+    val deviceHealthAlertsEnabled: Boolean = true,
     val vibrationEnabled: Boolean = true,
     val isGoogleAccount: Boolean = false,
     val isGuest: Boolean = false,
@@ -40,21 +36,12 @@ data class SettingsState(
     val showLanguageDialog: Boolean = false,
     val showEditNameDialog: Boolean = false,
     val showChangePasswordDialog: Boolean = false,
-    val showMorningTimePicker: Boolean = false,
-    val showEveningTimePicker: Boolean = false,
     val snackbarMessage: String? = null,
     val editNameText: String = "",
     val currentPasswordText: String = "",
     val newPasswordText: String = "",
     val confirmPasswordText: String = "",
     val isLoading: Boolean = false,
-    // Treatment-specific notification settings
-    val treatmentMorningEnabled: Boolean = true,
-    val treatmentEveningEnabled: Boolean = true,
-    val treatmentMorningHour: Int = 8,
-    val treatmentMorningMinute: Int = 0,
-    val treatmentEveningHour: Int = 18,
-    val treatmentEveningMinute: Int = 0,
     // Storage, Units & Hardware Guide
     val cacheSizeFormatted: String = "0 KB",
     val temperatureUnit: String = "C",
@@ -82,38 +69,19 @@ class SettingsViewModel(
 
     private fun loadSettings() {
         val language = prefs.getString("language", "en") ?: "en"
-        val morningReminder = prefs.getBoolean("morning_reminder", true)
-        val eveningReminder = prefs.getBoolean("evening_reminder", true)
-        val morningHour = prefs.getInt("morning_hour", 8)
-        val morningMinute = prefs.getInt("morning_minute", 0)
-        val eveningHour = prefs.getInt("evening_hour", 18)
-        val eveningMinute = prefs.getInt("evening_minute", 0)
+        val waterTankAlerts = prefs.getBoolean(AlertPreferences.KEY_WATER_TANK, true)
+        val irrigationRainAlerts = prefs.getBoolean(AlertPreferences.KEY_IRRIGATION_RAIN, true)
+        val deviceHealthAlerts = prefs.getBoolean(AlertPreferences.KEY_DEVICE_HEALTH, true)
         val vibrationEnabled = prefs.getBoolean("vibration_enabled", true)
-
-        val treatmentMorningEnabled = prefs.getBoolean("treatment_morning_enabled", true)
-        val treatmentEveningEnabled = prefs.getBoolean("treatment_evening_enabled", true)
-        val treatmentMorningHour = prefs.getInt("treatment_morning_hour", 8)
-        val treatmentMorningMinute = prefs.getInt("treatment_morning_minute", 0)
-        val treatmentEveningHour = prefs.getInt("treatment_evening_hour", 18)
-        val treatmentEveningMinute = prefs.getInt("treatment_evening_minute", 0)
         val temperatureUnit = prefs.getString("temp_unit", "C") ?: "C"
         val measurementUnit = prefs.getString("measurement_unit", "in") ?: "in"
 
         _state.value = _state.value.copy(
             language = language,
-            morningReminder = morningReminder,
-            eveningReminder = eveningReminder,
-            morningHour = morningHour,
-            morningMinute = morningMinute,
-            eveningHour = eveningHour,
-            eveningMinute = eveningMinute,
+            waterTankAlertsEnabled = waterTankAlerts,
+            irrigationRainAlertsEnabled = irrigationRainAlerts,
+            deviceHealthAlertsEnabled = deviceHealthAlerts,
             vibrationEnabled = vibrationEnabled,
-            treatmentMorningEnabled = treatmentMorningEnabled,
-            treatmentEveningEnabled = treatmentEveningEnabled,
-            treatmentMorningHour = treatmentMorningHour,
-            treatmentMorningMinute = treatmentMorningMinute,
-            treatmentEveningHour = treatmentEveningHour,
-            treatmentEveningMinute = treatmentEveningMinute,
             temperatureUnit = temperatureUnit,
             measurementUnit = measurementUnit
         )
@@ -378,142 +346,27 @@ class SettingsViewModel(
         }
     }
 
-    // ─── Notification Reminders ───────────────────────────────────────────────
+    // ─── Alert Preferences ────────────────────────────────────────────────────
 
-    fun setMorningReminder(enabled: Boolean) {
-        prefs.edit()
-            .putBoolean("morning_reminder", enabled)
-            .putBoolean("treatment_morning_enabled", enabled)
-            .apply()
-        _state.value = _state.value.copy(
-            morningReminder = enabled,
-            treatmentMorningEnabled = enabled
-        )
-
-        if (enabled) {
-            scheduleReminder(isMorning = true)
-        } else {
-            cancelReminder(isMorning = true)
-        }
-        rescheduleActivePlans()
+    fun setWaterTankAlerts(enabled: Boolean) {
+        prefs.edit().putBoolean(AlertPreferences.KEY_WATER_TANK, enabled).apply()
+        _state.value = _state.value.copy(waterTankAlertsEnabled = enabled)
     }
 
-    fun setEveningReminder(enabled: Boolean) {
-        prefs.edit()
-            .putBoolean("evening_reminder", enabled)
-            .putBoolean("treatment_evening_enabled", enabled)
-            .apply()
-        _state.value = _state.value.copy(
-            eveningReminder = enabled,
-            treatmentEveningEnabled = enabled
-        )
-
-        if (enabled) {
-            scheduleReminder(isMorning = false)
-        } else {
-            cancelReminder(isMorning = false)
-        }
-        rescheduleActivePlans()
+    fun setIrrigationRainAlerts(enabled: Boolean) {
+        prefs.edit().putBoolean(AlertPreferences.KEY_IRRIGATION_RAIN, enabled).apply()
+        _state.value = _state.value.copy(irrigationRainAlertsEnabled = enabled)
     }
 
-    fun showMorningTimePicker() {
-        _state.value = _state.value.copy(showMorningTimePicker = true)
-    }
-
-    fun showEveningTimePicker() {
-        _state.value = _state.value.copy(showEveningTimePicker = true)
-    }
-
-    fun dismissTimePicker() {
-        _state.value = _state.value.copy(
-            showMorningTimePicker = false,
-            showEveningTimePicker = false
-        )
-    }
-
-    fun setMorningTime(hour: Int, minute: Int) {
-        prefs.edit()
-            .putInt("treatment_morning_hour", hour)
-            .putInt("treatment_morning_minute", minute)
-            .putInt("morning_hour", hour)
-            .putInt("morning_minute", minute)
-            .apply()
-        _state.value = _state.value.copy(
-            morningHour = hour,
-            morningMinute = minute,
-            treatmentMorningHour = hour,
-            treatmentMorningMinute = minute,
-            showMorningTimePicker = false
-        )
-        if (_state.value.morningReminder) {
-            scheduleReminder(isMorning = true)
-        }
-        rescheduleActivePlans()
-    }
-
-    fun setEveningTime(hour: Int, minute: Int) {
-        prefs.edit()
-            .putInt("treatment_evening_hour", hour)
-            .putInt("treatment_evening_minute", minute)
-            .putInt("evening_hour", hour)
-            .putInt("evening_minute", minute)
-            .apply()
-        _state.value = _state.value.copy(
-            eveningHour = hour,
-            eveningMinute = minute,
-            treatmentEveningHour = hour,
-            treatmentEveningMinute = minute,
-            showEveningTimePicker = false
-        )
-        if (_state.value.eveningReminder) {
-            scheduleReminder(isMorning = false)
-        }
-        rescheduleActivePlans()
+    fun setDeviceHealthAlerts(enabled: Boolean) {
+        prefs.edit().putBoolean(AlertPreferences.KEY_DEVICE_HEALTH, enabled).apply()
+        _state.value = _state.value.copy(deviceHealthAlertsEnabled = enabled)
     }
 
     fun setVibration(enabled: Boolean) {
         prefs.edit().putBoolean("vibration_enabled", enabled).apply()
         _state.value = _state.value.copy(vibrationEnabled = enabled)
-        // Update notification channel
         NotificationHelper.updateVibrationSetting(context, enabled)
-    }
-
-    private fun scheduleReminder(isMorning: Boolean) {
-        val hour = if (isMorning) _state.value.morningHour else _state.value.eveningHour
-        val minute = if (isMorning) _state.value.morningMinute else _state.value.eveningMinute
-        val tag = if (isMorning) "morning_reminder" else "evening_reminder"
-        val title = if (isMorning) "🌅 Good Morning!" else "🌆 Good Evening!"
-        val message = if (isMorning) "Time to check on your plants and start the day's care routine."
-            else "Don't forget to give your plants evening care before the night."
-
-        viewModelScope.launch(Dispatchers.IO) {
-            android.util.Log.d("SettingsViewModel", "Scheduling $tag reminder at $hour:$minute")
-            DailyAlarmScheduler.schedule(
-                context = context,
-                tag = tag,
-                hour = hour,
-                minute = minute,
-                title = title,
-                message = message
-            )
-        }
-    }
-
-    private fun cancelReminder(isMorning: Boolean) {
-        val tag = if (isMorning) "morning_reminder" else "evening_reminder"
-        viewModelScope.launch(Dispatchers.IO) {
-            DailyAlarmScheduler.cancel(context, tag)
-        }
-    }
-
-    private fun rescheduleActivePlans() {
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                NotificationScheduler.rescheduleAllActivePlans(context)
-            } catch (e: Exception) {
-                Log.e("SettingsViewModel", "Failed to reschedule active plans", e)
-            }
-        }
     }
 
     // ─── Sign Out ─────────────────────────────────────────────────────────────

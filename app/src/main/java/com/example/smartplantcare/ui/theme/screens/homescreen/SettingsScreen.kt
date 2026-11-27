@@ -1,9 +1,7 @@
 package com.example.smartplantcare.ui.theme.screens.homescreen
 
 import android.Manifest
-import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -110,6 +108,8 @@ fun SettingsScreen(
     ) { /* proceed */ }
 
     var showSignOutDialog by remember { mutableStateOf(false) }
+    var showPrivacyPolicyDialog by remember { mutableStateOf(false) }
+    var showTermsOfServiceDialog by remember { mutableStateOf(false) }
 
     // ─── Dialogs ─────────────────────────────────────────────────────────────
 
@@ -439,30 +439,16 @@ fun SettingsScreen(
         }
     }
 
-    if (state.showMorningTimePicker) {
-        TimePickerDialog(
-            title = stringResource(R.string.morning),
-            initialHour = state.morningHour,
-            initialMinute = state.morningMinute,
-            onConfirm = { hour, minute -> vm.setMorningTime(hour, minute) },
-            onDismiss = { vm.dismissTimePicker() },
-            isMorning = true
-        )
-    }
-
-    if (state.showEveningTimePicker) {
-        TimePickerDialog(
-            title = stringResource(R.string.evening),
-            initialHour = state.eveningHour,
-            initialMinute = state.eveningMinute,
-            onConfirm = { hour, minute -> vm.setEveningTime(hour, minute) },
-            onDismiss = { vm.dismissTimePicker() },
-            isMorning = false
-        )
-    }
-
     if (state.showHardwareGuideDialog) {
         HardwareGuideDialog(onDismiss = { vm.setShowHardwareGuideDialog(false) })
+    }
+
+    if (showPrivacyPolicyDialog) {
+        PrivacyPolicyDialog(onDismiss = { showPrivacyPolicyDialog = false })
+    }
+
+    if (showTermsOfServiceDialog) {
+        TermsOfServiceDialog(onDismiss = { showTermsOfServiceDialog = false })
     }
 
     // ─── Main Layout ─────────────────────────────────────────────────────────
@@ -511,38 +497,34 @@ fun SettingsScreen(
                     onOpenGuide = { vm.setShowHardwareGuideDialog(true) }
                 )
 
+                val ensureNotifPermission: (Boolean) -> Unit = { enabled ->
+                    if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        val granted = ContextCompat.checkSelfPermission(
+                            context, Manifest.permission.POST_NOTIFICATIONS
+                        ) == PackageManager.PERMISSION_GRANTED
+                        if (!granted) {
+                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        }
+                    }
+                }
+
                 NotificationSection(
-                    morningReminder = state.morningReminder,
-                    eveningReminder = state.eveningReminder,
-                    morningHour = state.morningHour,
-                    morningMinute = state.morningMinute,
-                    eveningHour = state.eveningHour,
-                    eveningMinute = state.eveningMinute,
+                    waterTankAlertsEnabled = state.waterTankAlertsEnabled,
+                    irrigationRainAlertsEnabled = state.irrigationRainAlertsEnabled,
+                    deviceHealthAlertsEnabled = state.deviceHealthAlertsEnabled,
                     vibrationEnabled = state.vibrationEnabled,
-                    onMorningReminderChange = { enabled ->
-                        if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                            val granted = ContextCompat.checkSelfPermission(
-                                context, Manifest.permission.POST_NOTIFICATIONS
-                            ) == PackageManager.PERMISSION_GRANTED
-                            if (!granted) {
-                                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                            }
-                        }
-                        vm.setMorningReminder(enabled)
+                    onWaterTankAlertsChange = { enabled ->
+                        ensureNotifPermission(enabled)
+                        vm.setWaterTankAlerts(enabled)
                     },
-                    onEveningReminderChange = { enabled ->
-                        if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                            val granted = ContextCompat.checkSelfPermission(
-                                context, Manifest.permission.POST_NOTIFICATIONS
-                            ) == PackageManager.PERMISSION_GRANTED
-                            if (!granted) {
-                                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                            }
-                        }
-                        vm.setEveningReminder(enabled)
+                    onIrrigationRainAlertsChange = { enabled ->
+                        ensureNotifPermission(enabled)
+                        vm.setIrrigationRainAlerts(enabled)
                     },
-                    onMorningTimeClick = { vm.showMorningTimePicker() },
-                    onEveningTimeClick = { vm.showEveningTimePicker() },
+                    onDeviceHealthAlertsChange = { enabled ->
+                        ensureNotifPermission(enabled)
+                        vm.setDeviceHealthAlerts(enabled)
+                    },
                     onVibrationChange = { vm.setVibration(it) }
                 )
 
@@ -556,7 +538,10 @@ fun SettingsScreen(
                     onClearCache = { vm.clearAppCache() }
                 )
 
-                AboutSection(context = context)
+                AboutSection(
+                    onPrivacyPolicyClick = { showPrivacyPolicyDialog = true },
+                    onTermsOfServiceClick = { showTermsOfServiceDialog = true }
+                )
 
                 Column(
                     modifier = Modifier
@@ -1181,61 +1166,58 @@ fun LanguageAndStorageSection(
 // ─── Notification Section ────────────────────────────────────────────────────
 @Composable
 fun NotificationSection(
-    morningReminder: Boolean,
-    eveningReminder: Boolean,
-    morningHour: Int,
-    morningMinute: Int,
-    eveningHour: Int,
-    eveningMinute: Int,
+    waterTankAlertsEnabled: Boolean,
+    irrigationRainAlertsEnabled: Boolean,
+    deviceHealthAlertsEnabled: Boolean,
     vibrationEnabled: Boolean,
-    onMorningReminderChange: (Boolean) -> Unit,
-    onEveningReminderChange: (Boolean) -> Unit,
-    onMorningTimeClick: () -> Unit,
-    onEveningTimeClick: () -> Unit,
+    onWaterTankAlertsChange: (Boolean) -> Unit,
+    onIrrigationRainAlertsChange: (Boolean) -> Unit,
+    onDeviceHealthAlertsChange: (Boolean) -> Unit,
     onVibrationChange: (Boolean) -> Unit
 ) {
     Column {
-        SectionTitle("Care Reminders & Alerts")
+        SectionTitle("Notifications & Alerts")
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            text = "SmartPlantCare box & sensor alerts",
+            fontFamily = InterFont,
+            fontSize = 12.sp,
+            color = TextMedium,
+            modifier = Modifier.padding(start = 2.dp)
+        )
         Spacer(modifier = Modifier.height(8.dp))
         SettingsCard {
             SettingsSwitchItem(
-                icon = Icons.Outlined.WbSunny,
-                title = stringResource(R.string.morning_reminder),
-                subtitle = "Daily morning plant check notification",
-                isChecked = morningReminder,
-                onCheckedChange = onMorningReminderChange
-            )
-            HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 68.dp, end = 16.dp))
-
-            NotificationTimeRow(
-                label = "${stringResource(R.string.morning)} Schedule",
-                time = formatTime(morningHour, morningMinute),
-                enabled = morningReminder,
-                onClick = onMorningTimeClick
+                icon = Icons.Outlined.WaterDrop,
+                title = "Water Tank Alerts",
+                subtitle = "Low or empty reservoir warnings",
+                isChecked = waterTankAlertsEnabled,
+                onCheckedChange = onWaterTankAlertsChange
             )
             HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 68.dp, end = 16.dp))
 
             SettingsSwitchItem(
-                icon = Icons.Outlined.Nightlight,
-                title = stringResource(R.string.evening_reminder),
-                subtitle = "Evening care routine follow-up",
-                isChecked = eveningReminder,
-                onCheckedChange = onEveningReminderChange
+                icon = Icons.Outlined.Cloud,
+                title = "Irrigation & Rain Alerts",
+                subtitle = "Watering updates & rain pauses",
+                isChecked = irrigationRainAlertsEnabled,
+                onCheckedChange = onIrrigationRainAlertsChange
             )
             HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 68.dp, end = 16.dp))
 
-            NotificationTimeRow(
-                label = "${stringResource(R.string.evening)} Schedule",
-                time = formatTime(eveningHour, eveningMinute),
-                enabled = eveningReminder,
-                onClick = onEveningTimeClick
+            SettingsSwitchItem(
+                icon = Icons.Outlined.Sensors,
+                title = "Device & Sensor Alerts",
+                subtitle = "Offline box, faults & climate alerts",
+                isChecked = deviceHealthAlertsEnabled,
+                onCheckedChange = onDeviceHealthAlertsChange
             )
             HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 68.dp, end = 16.dp))
 
             SettingsSwitchItem(
                 icon = Icons.Outlined.Vibration,
                 title = stringResource(R.string.vibration),
-                subtitle = "Vibrate on plant care & device alerts",
+                subtitle = "Vibrate when alerts arrive",
                 isChecked = vibrationEnabled,
                 onCheckedChange = onVibrationChange
             )
@@ -1245,7 +1227,10 @@ fun NotificationSection(
 
 // ─── About Section ───────────────────────────────────────────────────────────
 @Composable
-fun AboutSection(context: android.content.Context) {
+fun AboutSection(
+    onPrivacyPolicyClick: () -> Unit,
+    onTermsOfServiceClick: () -> Unit
+) {
     Column {
         SectionTitle("About SmartPlantCare")
         Spacer(modifier = Modifier.height(8.dp))
@@ -1276,22 +1261,18 @@ fun AboutSection(context: android.content.Context) {
             SettingsMenuItem(
                 icon = Icons.Outlined.Policy,
                 title = stringResource(R.string.privacy_policy),
+                subtitle = "How your data, photos & box info are handled",
                 showArrow = true,
-                onClick = {
-                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(context.getString(R.string.privacy_policy_url)))
-                    try { context.startActivity(intent) } catch (_: Exception) { }
-                }
+                onClick = onPrivacyPolicyClick
             )
             HorizontalDivider(color = DividerLine, thickness = 1.dp, modifier = Modifier.padding(start = 68.dp, end = 16.dp))
 
             SettingsMenuItem(
                 icon = Icons.Outlined.Description,
                 title = stringResource(R.string.terms_of_service),
+                subtitle = "App usage, AI guidance & hardware terms",
                 showArrow = true,
-                onClick = {
-                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(context.getString(R.string.terms_of_service_url)))
-                    try { context.startActivity(intent) } catch (_: Exception) { }
-                }
+                onClick = onTermsOfServiceClick
             )
         }
     }
@@ -2311,6 +2292,112 @@ private fun HardwareGuideDialog(onDismiss: () -> Unit) {
         )
     }
 
+    InfoAccordionDialog(
+        headerIcon = Icons.AutoMirrored.Outlined.MenuBook,
+        title = "How SmartPlantCare Works",
+        subtitle = "Tap any question to learn more",
+        entries = faqItems,
+        onDismiss = onDismiss
+    )
+}
+
+// ─── Privacy Policy Floating Dialog ──────────────────────────────────────────
+@Composable
+private fun PrivacyPolicyDialog(onDismiss: () -> Unit) {
+    val policyItems = remember {
+        listOf(
+            FaqGuideEntry(
+                question = "1. Account & Profile Information",
+                answer = "When you sign in with Email or Google via Firebase Authentication, SmartPlantCare stores your display name, email address, and Google profile photo (if available) to identify your account and manage your paired SmartPlantCare boxes. Guest users can scan plants locally without creating an account.",
+                icon = Icons.Outlined.Person
+            ),
+            FaqGuideEntry(
+                question = "2. Camera, Leaf Photos & AI Scanning",
+                answer = "Leaf disease detection for Tomato, Chili, and Eggplant runs directly on your device using TensorFlow Lite (TFLite). When you use Plant Identification, the selected plant photo is sent to the PlantNet API solely to identify the species. Saved plants, scan history, and care notes are stored on your phone and synced to your signed-in account.",
+                icon = Icons.Outlined.PhotoCamera
+            ),
+            FaqGuideEntry(
+                question = "3. ESP32 Box, Wi-Fi & Location Data",
+                answer = "Wi-Fi and Nearby Device permissions are used only when pairing your SmartPlantCare ESP32 box over its local setup hotspot so it can connect to your home Wi-Fi. GPS location is used only when the device Owner saves the box location for Outdoor Mode to fetch 3-hour rain forecasts (Open-Meteo) and city/province labels (OpenStreetMap). Shared members automatically use the Owner's saved box location.",
+                icon = Icons.Outlined.Sensors
+            ),
+            FaqGuideEntry(
+                question = "4. Cloud Sync, Alerts & Shared Access",
+                answer = "Live sensor readings (soil moisture, temperature, humidity, water tank level, rain status, and irrigation logs) are synced securely through Firebase Realtime Database. A Firebase Cloud Messaging (FCM) token is linked to your signed-in account to deliver water tank, irrigation, device health, and shared-access alerts, and is cleared when you sign out. Only the Owner can share or revoke device access.",
+                icon = Icons.Outlined.Cloud
+            ),
+            FaqGuideEntry(
+                question = "5. Security, Diagnostics & Your Control",
+                answer = "Access to every SmartPlantCare box is protected by Firebase Security Rules so only the Owner and active shared members can view live telemetry. Anonymized crash logs and performance diagnostics may be sent via Sentry to improve stability. You can manage alert categories, clear local image cache, or sign out anytime in Settings.",
+                icon = Icons.Outlined.Security
+            )
+        )
+    }
+
+    InfoAccordionDialog(
+        headerIcon = Icons.Outlined.Policy,
+        title = stringResource(R.string.privacy_policy),
+        subtitle = "SmartPlantCare v1.0 • Tap any section to read",
+        entries = policyItems,
+        onDismiss = onDismiss
+    )
+}
+
+// ─── Terms of Service Floating Dialog ────────────────────────────────────────
+@Composable
+private fun TermsOfServiceDialog(onDismiss: () -> Unit) {
+    val termsItems = remember {
+        listOf(
+            FaqGuideEntry(
+                question = "1. Acceptance & Intended Use",
+                answer = "By using SmartPlantCare, you agree to these Terms. The app is designed as an AI-assisted leaf health guide and ESP32 smart-irrigation companion for personal home gardening, monitoring, and educational use. Please use the app and connected hardware responsibly and lawfully.",
+                icon = Icons.Outlined.Eco
+            ),
+            FaqGuideEntry(
+                question = "2. AI Diagnosis & Care Guide Disclaimer",
+                answer = "Disease classifications (22 Tomato, Chili, and Eggplant classes), PlantNet plant identifications, and Care Tips are provided for informational and home-gardening guidance only. Results depend on lighting, camera focus, and leaf condition and do not replace advice from a licensed agriculturist or plant pathologist. Always verify before applying any agricultural treatment.",
+                icon = Icons.Outlined.Info
+            ),
+            FaqGuideEntry(
+                question = "3. ESP32 Hardware & Automated Watering",
+                answer = "Auto-watering, rain-guard pauses, and low-tank pump protection depend on stable Wi-Fi, electrical power, properly calibrated sensors, and an adequate water supply. You remain responsible for inspecting your plants, tubing, reservoir, and controller regularly. SmartPlantCare is not liable for plant loss, overflow, or hardware damage caused by sensor faults, power loss, or network outages.",
+                icon = Icons.Outlined.WaterDrop
+            ),
+            FaqGuideEntry(
+                question = "4. Accounts, Ownership & Shared Access",
+                answer = "Keep your login credentials and 24-hour device invite codes private. Device Owners control whether shared members have Operator or Viewer permissions and may revoke access at any time. Revoked members immediately lose access to that device's live telemetry and controls while keeping their own personal account and saved plants.",
+                icon = Icons.Outlined.Group
+            ),
+            FaqGuideEntry(
+                question = "5. Third-Party Services & Availability",
+                answer = "Cloud sync, push alerts, weather forecasts, plant identification, and crash diagnostics rely on third-party services (Firebase, Open-Meteo, OpenStreetMap, PlantNet, and Sentry). Availability and response times may vary with internet connectivity or external service limits.",
+                icon = Icons.Outlined.Cloud
+            ),
+            FaqGuideEntry(
+                question = "6. Updates to These Terms",
+                answer = "We may update app features, care guides, or these Terms over time to improve safety, privacy, and reliability. Continuing to use SmartPlantCare after an update means you accept the updated Terms.",
+                icon = Icons.Outlined.Update
+            )
+        )
+    }
+
+    InfoAccordionDialog(
+        headerIcon = Icons.Outlined.Description,
+        title = stringResource(R.string.terms_of_service),
+        subtitle = "SmartPlantCare v1.0 • Tap any section to read",
+        entries = termsItems,
+        onDismiss = onDismiss
+    )
+}
+
+@Composable
+private fun InfoAccordionDialog(
+    headerIcon: ImageVector,
+    title: String,
+    subtitle: String,
+    entries: List<FaqGuideEntry>,
+    onDismiss: () -> Unit
+) {
     var expandedIndex by remember { mutableIntStateOf(0) }
 
     Dialog(
@@ -2338,7 +2425,7 @@ private fun HardwareGuideDialog(onDismiss: () -> Unit) {
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = Icons.AutoMirrored.Outlined.MenuBook,
+                            imageVector = headerIcon,
                             contentDescription = null,
                             tint = HomeColors.ForestPrimary,
                             modifier = Modifier.size(22.dp)
@@ -2347,14 +2434,14 @@ private fun HardwareGuideDialog(onDismiss: () -> Unit) {
                     Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "How SmartPlantCare Works",
+                            text = title,
                             fontFamily = InterFont,
                             fontSize = 17.sp,
                             fontWeight = FontWeight.Bold,
                             color = HomeColors.TextPrimary
                         )
                         Text(
-                            text = "Tap any question to learn more",
+                            text = subtitle,
                             fontFamily = InterFont,
                             fontSize = 12.sp,
                             color = HomeColors.TextSecondary
@@ -2365,7 +2452,7 @@ private fun HardwareGuideDialog(onDismiss: () -> Unit) {
                 Spacer(modifier = Modifier.height(16.dp))
 
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    faqItems.forEachIndexed { index, item ->
+                    entries.forEachIndexed { index, item ->
                         FaqAccordionItem(
                             item = item,
                             expanded = expandedIndex == index,

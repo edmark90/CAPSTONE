@@ -264,9 +264,10 @@ void loop() {
        curIrrState == IrrigationState::CLOSING_VALVE);
   gFirebase.setActuatorBusy(actuatorActive);
 
+  const bool isOwnedNow = (gProvisioning.ownershipState() == OwnershipState::OWNED);
   const bool initialBootSyncDone = (gFirebase.lastSyncUptimeMs() > 0) || (nowMs > 20000UL);
   const uint32_t telemetryIntervalMs =
-      (gProvisioning.ownershipState() == OwnershipState::OWNED &&
+      (isOwnedNow &&
        gFirebase.isWifiConnected() &&
        gFirebase.lastSyncUptimeMs() == 0)
           ? 3000UL
@@ -279,15 +280,26 @@ void loop() {
       (curRain.accidentalWet != gPrevPublishedRainAccWet) ||
       (curRain.rainSuspensionLatched != gPrevPublishedRainSuspended);
   const bool rainPushAllowed = rainStateChanged && (nowMs - gLastTelemetryMs >= 1500UL);
-  const bool telemetryDue =
-      irrStateChanged || rainPushAllowed || (nowMs - gLastTelemetryMs >= telemetryIntervalMs);
+  const bool telemetryDue = isOwnedNow && gFirebase.hasVerifiedCloudMeta() &&
+      (irrStateChanged || rainPushAllowed || (nowMs - gLastTelemetryMs >= telemetryIntervalMs));
 
-  const uint32_t metaIntervalMs =
-      (gFirebase.isWifiConnected() && gFirebase.lastSyncUptimeMs() == 0)
-          ? 4000UL
-          : Config::INTERVAL_META_POLL_MS;
+  const bool urgentMetaSync =
+      (!isOwnedNow) || (!gFirebase.hasVerifiedCloudMeta()) || gFirebase.consumeUrgentMetaCheck();
+  const uint32_t metaIntervalMs = urgentMetaSync ? 2000UL : Config::INTERVAL_META_POLL_MS;
 
-  if (telemetryDue) {
+  if (urgentMetaSync && gFirebase.isWifiConnected() &&
+      (nowMs - gLastMetaPollMs >= metaIntervalMs)) {
+    // Priority 0: Verify cloud /meta FIRST on boot, during CLAIM_PENDING (2s cadence),
+    // during RESET_PENDING, or immediately after any 401/403 rule rejection so /meta is NEVER starved!
+    gLastMetaPollMs = nowMs;
+    gFirebase.pollMetaOnly(nowMs,
+                           gRuntimeConfig,
+                           gRelays,
+                           gIrrigation,
+                           gBuzzer,
+                           gEvents,
+                           gLcd);
+  } else if (telemetryDue) {
     // Priority 1: Live status & telemetry snapshot (keeps mobile dashboard immediate)
     gLastTelemetryMs            = nowMs;
     gPrevPublishedIrrState      = curIrrState;
@@ -315,18 +327,18 @@ void loop() {
                                            gRainWeather.rainStatus(),
                                            gRainWeather.weather());
     }
-  } else if (initialBootSyncDone &&
+  } else if (isOwnedNow && initialBootSyncDone &&
              gFirebase.hasPendingUrgentWork(gEvents, gIrrigation)) {
     // Priority 2A: Flush queued command execution reports & transition events on their own tick
     gFirebase.flushPendingEventsAndReports(
         nowMs, gEvents, gIrrigation, gDiagnostics.metrics());
-  } else if (initialBootSyncDone &&
+  } else if (isOwnedNow && initialBootSyncDone &&
              (nowMs - gLastCommandPollMs >= Config::INTERVAL_COMMAND_POLL_MS)) {
     // Priority 2B: Fast manual watering & emergency stop command poll (1.8s)
     gLastCommandPollMs = nowMs;
     gFirebase.pollPendingCommandsOnly(nowMs, gRuntimeConfig, gIrrigation, gBuzzer);
   } else if (!actuatorActive && (nowMs - gLastMetaPollMs >= metaIntervalMs)) {
-    // Priority 3A: Ownership / reset / box GPS metadata sync
+    // Priority 3A: Periodic ownership / reset / box GPS metadata sync
     gLastMetaPollMs = nowMs;
     gFirebase.pollMetaOnly(nowMs,
                            gRuntimeConfig,
@@ -335,19 +347,19 @@ void loop() {
                            gBuzzer,
                            gEvents,
                            gLcd);
-  } else if (!actuatorActive && initialBootSyncDone &&
+  } else if (isOwnedNow && !actuatorActive && initialBootSyncDone &&
              (nowMs - gLastHistoryMs >= Config::INTERVAL_HISTORY_SERVICE_MS) &&
              (nowMs - gLastTelemetryMs >= 1200UL)) {
     // Priority 3B: Authoritative 7-day minute & hourly history + irrigation records + PHT pruning
     gLastHistoryMs = nowMs;
     gFirebase.serviceHistorySyncAndRetention(nowMs, gIrrigation, gDiagnostics.metrics());
-  } else if (!actuatorActive && initialBootSyncDone &&
+  } else if (isOwnedNow && !actuatorActive && initialBootSyncDone &&
              (nowMs - gLastConfigPollMs >= Config::INTERVAL_CONFIG_POLL_MS) &&
              (nowMs - gLastTelemetryMs >= 1500UL)) {
     // Priority 3C: Staggered /config threshold sync
     gLastConfigPollMs = nowMs;
     gFirebase.pollConfigOnly(nowMs, gRuntimeConfig, gRelays, gBuzzer);
-  } else if (!actuatorActive && initialBootSyncDone &&
+  } else if (isOwnedNow && !actuatorActive && initialBootSyncDone &&
              (gFirebase.consumeWeatherRefreshRequested() ||
               (!gRainWeather.weather().valid && (nowMs - gLastWeatherPollMs >= 5000UL)) ||
               (nowMs - gLastWeatherPollMs >= Config::INTERVAL_WEATHER_POLL_MS))) {

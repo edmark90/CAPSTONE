@@ -3,6 +3,7 @@ package com.example.smartplantcare.iot
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.net.Uri
 import android.os.SystemClock
 import android.util.Log
 import androidx.lifecycle.ViewModel
@@ -77,6 +78,7 @@ data class MyPlantsUiState(
     val pendingWaterCrop: String? = null,
     val pendingCommandPhase: PendingCommandPhase = PendingCommandPhase.IDLE,
     val isSubmittingAction: Boolean = false,
+    val uploadingPhotoCropSlug: String? = null,
     val isRefreshingWeather: Boolean = false,
     val isSyncingDevice: Boolean = false,
     val lastSyncCompletedAtMs: Long = 0L,
@@ -98,6 +100,9 @@ data class MyPlantsUiState(
     // Network & Phone Connectivity
     val isPhoneOnline: Boolean = true,
     val phoneDisconnectedAtMs: Long? = null,
+
+    // Shared Device Access Revocation Dialog (single unacknowledged event shown at a time)
+    val pendingRevocationDialog: AccessRevocationEvent? = null,
 
     // Feedback
     val snackbarMessage: String? = null
@@ -160,9 +165,18 @@ class MyPlantsViewModel(
                         snackbarMessage = nextSnackbar
                     )
                 }
-                if (!prevOnline && online && _uiState.value.activeDeviceId != null) {
-                    resyncLiveDevice(silent = true)
+                if (!prevOnline && online) {
+                    syncPendingRevocationsNow()
+                    if (_uiState.value.activeDeviceId != null) {
+                        resyncLiveDevice(silent = true)
+                    }
                 }
+            }
+        }
+        viewModelScope.launch {
+            RevocationEventCoordinator.liveEvents.collect { event ->
+                val uid = boundUid ?: return@collect
+                handleRevocationEvents(uid, listOf(event))
             }
         }
     }
@@ -171,10 +185,12 @@ class MyPlantsViewModel(
     private var boundEmail: String = ""
     private var boundName: String = ""
     private var userDevicesJob: Job? = null
+    private var userRevocationsJob: Job? = null
     private var liveDeviceJob: Job? = null
     private var liveWatchdogJob: Job? = null
     private var historyJob: Job? = null
     private var minuteHistoryJob: Job? = null
+    private val pendingRevocationQueue = ArrayDeque<AccessRevocationEvent>()
     private var observedMinuteKeyToken: String? = null
     private var lastPrunedHistoryKey: String? = null
     private var rawCloudHistoryByDate: Map<String, DailyHistorySnapshot> = emptyMap()
@@ -267,6 +283,7 @@ class MyPlantsViewModel(
     fun bindUser(uid: String?, email: String, displayName: String, isGuest: Boolean) {
         if (isGuest || uid.isNullOrBlank()) {
             userDevicesJob?.cancel()
+            userRevocationsJob?.cancel()
             liveDeviceJob?.cancel()
             liveWatchdogJob?.cancel()
             historyJob?.cancel()
@@ -275,6 +292,7 @@ class MyPlantsViewModel(
             rawCloudHistoryByDate = emptyMap()
             rawCloudMinutesByDate.clear()
             sessionLiveMinutesByDate.clear()
+            pendingRevocationQueue.clear()
             boundUid = null
             _uiState.update {
                 MyPlantsUiState(
@@ -288,10 +306,21 @@ class MyPlantsViewModel(
         boundEmail = email
         boundName = displayName
 
+        // Sync FCM token & profile display name to RTDB for accurate revocation notices & push delivery
+        viewModelScope.launch(Dispatchers.IO) {
+            com.example.smartplantcare.notification.FcmTokenManager.syncCurrentUserTokenAndProfile(
+                context = appCtx,
+                uid = uid,
+                displayName = displayName,
+                email = email
+            )
+        }
+
         if (boundUid == uid && userDevicesJob?.isActive == true) {
             return
         }
         boundUid = uid
+        pendingRevocationQueue.clear()
 
         // 1. Instant local cache restore (<30ms) clearly tagged with isFromLocalCache = true
         val (cachedLinks, cachedActiveId) = loadCachedDeviceLinks(uid)
@@ -314,15 +343,28 @@ class MyPlantsViewModel(
         }
 
         observeUserDevices(uid)
+        observeUserRevocations(uid)
     }
 
     private fun applyDiscoveredDeviceLinks(uid: String, links: List<UserDeviceLink>) {
+        val previousLinks = _uiState.value.userDevices
+        val newIds = links.map { it.deviceId }.toSet()
+        // Immediately purge local cached snapshots for any device removed from user's authorized links
+        previousLinks.forEach { oldLink ->
+            if (oldLink.deviceId !in newIds) {
+                clearCachedDevice(uid, oldLink.deviceId)
+            }
+        }
+
         val currentActive = _uiState.value.activeDeviceId
+        val activeWasRemoved = currentActive != null && currentActive !in newIds
         val chosen = links.firstOrNull { it.deviceId == currentActive } ?: links.firstOrNull()
         saveDeviceLinksCache(uid, links, chosen?.deviceId)
 
         val cachedFallback = if (chosen != null && _uiState.value.liveSnapshot?.deviceId != chosen.deviceId) {
             loadCachedSnapshot(uid, chosen.deviceId)
+        } else if (activeWasRemoved) {
+            null
         } else {
             _uiState.value.liveSnapshot
         }
@@ -343,23 +385,146 @@ class MyPlantsViewModel(
                     shouldReturnToScan -> MyPlantsStep.SCAN_ESP32
                     else -> st.step
                 },
-                subPage = if (shouldReturnToScan) MyPlantsSubPage.NONE else st.subPage,
+                subPage = if (shouldReturnToScan || activeWasRemoved) MyPlantsSubPage.NONE else st.subPage,
                 liveSnapshot = if (chosen == null) null else cachedFallback
             )
         }
 
         if (chosen != null) {
-            observeLiveDevice(chosen.deviceId)
-            startLiveSyncWatchdog(chosen.deviceId)
-            startObservingDeviceHistory(chosen.deviceId, forceRefresh = false)
+            if (activeWasRemoved || liveDeviceJob?.isActive != true || _uiState.value.liveSnapshot?.deviceId != chosen.deviceId) {
+                observeLiveDevice(chosen.deviceId)
+                startLiveSyncWatchdog(chosen.deviceId)
+                startObservingDeviceHistory(chosen.deviceId, forceRefresh = activeWasRemoved)
+            }
         } else {
-            liveDeviceJob?.cancel()
-            liveWatchdogJob?.cancel()
-            historyJob?.cancel()
-            minuteHistoryJob?.cancel()
-            observedMinuteKeyToken = null
-            rawCloudHistoryByDate = emptyMap()
-            rawCloudMinutesByDate.clear()
+            disconnectActiveDeviceListeners()
+        }
+    }
+
+    private fun disconnectActiveDeviceListeners() {
+        liveDeviceJob?.cancel()
+        liveWatchdogJob?.cancel()
+        historyJob?.cancel()
+        minuteHistoryJob?.cancel()
+        observedMinuteKeyToken = null
+        rawCloudHistoryByDate = emptyMap()
+        rawCloudMinutesByDate.clear()
+        sessionLiveMinutesByDate.clear()
+    }
+
+    private fun observeUserRevocations(uid: String) {
+        userRevocationsJob?.cancel()
+        userRevocationsJob = viewModelScope.launch {
+            launch {
+                if (NetworkMonitor.refreshOnlineState()) {
+                    repository.fetchUserRevocationsViaRest(uid).onSuccess { events ->
+                        if (boundUid == uid) {
+                            handleRevocationEvents(uid, events)
+                        }
+                    }
+                }
+            }
+            repository.observeUserRevocations(uid).collect { events ->
+                if (boundUid == uid) {
+                    handleRevocationEvents(uid, events)
+                }
+            }
+        }
+    }
+
+    fun syncPendingRevocationsNow() {
+        val uid = boundUid ?: return
+        if (!NetworkMonitor.refreshOnlineState()) return
+        viewModelScope.launch {
+            repository.fetchUserDevicesViaRest(uid).onSuccess { links ->
+                if (boundUid == uid) {
+                    applyDiscoveredDeviceLinks(uid, links)
+                }
+            }
+            repository.fetchUserRevocationsViaRest(uid).onSuccess { events ->
+                if (boundUid == uid) {
+                    handleRevocationEvents(uid, events)
+                }
+            }
+        }
+    }
+
+    private fun handleRevocationEvents(uid: String, events: List<AccessRevocationEvent>) {
+        if (events.isEmpty() || boundUid != uid) return
+
+        val unacknowledged = events
+            .filter { !it.acknowledged && !RevocationEventCoordinator.isDialogAcknowledged(appCtx, uid, it.eventId) }
+            .sortedBy { it.revokedAt }
+
+        for (event in unacknowledged) {
+            // Delayed-event guard: never revoke or disrupt newly re-authorized access (addedAt > revokedAt)
+            if (RevocationEventCoordinator.isSupersededByNewerAccess(event, _uiState.value.userDevices)) {
+                RevocationEventCoordinator.markDialogAcknowledged(appCtx, uid, event.eventId)
+                viewModelScope.launch { repository.acknowledgeRevocation(uid, event.eventId) }
+                continue
+            }
+
+            // 1. Immediately purge cached data & tear down listeners for the revoked device
+            clearCachedDevice(uid, event.deviceId)
+            val currentLinks = _uiState.value.userDevices
+            val remainingLinks = currentLinks.filterNot { it.deviceId == event.deviceId }
+            if (remainingLinks.size != currentLinks.size || _uiState.value.activeDeviceId == event.deviceId) {
+                applyDiscoveredDeviceLinks(uid, remainingLinks)
+            } else {
+                saveDeviceLinksCache(uid, remainingLinks, _uiState.value.activeDeviceId)
+            }
+
+            // 2. Persist deduplicated in-app notification record (covers offline / FCM-failed / permission-denied cases)
+            if (RevocationEventCoordinator.tryMarkHistorySaved(appCtx, uid, event.eventId)) {
+                viewModelScope.launch(Dispatchers.IO) {
+                    runCatching {
+                        notifHistoryRepo.saveNotification(
+                            NotificationHistory(
+                                id = RevocationEventCoordinator.notificationHistoryId(event.eventId),
+                                plantId = "",
+                                plantName = event.deviceName,
+                                plantImageUrl = "",
+                                day = 0,
+                                title = "Monitoring Access Removed",
+                                message = "${event.ownerName} has removed your monitoring access to ${event.deviceName}.",
+                                timestamp = if (event.revokedAt > 0L) event.revokedAt else System.currentTimeMillis(),
+                                isRead = false,
+                                isCompleted = true
+                            )
+                        )
+                    }
+                }
+            }
+
+            // 3. Queue dialog (deduplicated by eventId)
+            val currentDialog = _uiState.value.pendingRevocationDialog
+            val alreadyQueued = currentDialog?.eventId == event.eventId ||
+                pendingRevocationQueue.any { it.eventId == event.eventId }
+            if (!alreadyQueued) {
+                if (currentDialog == null) {
+                    _uiState.update { it.copy(pendingRevocationDialog = event) }
+                } else {
+                    pendingRevocationQueue.addLast(event)
+                }
+            }
+        }
+    }
+
+    fun dismissRevocationDialog() {
+        val current = _uiState.value.pendingRevocationDialog ?: return
+        val uid = boundUid
+        if (!uid.isNullOrBlank()) {
+            RevocationEventCoordinator.markDialogAcknowledged(appCtx, uid, current.eventId)
+            viewModelScope.launch {
+                repository.acknowledgeRevocation(uid, current.eventId)
+            }
+        }
+        val next = if (pendingRevocationQueue.isNotEmpty()) pendingRevocationQueue.removeFirst() else null
+        _uiState.update { st ->
+            st.copy(
+                pendingRevocationDialog = next,
+                subPage = if (st.activeDeviceId == null) MyPlantsSubPage.NONE else st.subPage
+            )
         }
     }
 
@@ -676,6 +841,9 @@ class MyPlantsViewModel(
 
         val boxName = snapshot.meta.displayName.ifBlank { "SmartPlantCare Box" }
         for (ev in newAlertsToPost.takeLast(3)) {
+            if (!com.example.smartplantcare.notification.AlertPreferences.isEventAllowed(appCtx, ev.type)) {
+                continue
+            }
             val isCrit = ev.severity.equals("critical", ignoreCase = true) ||
                 ev.type.uppercase() in setOf(
                     "RAIN_SUSPENSION_STARTED",
@@ -1173,23 +1341,42 @@ class MyPlantsViewModel(
                     nextOwnershipEpoch = nextEpoch,
                     onStatusUpdate = { statusMsg ->
                         _uiState.update { it.copy(provisioningProgressMessage = "1/3 $statusMsg") }
+                    },
+                    onSoftApInterruptedCheckCloud = {
+                        if (NetworkMonitor.refreshOnlineState()) {
+                            repository.isDeviceProvisionedOnline(
+                                deviceId = espInfo.deviceId,
+                                expectedEpoch = nextEpoch,
+                                minEpochTimestampMs = provAttemptStartedAtMs - 15_000L
+                            )
+                        } else {
+                            false
+                        }
                     }
                 )
 
                 val verifiedProv = if (freshProv.success) {
                     freshProv
                 } else if (freshProv.contactLostAfterAccept) {
-                    // ESP32 accepted credentials and may have verified via pure-STA fallback (closing SoftAP).
-                    // Release SoftAP so phone regains internet, then check if ESP32 checked in online on Firebase!
+                    // ESP32 switched to the router's 2.4 GHz channel or pure-STA verification mode.
+                    // Immediately release WifiNetworkSpecifier so Android restores internet, then poll
+                    // Firebase via fast HTTP/2 REST for ESP32's non-owning wifiVerifiedEpoch stamp!
                     _uiState.update {
-                        it.copy(provisioningProgressMessage = "2/3 Checking if ESP32 came online via router...")
+                        it.copy(provisioningProgressMessage = "2/3 Reconnecting phone internet & checking ESP32 router link...")
                     }
                     provClient.disconnectFromEspHotspot()
                     awaitValidatedInternet(maxWaitMs = 5_000L)
                     repository.reconnectRealtimeSocket()
                     val targetDeviceId = freshProv.deviceId.ifBlank { espInfo.deviceId }
                     var verifiedInCloud = false
-                    for (probe in 1..6) {
+                    val maxCloudProbes = 14
+                    for (probe in 1..maxCloudProbes) {
+                        _uiState.update {
+                            it.copy(provisioningProgressMessage = "2/3 Waiting for ESP32 to confirm router Wi-Fi... ($probe/$maxCloudProbes)")
+                        }
+                        if (!NetworkMonitor.isOnlineFlow.value) {
+                            awaitValidatedInternet(maxWaitMs = 1_500L)
+                        }
                         if (repository.isDeviceProvisionedOnline(
                                 deviceId = targetDeviceId,
                                 expectedEpoch = nextEpoch,
@@ -1199,12 +1386,14 @@ class MyPlantsViewModel(
                             verifiedInCloud = true
                             break
                         }
-                        delay(2000L)
+                        delay(1600L)
                     }
                     if (verifiedInCloud) {
                         freshProv.copy(success = true, errorMessage = null)
                     } else {
-                        freshProv
+                        freshProv.copy(
+                            errorMessage = "ESP32 could not connect to \"$ssid\". Please verify your 2.4 GHz Wi-Fi password, reconnect to ${espInfo.setupApSsid}, and try again."
+                        )
                     }
                 } else {
                     freshProv
@@ -1449,7 +1638,7 @@ class MyPlantsViewModel(
         val selectedDate = _uiState.value.selectedHistoryDateKey
         if (!NetworkMonitor.refreshOnlineState()) {
             if (!silent) {
-                showSnackbar("No internet connection. Showing cached 7-day records.")
+                showSnackbar("No internet connection. Showing saved 7-day records.")
             }
             return
         }
@@ -1631,6 +1820,7 @@ class MyPlantsViewModel(
      * Available as a 1-tap Sync button on both Homepage and My Plants, and called on app resume.
      */
     fun resyncLiveDevice(silent: Boolean = false) {
+        syncPendingRevocationsNow()
         val st = _uiState.value
         val deviceId = st.activeDeviceId ?: return
         if (st.step == MyPlantsStep.WIFI_AND_CLAIM || st.isProvisioning) return
@@ -1649,7 +1839,7 @@ class MyPlantsViewModel(
                 if (wasBoxOnline) {
                     showSnackbar("No internet connection. Please check your internet connection.")
                 } else {
-                    showSnackbar("No internet connection. Showing last cached data.")
+                    showSnackbar("No internet connection. ESP32 readings are offline.")
                 }
             }
             return
@@ -2144,6 +2334,136 @@ class MyPlantsViewModel(
         }
     }
 
+    fun uploadCropPhoto(cropSlug: String, sourceUri: Uri) {
+        val st = _uiState.value
+        val uid = boundUid ?: return
+        val snapshot = st.liveSnapshot ?: return
+        if (!st.activeRole.canControl) {
+            showSnackbar("Viewers have read-only access and cannot upload crop photos.")
+            return
+        }
+        if (!NetworkMonitor.refreshOnlineState()) {
+            showSnackbar("No internet connection. Connect online to upload crop photo.")
+            return
+        }
+        if (!CloudinaryCropPhotoClient.isConfigured()) {
+            showSnackbar("Cloudinary is not configured yet.")
+            return
+        }
+        if (st.uploadingPhotoCropSlug != null) return
+
+        val normalizedSlug = cropSlug.lowercase().trim()
+        val cropName = snapshot.telemetry.zones.firstOrNull { it.slug == normalizedSlug }?.displayName
+            ?: normalizedSlug.replaceFirstChar { it.uppercase() }
+        val previousPublicId = snapshot.cropPhotos[normalizedSlug]?.publicId.orEmpty()
+        val uploaderName = boundName.ifBlank { boundEmail.substringBefore("@").ifBlank { "Member" } }
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(uploadingPhotoCropSlug = normalizedSlug) }
+
+            val uploadRes = CloudinaryCropPhotoClient.uploadCropPhoto(
+                context = appCtx,
+                deviceId = snapshot.deviceId,
+                cropSlug = normalizedSlug,
+                sourceUri = sourceUri
+            )
+            if (uploadRes.isFailure) {
+                _uiState.update { it.copy(uploadingPhotoCropSlug = null) }
+                showSnackbar("Upload failed: ${uploadRes.exceptionOrNull()?.localizedMessage ?: "Try again."}")
+                return@launch
+            }
+
+            val uploaded = uploadRes.getOrThrow()
+            val photoMeta = CropZonePhoto(
+                url = uploaded.secureUrl,
+                publicId = uploaded.publicId,
+                updatedAt = System.currentTimeMillis(),
+                updatedByUid = uid,
+                updatedByName = uploaderName
+            )
+
+            val saveRes = repository.saveCropPhotoMetadata(snapshot.deviceId, normalizedSlug, photoMeta)
+            if (saveRes.isFailure) {
+                // Clean up newly uploaded Cloudinary asset so zero orphan files remain
+                CloudinaryCropPhotoClient.deleteCropPhoto(uploaded.publicId)
+                _uiState.update { it.copy(uploadingPhotoCropSlug = null) }
+                showSnackbar("Could not save photo: ${saveRes.exceptionOrNull()?.localizedMessage ?: "Permission denied."}")
+                return@launch
+            }
+
+            // Optimistically update current snapshot so UI updates instantly
+            _uiState.update { cur ->
+                val curSnap = cur.liveSnapshot
+                cur.copy(
+                    uploadingPhotoCropSlug = null,
+                    liveSnapshot = if (curSnap != null && curSnap.deviceId == snapshot.deviceId) {
+                        curSnap.copy(cropPhotos = curSnap.cropPhotos + (normalizedSlug to photoMeta))
+                    } else curSnap
+                )
+            }
+
+            // Permanently remove the replaced asset from Cloudinary
+            if (previousPublicId.isNotBlank() && previousPublicId != uploaded.publicId) {
+                CloudinaryCropPhotoClient.deleteCropPhoto(previousPublicId)
+            }
+
+            showSnackbar("$cropName photo updated.")
+        }
+    }
+
+    fun deleteCropPhoto(cropSlug: String) {
+        val st = _uiState.value
+        val snapshot = st.liveSnapshot ?: return
+        if (!st.activeRole.canControl) {
+            showSnackbar("Viewers have read-only access and cannot remove crop photos.")
+            return
+        }
+        if (!NetworkMonitor.refreshOnlineState()) {
+            showSnackbar("No internet connection. Connect online to remove crop photo.")
+            return
+        }
+        if (st.uploadingPhotoCropSlug != null) return
+
+        val normalizedSlug = cropSlug.lowercase().trim()
+        val existingPhoto = snapshot.cropPhotos[normalizedSlug] ?: return
+        val cropName = snapshot.telemetry.zones.firstOrNull { it.slug == normalizedSlug }?.displayName
+            ?: normalizedSlug.replaceFirstChar { it.uppercase() }
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(uploadingPhotoCropSlug = normalizedSlug) }
+
+            val cloudDelRes = if (existingPhoto.publicId.isNotBlank()) {
+                CloudinaryCropPhotoClient.deleteCropPhoto(existingPhoto.publicId)
+            } else {
+                Result.success(Unit)
+            }
+
+            if (cloudDelRes.isFailure) {
+                _uiState.update { it.copy(uploadingPhotoCropSlug = null) }
+                showSnackbar("Could not delete photo from Cloudinary: ${cloudDelRes.exceptionOrNull()?.localizedMessage ?: "Try again."}")
+                return@launch
+            }
+
+            val dbDelRes = repository.deleteCropPhotoMetadata(snapshot.deviceId, normalizedSlug)
+            if (dbDelRes.isFailure) {
+                _uiState.update { it.copy(uploadingPhotoCropSlug = null) }
+                showSnackbar("Could not remove photo link: ${dbDelRes.exceptionOrNull()?.localizedMessage ?: "Permission denied."}")
+                return@launch
+            }
+
+            _uiState.update { cur ->
+                val curSnap = cur.liveSnapshot
+                cur.copy(
+                    uploadingPhotoCropSlug = null,
+                    liveSnapshot = if (curSnap != null && curSnap.deviceId == snapshot.deviceId) {
+                        curSnap.copy(cropPhotos = curSnap.cropPhotos - normalizedSlug)
+                    } else curSnap
+                )
+            }
+            showSnackbar("$cropName photo removed.")
+        }
+    }
+
     fun unclaimAndResetCurrentDevice() {
         val st = _uiState.value
         val uid = boundUid ?: return
@@ -2152,6 +2472,12 @@ class MyPlantsViewModel(
 
         viewModelScope.launch {
             _uiState.update { it.copy(isSubmittingAction = true) }
+            // Best-effort cleanup of shared crop photos from Cloudinary before wiping device metadata
+            snapshot.cropPhotos.values.forEach { photo ->
+                if (photo.publicId.isNotBlank()) {
+                    CloudinaryCropPhotoClient.deleteCropPhoto(photo.publicId)
+                }
+            }
             repository.unclaimAndResetDevice(
                 deviceId = snapshot.deviceId,
                 currentEpoch = snapshot.meta.ownershipEpoch,
